@@ -1,3 +1,12 @@
+if __name__ == "__main__":
+    import sys
+    import os
+    import pathlib
+
+    ROOT_DIR = str(pathlib.Path(__file__).parent.parent.parent)
+    sys.path.append(ROOT_DIR)
+
+
 from typing import Dict, List
 import torch
 import numpy as np
@@ -44,7 +53,8 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             use_legacy_normalizer=False,
             use_cache=False,
             seed=42,
-            val_ratio=0.0
+            val_ratio=0.0,
+            num_demo=None,
         ):
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
@@ -65,7 +75,8 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                             shape_meta=shape_meta, 
                             dataset_path=dataset_path, 
                             abs_action=abs_action, 
-                            rotation_transformer=rotation_transformer)
+                            rotation_transformer=rotation_transformer,
+                            num_demo=num_demo)
                         print('Saving cache to disk.')
                         with zarr.ZipStore(cache_zarr_path) as zip_store:
                             replay_buffer.save_to_store(
@@ -86,7 +97,8 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                 shape_meta=shape_meta, 
                 dataset_path=dataset_path, 
                 abs_action=abs_action, 
-                rotation_transformer=rotation_transformer)
+                rotation_transformer=rotation_transformer,
+                num_demo=num_demo)
 
         rgb_keys = list()
         lowdim_keys = list()
@@ -244,7 +256,7 @@ def _convert_actions(raw_actions, abs_action, rotation_transformer):
 
 
 def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
-        n_workers=None, max_inflight_tasks=None):
+        n_workers=None, max_inflight_tasks=None, num_demo=None):
     if n_workers is None:
         n_workers = multiprocessing.cpu_count()
     if max_inflight_tasks is None:
@@ -272,7 +284,9 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
         demos = file['data']
         episode_ends = list()
         prev_end = 0
-        for i in range(len(demos)):
+        n_demo = len(demos) if num_demo is None else min(num_demo, len(demos))
+        print("Total number of demos:", n_demo)
+        for i in range(n_demo):
             demo = demos[f'demo_{i}']
             episode_length = demo['actions'].shape[0]
             episode_end = prev_end + episode_length
@@ -289,7 +303,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
             if key == 'action':
                 data_key = 'actions'
             this_data = list()
-            for i in range(len(demos)):
+            for i in range(n_demo):
                 demo = demos[f'demo_{i}']
                 this_data.append(demo[data_key][:].astype(np.float32))
             this_data = np.concatenate(this_data, axis=0)
@@ -336,7 +350,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                         compressor=this_compressor,
                         dtype=np.uint8
                     )
-                    for episode_idx in range(len(demos)):
+                    for episode_idx in range(n_demo):
                         demo = demos[f'demo_{episode_idx}']
                         hdf5_arr = demo['obs'][key]
                         for hdf5_idx in range(hdf5_arr.shape[0]):
@@ -371,3 +385,79 @@ def normalizer_from_stat(stat):
         offset=offset,
         input_stats_dict=stat
     )
+
+
+
+def main():
+    task = "can"
+    dataset_type = "ph"
+    dataset_path = f"/ssd1/yudongjie/robomimic/datasets/{task}/{dataset_type}/image_abs.hdf5"
+    shape_meta = {
+        "obs": {
+            "agentview_image": {
+                "shape": (3, 84, 84),
+                "type": "rgb",
+            },
+            "robot0_eye_in_hand_image": {
+                "shape": (3, 84, 84),
+                "type": "rgb",
+            },
+            "robot0_eef_pos": {
+                "shape": (3,),
+            },
+            "robot0_eef_quat": {
+                "shape": (4,),
+            },
+            "robot0_gripper_qpos": {
+                "shape": (2,),
+            },
+        },
+        "action": {
+            "shape": (10,),
+        },
+    }
+
+    dataset = RobomimicReplayImageDataset(
+        shape_meta,
+        dataset_path=dataset_path,
+        horizon=16,
+        pad_before=1,
+        pad_after=7,
+        n_obs_steps=2,
+        abs_action=True,
+        rotation_rep='rotation_6d',
+        use_cache=True,
+        val_ratio=0.05,
+        num_demo=50
+    )
+
+    val_set = dataset.get_validation_dataset()
+    train_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=64,
+        num_workers=0,
+        shuffle=True,
+        # pin_memory=True,
+        # persistent_workers=False,
+    )
+    import time
+    np.set_printoptions(precision=3)
+    num_epochs = 1
+    num_steps = 10
+    for epoch in range(num_epochs):
+        print(f"Epoch {epoch}:")
+        train_time_per_batch = []
+        start = time.time()
+        for i, batch in enumerate(tqdm(train_loader)):
+            time_get = time.time()
+            train_time_per_batch.append(time_get - start)
+            start = time_get
+            if i + 1 == num_steps:
+                break
+        train = np.array(train_time_per_batch)
+        print(f"Train mean: {train.mean():.3f}, std: {train.std():.3f}, max: {train.max():.3f}")
+        print("train:", train[:10])
+
+
+if __name__ == "__main__":
+    main()

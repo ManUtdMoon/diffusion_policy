@@ -44,9 +44,9 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: DiffusionUnetImagePolicy = hydra.utils.instantiate(cfg.policy)
+        self.model = hydra.utils.instantiate(cfg.policy)
 
-        self.ema_model: DiffusionUnetImagePolicy = None
+        self.ema_model = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 

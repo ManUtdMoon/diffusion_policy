@@ -167,7 +167,7 @@ class ConditionalUnet1D(nn.Module):
         self.final_conv = final_conv
 
         logger.info(
-            "number of parameters: %e", sum(p.numel() for p in self.parameters())
+            "number of parameters: %.2f M", sum(p.numel() for p in self.parameters()) / 1e6
         )
 
     def forward(self, 

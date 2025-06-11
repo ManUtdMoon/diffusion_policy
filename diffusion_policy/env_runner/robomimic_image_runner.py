@@ -174,7 +174,7 @@ class RobomimicImageRunner(BaseImageRunner):
                     env.env.file_path = None
                     if enable_render:
                         filename = pathlib.Path(output_dir).joinpath(
-                            'media', wv.util.generate_id() + ".mp4")
+                            'media', f"train_{train_idx}" + ".mp4")
                         filename.parent.mkdir(parents=False, exist_ok=True)
                         filename = str(filename)
                         env.env.file_path = filename
@@ -201,7 +201,7 @@ class RobomimicImageRunner(BaseImageRunner):
                 env.env.file_path = None
                 if enable_render:
                     filename = pathlib.Path(output_dir).joinpath(
-                        'media', wv.util.generate_id() + ".mp4")
+                        'media', f"test_{seed}" + ".mp4")
                     filename.parent.mkdir(parents=False, exist_ok=True)
                     filename = str(filename)
                     env.env.file_path = filename

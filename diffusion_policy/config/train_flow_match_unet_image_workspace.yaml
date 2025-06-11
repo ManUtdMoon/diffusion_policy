@@ -2,7 +2,7 @@ defaults:
   - _self_
   - task: can_image_abs
 
-name: train_diffusion_unet_image
+name: train_flow_match_unet_image
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
 
 task_name: ${task.name}
@@ -19,22 +19,13 @@ keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
 policy:
-  _target_: diffusion_policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  _target_: diffusion_policy.policy.flow_match_unet_image_policy.FlowMatchUnetImagePolicy
 
   shape_meta: ${shape_meta}
   
   noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    _target_: diffusers.schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteScheduler
     num_train_timesteps: 100
-    beta_start: 0.0001
-    beta_end: 0.02
-    # beta_schedule is important
-    # this is the best we found
-    beta_schedule: squaredcos_cap_v2
-    clip_sample: True
-    set_alpha_to_one: True
-    steps_offset: 0
-    prediction_type: epsilon # or sample
 
   obs_encoder:
     _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
@@ -54,7 +45,7 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 10
+  num_inference_steps: 2
   obs_as_global_cond: ${obs_as_global_cond}
   diffusion_step_embed_dim: 128
   down_dims: [128,256,512]
@@ -111,7 +102,7 @@ training:
   # training loop control
   # in epochs
   rollout_every: 250
-  checkpoint_every: 50
+  checkpoint_every: 100
   val_every: 25
   sample_every: 25
   # steps per epoch

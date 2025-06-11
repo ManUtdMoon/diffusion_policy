@@ -21,8 +21,8 @@ def get_range_normalizer_from_stat(stat, output_max=1, output_min=-1, range_eps=
     )
 
 def get_image_range_normalizer():
-    scale = np.array([2], dtype=np.float32)
-    offset = np.array([-1], dtype=np.float32)
+    scale = np.array([1], dtype=np.float32)
+    offset = np.array([0], dtype=np.float32)
     stat = {
         'min': np.array([0], dtype=np.float32),
         'max': np.array([1], dtype=np.float32),

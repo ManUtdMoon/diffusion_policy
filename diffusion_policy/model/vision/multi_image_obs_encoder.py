@@ -1,5 +1,6 @@
 from typing import Dict, Tuple, Union
 import copy
+import logging
 import torch
 import torch.nn as nn
 import torchvision
@@ -7,6 +8,8 @@ from diffusion_policy.model.vision.crop_randomizer import CropRandomizer
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 
+
+logger = logging.getLogger(__name__)
 
 class MultiImageObsEncoder(ModuleAttrMixin):
     def __init__(self,
@@ -123,6 +126,10 @@ class MultiImageObsEncoder(ModuleAttrMixin):
         self.rgb_keys = rgb_keys
         self.low_dim_keys = low_dim_keys
         self.key_shape_map = key_shape_map
+
+        logger.info(
+            "number of parameters: %.2f M", sum(p.numel() for p in self.parameters()) / 1e6
+        )
 
     def forward(self, obs_dict):
         batch_size = None

@@ -21,7 +21,7 @@ shape_meta: &shape_meta
 
 task_name: &task_name can
 dataset_type: &dataset_type ph
-dataset_path: &dataset_path data/robomimic/datasets/${task.task_name}/${task.dataset_type}/image_abs.hdf5
+dataset_path: &dataset_path /ssd1/yudongjie/robomimic/datasets/${task.task_name}/${task.dataset_type}/image_abs.hdf5
 abs_action: &abs_action True
 
 env_runner:
@@ -62,3 +62,4 @@ dataset:
   use_cache: True
   seed: 42
   val_ratio: 0.02
+  num_demo: 50
