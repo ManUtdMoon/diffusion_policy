@@ -10,6 +10,9 @@ import click
 import numpy as np
 import json
 from diffusion_policy.common.replay_buffer import ReplayBuffer
+from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs
+
+register_codecs()
 
 @click.command()
 @click.option('--input', '-i', required=True)
@@ -19,7 +22,10 @@ def main(input, dt):
     lengths = buffer.episode_lengths
     durations = lengths * dt
     result = {
-        'duration/mean': np.mean(durations)
+        'duration/mean': np.mean(durations),
+        'duration/std': np.std(durations),
+        'duration/min': np.min(durations),
+        'duration/max': np.max(durations)
     }
 
     text = json.dumps(result, indent=2)
