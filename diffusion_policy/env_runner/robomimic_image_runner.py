@@ -247,7 +247,7 @@ class RobomimicImageRunner(BaseImageRunner):
 
         # allocate data
         all_video_paths = [None] * n_inits
-        all_rewards = [None] * n_inits
+        all_rewards = [[] for _ in range(n_inits)] # guarantee independent lists
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
@@ -308,6 +308,11 @@ class RobomimicImageRunner(BaseImageRunner):
                     env_action = self.undo_transform_action(action)
 
                 obs, reward, done, info = env.step(env_action)
+
+                # collect rewards moved here
+                for sublist, r in zip(all_rewards[this_global_slice], reward):
+                    sublist.append(r)
+
                 done = np.all(done)
                 past_action = action
 
@@ -317,7 +322,7 @@ class RobomimicImageRunner(BaseImageRunner):
 
             # collect data for this round
             all_video_paths[this_global_slice] = env.render()[this_local_slice]
-            all_rewards[this_global_slice] = env.call('get_attr', 'reward')[this_local_slice]
+            # all_rewards[this_global_slice] = env.call('get_attr', 'reward')[this_local_slice]
         # clear out video buffer
         _ = env.reset()
         

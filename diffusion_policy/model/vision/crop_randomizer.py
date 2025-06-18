@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as ttf
+from torchvision.transforms import v2
 import diffusion_policy.model.common.tensor_util as tu
 
 class CropRandomizer(nn.Module):
@@ -126,6 +127,58 @@ class CropRandomizer(nn.Module):
         header = '{}'.format(str(self.__class__.__name__))
         msg = header + "(input_shape={}, crop_size=[{}, {}], num_crops={})".format(
             self.input_shape, self.crop_height, self.crop_width, self.num_crops)
+        return msg
+
+
+class CropRandomizerV2(nn.Module):
+    """
+    A modern CropRandomizer that uses torchvision.transforms.v2 API.
+    Support batch processing natively, and uses RandomCrop during training, 
+    and CenterCrop during eval.
+    num_crops and pos_enc are removed because they are not used.
+    """
+    def __init__(
+        self,
+        input_shape: tuple,
+        crop_height: int,
+        crop_width: int,
+        # not used, but kept for compatibility
+        num_crops: int = 1,
+        pos_enc: bool = False,
+    ):
+        """
+        Args:
+            input_shape (tuple): input shape (C, H, W) without batch dimension.
+            crop_height (int)
+            crop_width (int)
+        """
+        super().__init__()
+
+        assert len(input_shape) == 3, "Input shape must be of length 3 (C, H, W)"
+        assert crop_height < input_shape[1], "Crop height must be less than image height"
+        assert crop_width < input_shape[2], "Crop width must be less than image width"
+
+        self.input_shape = input_shape
+        self.crop_height = crop_height
+        self.crop_width = crop_width
+        self.crop_size = (crop_height, crop_width)
+
+        self.random_cropper = v2.RandomCrop(size=self.crop_size)
+        self.center_cropper = v2.CenterCrop(size=self.crop_size)
+
+    def forward_in(self, inputs: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            return self.random_cropper(inputs)
+        else:
+            return self.center_cropper(inputs)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return self.forward_in(inputs)
+
+    def __repr__(self):
+        """Pretty print network."""
+        header = f'{self.__class__.__name__}'
+        msg = header + f"(input_shape={self.input_shape}, crop_size=[{self.crop_height}, {self.crop_width}])"
         return msg
 
 
