@@ -9,6 +9,8 @@ sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1)
 sys.stderr = open(sys.stderr.fileno(), mode='w', buffering=1)
 
 import os
+import random
+import numpy as np
 import pathlib
 import click
 import hydra
@@ -35,6 +37,13 @@ def main(checkpoint, output_dir, device):
     payload = torch.load(open(checkpoint, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
     res_policy_state_dict = payload['res_policy']
+    ## deterministic mode
+    seed = cfg.training.seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
     ## 1. base_policy
     base_policy: BaseImagePolicy = hydra.utils.instantiate(cfg.base_policy)
     base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
