@@ -183,7 +183,10 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         
         result = {
             'action': action,
-            'action_pred': action_pred
+            'action_pred': action_pred,
+            'naction': naction_pred[:,start:end],
+            'naction_pred': naction_pred,
+            'obs_emb': global_cond,
         }
         return result
 
