@@ -391,7 +391,7 @@ def normalizer_from_stat(stat):
 def main():
     task = "can"
     dataset_type = "ph"
-    dataset_path = f"/ssd1/yudongjie/robomimic/datasets/{task}/{dataset_type}/image_abs.hdf5"
+    dataset_path = f"/ssd1/yudongjie/robomimicv030/{task}/{dataset_type}/image_v141_abs.hdf5"
     shape_meta = {
         "obs": {
             "agentview_image": {
@@ -427,8 +427,8 @@ def main():
         abs_action=True,
         rotation_rep='rotation_6d',
         use_cache=True,
-        val_ratio=0.05,
-        num_demo=50
+        val_ratio=0.02,
+        num_demo=20
     )
 
     val_set = dataset.get_validation_dataset()
@@ -458,6 +458,12 @@ def main():
         print(f"Train mean: {train.mean():.3f}, std: {train.std():.3f}, max: {train.max():.3f}")
         print("train:", train[:10])
 
+    # get action from replay buffer, median, mean
+    normalizer = dataset.get_normalizer()
+    action_normalizer = dataset.get_normalizer()['action']
+    actions = np.array(dataset.replay_buffer['action'].astype(np.float32))
+    print("NAction mean:", action_normalizer.normalize(actions.mean(axis=0)))
+    print("NAction median:", action_normalizer.normalize(np.median(actions, axis=0)))
 
 if __name__ == "__main__":
     main()

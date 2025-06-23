@@ -261,6 +261,7 @@ def _fit(data: Union[torch.Tensor, np.ndarray, zarr.Array],
     return this_params
 
 
+@torch.no_grad()
 def _normalize(x, params, forward=True):
     assert 'scale' in params
     if isinstance(x, np.ndarray):
