@@ -67,7 +67,7 @@ training:
   seed: 42
   debug: False
   # optimization
-  batch_size: 512
+  batch_size: 256
   policy_lr: 1e-4
   q_lr: 1e-4
   learning_start: 1000
@@ -77,7 +77,7 @@ training:
   policy_freq: 1
   target_freq: 1
   training_freq: 100
-  utd: 0.25
+  utd: 0.5
   n_envs: ${online_task.n_envs}
   # residue progress
   res_scale: 0.1

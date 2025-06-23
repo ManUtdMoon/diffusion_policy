@@ -288,7 +288,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     next_obs_seq, rewards, dones, infos = envs.step(env_action)
 
                     ## reward preprocess
-                    rewards -= 1.0
+                    ## 1. fixed epi len performs better with positive rewards
+                    # rewards -= 1.0
 
                     ## prepare transitions for rb
                     ## because we do not bootstrap at done, we can use next_obs_seq directly
