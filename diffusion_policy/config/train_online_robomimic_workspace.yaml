@@ -56,7 +56,7 @@ res_policy:
   action_dim: ???
   log_std_max: 1.6
   log_std_min: -10.0
-  actor_input: obs
+  actor_input: obs_action
   gamma: 0.97
   tau: 0.01
   init_alpha: 0.01
