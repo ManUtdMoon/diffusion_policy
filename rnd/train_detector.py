@@ -116,6 +116,7 @@ def main(
     data_path = f'data/rnd/{task}_image_20_flow_obs_emb.pt'
     payload = torch.load(data_path)
     obs_emb = payload['obs_emb']  # Shape: (N, Do)
+    policy = payload['checkpoint']
     
     # 1.2 Create datasets and dataloader
     dataset =  TensorDataset(obs_emb)
@@ -161,7 +162,8 @@ def main(
         'seed': seed,
         'total_samples': len(obs_emb),
         'train_samples': len(dataset),
-        'timestamp': now
+        'timestamp': now,
+        'policy': policy,
     }
     
     # Save config
@@ -201,7 +203,8 @@ def main(
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'losses': losses,
-            }, os.path.join(output_dir, f'{task}_flow.ckpt'))
+                'config': config,
+            }, os.path.join(output_dir, f'{task}_flow_epoch={epoch}.ckpt'))
 
     # Plot loss curves
     plot_loss_curve(losses, output_dir)

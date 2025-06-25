@@ -112,7 +112,10 @@ def main(
     num_demo = cfg.task.dataset.num_demo
     policy_type = 'flow' if 'flow' in cfg.name else 'diffusion'
     file_name = f'{output}/{task}_{num_demo}_{policy_type}_obs_emb.pt'
-    torch.save({'obs_emb': obs_embs,}, file_name)
+    torch.save({
+        'obs_emb': obs_embs,
+        'checkpoint': checkpoint,
+    }, file_name)
 
 
 if __name__ == "__main__":
