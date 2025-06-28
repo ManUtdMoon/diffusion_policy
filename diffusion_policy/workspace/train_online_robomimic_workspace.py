@@ -60,11 +60,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
         # configure policies
         ## load base policy
-        self.base_policy: FlowMatchUnetImagePolicy = hydra.utils.instantiate(cfg.base_policy)
         base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
         base_cfg = base_payload['cfg']
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
+        base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
+        self.base_policy: FlowMatchUnetImagePolicy
+        self.base_policy = hydra.utils.instantiate(base_cfg.policy)
         self.base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])
         print(f"Loaded base policy from {cfg.online_task.base_ckpt}")
         self.base_policy.eval()
@@ -114,7 +116,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     env=robomimic_env,
                     shape_meta=shape_meta,
                     init_state=None,
-                    render_obs_key='agentview_image'
+                    render_obs_key=cfg.online_task.env_runner.render_obs_key
                 ),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
@@ -131,7 +133,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     env=robomimic_env,
                     shape_meta=shape_meta,
                     init_state=None,
-                    render_obs_key='agentview_image'
+                    render_obs_key=cfg.online_task.env_runner.render_obs_key
                 ),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,

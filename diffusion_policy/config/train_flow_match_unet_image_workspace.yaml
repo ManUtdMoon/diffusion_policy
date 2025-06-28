@@ -31,10 +31,13 @@ policy:
     _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
     shape_meta: ${shape_meta}
     rgb_model:
-      _target_: diffusion_policy.model.vision.model_getter.ResNet18SpatialSoftmax
+      _target_: diffusion_policy.model.vision.model_getter.ResNet18Pooling
       input_shape: [3, 76, 76] # should match crop_shape
-      num_kp: 32
       weights: null
+      # pooling_kwargs
+      pooling_type: "spatial_learned_embeddings"
+      num_spatial_blocks: 8
+      bottleneck_dim: 256
     resize_shape: null
     crop_shape: [76, 76]
     # constant center crop
@@ -102,7 +105,7 @@ training:
   freeze_encoder: False
   # training loop control
   # in epochs
-  rollout_every: 250
+  rollout_every: 100
   checkpoint_every: 100
   val_every: 25
   sample_every: 25
@@ -123,10 +126,10 @@ logging:
 
 checkpoint:
   topk:
-    monitor_key: train_action_mse_error
-    mode: min
+    monitor_key: test_mean_score
+    mode: max
     k: 2
-    format_str: 'epoch={epoch:04d}-train_mse={train_action_mse_error:.3f}.ckpt'
+    format_str: 'epoch={epoch:04d}-score={test_mean_score:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

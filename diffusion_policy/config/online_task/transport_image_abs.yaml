@@ -1,9 +1,9 @@
-name: can_image
+name: transport_image
 
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
   obs:
-    agentview_image:
+    shouldercamera0_image:
       shape: [3, 84, 84]
       type: rgb
     robot0_eye_in_hand_image:
@@ -16,15 +16,28 @@ shape_meta: &shape_meta
       shape: [4]
     robot0_gripper_qpos:
       shape: [2]
+    shouldercamera1_image:
+      shape: [3, 84, 84]
+      type: rgb
+    robot1_eye_in_hand_image:
+      shape: [3, 84, 84]
+      type: rgb
+    robot1_eef_pos:
+      shape: [3]
+      # type default: low_dim
+    robot1_eef_quat:
+      shape: [4]
+    robot1_gripper_qpos:
+      shape: [2]
   action: 
-    shape: [10]
-
-task_name: &task_name can
+    shape: [20]
+  
+task_name: &task_name transport
 dataset_type: &dataset_type ph
 dataset_path: &dataset_path /ssd1/yudongjie/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_abs.hdf5
 abs_action: &abs_action True
 
-base_ckpt: "data/outputs/2025.06.26/13.09.11_train_flow_match_unet_image_can_image/checkpoints/epoch=0500-score=0.580.ckpt"
+base_ckpt: "data/outputs/2025.06.27/07.58.29_train_flow_match_unet_image_transport_image/checkpoints/epoch=0700-score=0.520.ckpt"
 
 # train
 n_envs: 25
@@ -41,11 +54,10 @@ env_runner:
   n_test: 50
   n_test_vis: 4
   test_start_seed: 100000
-  # use python's eval function as resolver, single-quoted string as argument
-  max_steps: ${eval:'500 if "${online_task.dataset_type}" == "mh" else 200'}
+  max_steps: 700
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
-  render_obs_key: 'agentview_image'
+  render_obs_key: 'shouldercamera0_image'
   fps: 10
   crf: 22
   past_action: False

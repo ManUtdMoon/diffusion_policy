@@ -14,42 +14,6 @@ n_obs_steps: 2
 n_action_steps: 4
 n_latency_steps: 0
 
-base_policy:
-  _target_: diffusion_policy.policy.flow_match_unet_image_policy.FlowMatchUnetImagePolicy
-
-  shape_meta: ${shape_meta}
-  
-  noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteScheduler
-    num_train_timesteps: 100
-
-  obs_encoder:
-    _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
-    shape_meta: ${shape_meta}
-    rgb_model:
-      _target_: diffusion_policy.model.vision.model_getter.ResNet18SpatialSoftmax
-      input_shape: [3, 76, 76] # should be matching crop_shape
-      num_kp: 32
-      weights: null
-    resize_shape: null
-    crop_shape: [76, 76]
-    # constant center crop
-    random_crop: True
-    use_group_norm: True
-    share_rgb_model: False
-    imagenet_norm: True
-
-  horizon: ${horizon}
-  n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
-  n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 2
-  obs_as_global_cond: True
-  diffusion_step_embed_dim: 128
-  down_dims: [128,256,512]
-  kernel_size: 5
-  n_groups: 8
-  cond_predict_scale: True
-
 res_policy:
   _target_: diffusion_policy.policy.residue_policy.ResiduePolicy
   obs_dim: ???

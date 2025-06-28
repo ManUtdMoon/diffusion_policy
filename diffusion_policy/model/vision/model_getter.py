@@ -1,4 +1,5 @@
 import numpy as np
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -123,12 +124,53 @@ class SpatialSoftmax(nn.Module):
         # reshape to [B, K, 2]
         feature_keypoints = expected_xy.view(-1, self._num_kp, 2)
 
-        return feature_keypoints
-    
+        return feature_keypoints.flatten(start_dim=1)  # [B, K*2]
 
-class ResNet18SpatialSoftmax(nn.Module):
-    def __init__(self, input_shape, num_kp=32, weights=None):
-        super(ResNet18SpatialSoftmax, self).__init__()
+
+class SpatialLearnedEmbeddings(nn.Module):
+    """
+    Spatial Learned Embeddings Layer. This layer learns a set of spatial embeddings
+    for keypoints, which can be used in place of spatial softmax.
+
+    Args:
+        input_shape (tuple): shape of the input feature (C, H, W)
+        num_spatial_blocks (int): number of keypoints to learn embeddings for
+        bottleneck_dim (int): dimension of the bottleneck layer
+    """
+    def __init__(self, input_shape, num_spatial_blocks=8, bottleneck_dim=256):
+        super(SpatialLearnedEmbeddings, self).__init__()
+        assert len(input_shape) == 3
+        self._in_c, self._in_h, self._in_w = input_shape
+        self.num_spatial_blocks = num_spatial_blocks
+        self.bottleneck_dim = bottleneck_dim
+
+        self.embeddings = nn.Parameter(
+            torch.empty(self._in_c, self._in_h, self._in_w, self.num_spatial_blocks))
+        self.bottleneck = nn.Linear(
+            self._in_c * self.num_spatial_blocks,
+            self.bottleneck_dim
+        )
+        self.ln = nn.LayerNorm(self.bottleneck_dim)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        fan_in = self._in_c
+        variance = 1.0 / fan_in
+        std = math.sqrt(variance) / .87962566103423978
+        with torch.no_grad():
+            nn.init.trunc_normal_(self.embeddings, std=std)
+    
+    def forward(self, x):
+        x = torch.einsum('bchw,chwf->bcf', x, self.embeddings)
+        x = x.flatten(start_dim=1)  # [B, C * num_spatial_blocks]
+        x = self.bottleneck(x)
+        x = self.ln(x)
+        return F.tanh(x)  # [B, bottleneck_dim]
+        
+
+class ResNet18Pooling(nn.Module):
+    def __init__(self, input_shape, weights=None, **kwargs):
+        super(ResNet18Pooling, self).__init__()
         # 1. encode input (images) using convolutional layers
         ## ResNet18 layers: conv, bn, relu, maxpool(64,x/2), layer1 (64,x/4)
         ## layer2 (128,x/8), layer3(256,x/16), layer4(512,x/32), avgpool(512,), fc
@@ -143,28 +185,82 @@ class ResNet18SpatialSoftmax(nn.Module):
         self.remove_layer_num = remove_layer_num
         self.resnet_base = nn.Sequential(*layers)
 
-        # 2. add spatial softmax layer
+        # 2. add pooling layer
         x = torch.zeros(1, *input_shape)
         y = self.resnet_base(x) # now should be (B,512,h/32,w/32)
         output_shape = y.shape
-        self.pooling = SpatialSoftmax(
-            input_shape=output_shape[1:], num_kp=num_kp
-        )
-        self.output_shape = self.pooling(y).flatten(start_dim=1).shape[-1]
+
+        pooling_type = kwargs.get('pooling_type', 'spatial_learned_embeddings')
+        if pooling_type == 'spatial_softmax':
+            num_kp = kwargs.get("num_kp", 32)
+            self.pooling = SpatialSoftmax(
+                input_shape=output_shape[1:], num_kp=num_kp
+            )
+        elif pooling_type == 'spatial_learned_embeddings':
+            num_spatial_blocks = kwargs.get("num_spatial_blocks", 8)
+            bottleneck_dim = kwargs.get("bottleneck_dim", 256)
+            self.pooling = SpatialLearnedEmbeddings(
+                input_shape=output_shape[1:],
+                num_spatial_blocks=num_spatial_blocks,
+                bottleneck_dim=bottleneck_dim
+            )
+        elif pooling_type == 'avg':
+            bottleneck_dim = kwargs.get("bottleneck_dim", None)
+            bottleneck = nn.Identity()
+            if bottleneck_dim is not None:
+                bottleneck = nn.Sequential(
+                    nn.Linear(output_shape[1], bottleneck_dim),
+                    nn.LayerNorm(bottleneck_dim),
+                    nn.Tanh()
+                )
+
+            self.pooling = nn.Sequential(
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten(),
+                bottleneck
+            )
+        else:
+            raise ValueError(
+                f"Unsupported pooling type: {pooling_type}. "
+                "Supported types: spatial_softmax, spatial_learned_embeddings."
+            )
+        self.output_shape = self.pooling(y).shape[-1]
 
     def forward(self, x):
         x = self.resnet_base(x)
         x = self.pooling(x)
-        return x.flatten(start_dim=1)
+        return x
 
 
 if __name__ == "__main__":
     # Test Resnet w/ Spatial Projection
     input_shape = (3, 120, 160)
-    num_kp = 32
-    model = ResNet18SpatialSoftmax(input_shape, num_kp, weights=None)
-
     sample = torch.randn(16, *input_shape)
-    output = model(sample)
-    print(output.shape, model.output_shape)
+    pooling_kwargs = {
+        "pooling_type": "spatial_softmax",
+        "num_kp": 32,  # Number of keypoints to project
+    }
+    model1 = ResNet18Pooling(input_shape, weights=None, **pooling_kwargs)
+    
+    output = model1(sample)
+    print(output.shape, model1.output_shape)
     # Expected output shape: (16, 64) for num_kp=32
+
+    pooling_kwargs = {
+        "pooling_type": "spatial_learned_embeddings",
+        "num_spatial_blocks": 8,
+        "bottleneck_dim": 256,
+    }
+    model2 = ResNet18Pooling(input_shape, weights=None, **pooling_kwargs)
+    output = model2(sample)
+    print(output.shape, model2.output_shape)
+    # Expected output shape: (16, 256) for bottleneck_dim=256
+
+    pooling_kwargs = {
+        "pooling_type": "avg",
+        "bottleneck_dim": 256,
+    }
+    model3 = ResNet18Pooling(input_shape, weights=None, **pooling_kwargs)
+    output = model3(sample)
+    print(output.shape, model3.output_shape)
+    # Expected output shape: (16, 512) for avg pooling
