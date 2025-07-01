@@ -41,8 +41,6 @@ def main(
     samples and stores them.
     """
     # 1. create output directory if it doesn't exist
-    if os.path.exists(output):
-        click.confirm(f"Output path {output} already exists! Overwrite?", abort=True)
     pathlib.Path(output).mkdir(parents=True, exist_ok=True)
     
     # 2. Load checkpoint, extract cfg, dataset, and policy

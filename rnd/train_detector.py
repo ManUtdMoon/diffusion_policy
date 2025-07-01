@@ -64,15 +64,15 @@ def plot_loss_curve(losses, output_dir):
 @click.option('--task', '-t', default='can', help='Task of interest')
 @click.option('--output-dir', '-o', default='data/rnd/', help='Output directory for saving models and logs')
 @click.option('--hidden-dims', default='[512, 512]', help='Hidden dimensions as list')
-@click.option('--output-dim', default=256, help='Output dimension for RND networks')
+@click.option('--output-dim', default=512, help='Output dimension for RND networks')
 @click.option('--batch-size', '-b', default=64, help='Batch size for training')
-@click.option('--num-epochs', '-e', default=200, help='Number of training epochs')
+@click.option('--num-epochs', '-e', default=300, help='Number of training epochs')
 @click.option('--learning-rate', '-lr', default=1e-4, help='Learning rate')
 @click.option('--weight-decay', default=1e-4, help='Weight decay for optimizer')
 @click.option('--num-workers', '-w', default=4, help='Number of workers for data loading')
 @click.option('--device', '-d', default='cuda:0', help='Device to use for training')
 @click.option('--seed', default=42, help='Random seed')
-@click.option('--save-every', default=20, help='Save checkpoint every N epochs')
+@click.option('--save-every', default=100, help='Save checkpoint every N epochs')
 def main(
         task,
         output_dir,

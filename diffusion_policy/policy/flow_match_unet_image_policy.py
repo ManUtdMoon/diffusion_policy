@@ -120,7 +120,15 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         trajectory[condition_mask] = condition_data[condition_mask]        
 
         return trajectory
-
+    
+    def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        nobs = self.normalizer.normalize(obs_dict)
+        B, To = next(iter(nobs.values())).shape[:2]
+        batched_nobs = dict_apply(
+            nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
+        obs_emb = self.obs_encoder(batched_nobs) # (B*To, do)
+        obs_emb = obs_emb.reshape(B, -1) # (B, Do=To*do)
+        return obs_emb
 
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
