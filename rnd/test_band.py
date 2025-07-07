@@ -104,7 +104,7 @@ def main(rnd_ckpt, n_action_steps, device, mod_type, confidence_interval, src):
         detector=rnd,
     )
 
-    # 3. calculate TPR and TNR
+    # 3.1 calculate TPR and TNR
     pred_ood_perstep = test_log['rnd_scores'] > calib_data['bound']
     pred_ood_pertraj = pred_ood_perstep.any(axis=-1) # (n_test,)
 
@@ -117,6 +117,27 @@ def main(rnd_ckpt, n_action_steps, device, mod_type, confidence_interval, src):
     
     print(f"Confusion Matrix: TN={tn}, FP={fp}, FN={fn}, TP={tp}")
     print(f"TPR: {tpr:.4f}, TNR: {tnr:.4f}")
+
+    # 3.2 print indices in the first n_test_vis
+    n_test_vis = env_cfg.n_test_vis
+    vis_label = np.array(test_log['failure'][:n_test_vis], dtype=bool)
+    vis_pred = np.array(pred_ood_pertraj[:n_test_vis], dtype=bool)
+
+    print("False Negatives (FN) indices in the first n_test_vis:")
+    fn_indices = np.where(np.logical_and(vis_label, np.logical_not(vis_pred)))[0]
+    print(fn_indices)
+
+    print("False Positives (FP) indices in the first n_test_vis:")
+    fp_indices = np.where(np.logical_and(np.logical_not(vis_label), vis_pred))[0]
+    print(fp_indices)
+
+    print("True Positives (TP) indices in the first n_test_vis:")
+    tp_indices = np.where(np.logical_and(vis_label, vis_pred))[0]
+    print(tp_indices)
+
+    print("True Negatives (TN) indices in the first n_test_vis:")
+    tn_indices = np.where(np.logical_and(np.logical_not(vis_label), np.logical_not(vis_pred)))[0]
+    print(tn_indices)
 
     # 4. save results
     json_log = dict()
@@ -133,30 +154,23 @@ def main(rnd_ckpt, n_action_steps, device, mod_type, confidence_interval, src):
 
     json_log['failure'] = np.array(test_log['failure'], dtype=bool).tolist()
     json_log['failure_pred'] = pred_ood_pertraj.tolist()
-    json_log['tpr'] = tpr
-    json_log['tnr'] = tnr
+    json_log['cm_tpr'] = tpr
+    json_log['cm_tnr'] = tnr
     json_log['cm'] = {
         'tn': tn,
         'fp': fp,
         'fn': fn,
         'tp': tp
     }
+    json_log['cm_indices'] = {
+        'fn': fn_indices.tolist(),
+        'fp': fp_indices.tolist(),
+        'tp': tp_indices.tolist(),
+        'tn': tn_indices.tolist()
+    }
 
     out_path = os.path.join(output_dir, 'eval_log.json')
     json.dump(json_log, open(out_path, 'w'), indent=2, sort_keys=True)
-
-    # 5 print FN and FP indices in the first n_test_vis
-    n_test_vis = env_cfg.n_test_vis
-    vis_label = np.array(test_log['failure'][:n_test_vis], dtype=bool)
-    vis_pred = np.array(pred_ood_pertraj[:n_test_vis], dtype=bool)
-
-    print("False Negatives (FN) indices in the first n_test_vis:")
-    fn_indices = np.where(np.logical_and(vis_label, np.logical_not(vis_pred)))[0]
-    print(fn_indices)
-
-    print("False Positives (FP) indices in the first n_test_vis:")
-    fp_indices = np.where(np.logical_and(np.logical_not(vis_label), vis_pred))[0]
-    print(fp_indices)
 
 
 if __name__ == "__main__":

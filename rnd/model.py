@@ -43,7 +43,8 @@ def create_mlp(
         'gelu': nn.GELU(),
         'silu': nn.SiLU(),
         'sigmoid': nn.Sigmoid(),
-        'identity': nn.Identity()
+        'identity': nn.Identity(),
+        'mish': nn.Mish(),
     }
     
     if activation_fn not in activation_map:
