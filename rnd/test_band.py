@@ -24,7 +24,7 @@ from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.policy.flow_match_unet_image_policy import FlowMatchUnetImagePolicy
 from diffusion_policy.env_runner.robomimic_image_runner_with_detector import RobomimicImageRunnerWithDetector
 
-from rnd.model import RND
+from rnd.model import RND, RNDUnet, LogZOMlp
 
 @click.command()
 @click.option('--rnd_ckpt', '-c', required=True,
@@ -52,10 +52,19 @@ def main(rnd_ckpt, n_action_steps, device, mod_type, confidence_interval, src):
     print(f"Loading RND checkpoint from {rnd_ckpt}")
     rnd_payload = torch.load(open(rnd_ckpt, 'rb'), pickle_module=dill)
     rnd_cfg = deepcopy(rnd_payload['config'])
-    rnd = RND(
+    # rnd = RND(
+    #     input_dim=rnd_cfg['input_dim'],
+    #     hidden_dims=rnd_cfg['hidden_dims'],
+    #     output_dim=rnd_cfg['output_dim'],
+    # )
+    # rnd = RNDUnet(
+    #     input_dim=rnd_cfg['input_dim'],
+    #     hidden_dims=rnd_cfg['hidden_dims'],
+    #     cond_dim=rnd_cfg['cond_dim']
+    # )
+    rnd = LogZOMlp(
         input_dim=rnd_cfg['input_dim'],
         hidden_dims=rnd_cfg['hidden_dims'],
-        output_dim=rnd_cfg['output_dim'],
     )
     rnd.load_state_dict(rnd_payload['model'])
     rnd.to(device)
@@ -143,7 +152,7 @@ def main(rnd_ckpt, n_action_steps, device, mod_type, confidence_interval, src):
     json_log = dict()
     for key, value in test_log.items():
         if isinstance(value, wandb.sdk.data_types.video.Video):
-            json_log[key] = value._path
+            pass
         else:
             json_log[key] = value
     del json_log['rnd_scores']

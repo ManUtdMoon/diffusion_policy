@@ -23,7 +23,7 @@ from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.policy.flow_match_unet_image_policy import FlowMatchUnetImagePolicy
 from diffusion_policy.env_runner.robomimic_image_runner_with_detector import RobomimicImageRunnerWithDetector
 
-from rnd.model import RND
+from rnd.model import RND, RNDUnet, LogZOMlp
 from rnd.calib_band_with_demo import _get_band_modulation
 
 
@@ -54,11 +54,19 @@ def main(rnd_ckpt, mean_ratio, n_action_steps, device, mod_type, confidence_inte
     print(f"Loading RND checkpoint from {rnd_ckpt}...")
     rnd_payload = torch.load(open(rnd_ckpt, 'rb'), pickle_module=dill)
     rnd_cfg = deepcopy(rnd_payload['config'])
-    rnd = RND(
+    # rnd = RND(
+    #     input_dim=rnd_cfg['input_dim'],
+    #     hidden_dims=rnd_cfg['hidden_dims'],
+    #     output_dim=rnd_cfg['output_dim'],
+    # )
+    # rnd = RNDUnet(
+    #     input_dim=rnd_cfg['input_dim'],
+    #     hidden_dims=rnd_cfg['hidden_dims'],
+    #     cond_dim=rnd_cfg['cond_dim']
+    # )
+    rnd = LogZOMlp(
         input_dim=rnd_cfg['input_dim'],
-        hidden_dims=rnd_cfg['hidden_dims'],
-        output_dim=rnd_cfg['output_dim'],
-    )
+        hidden_dims=rnd_cfg['hidden_dims'],)
     rnd.load_state_dict(rnd_payload['model'])
     rnd.to(device)
     rnd.eval()

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import sys
 import os
 import pathlib
@@ -21,7 +19,7 @@ import yaml
 from datetime import datetime
 from tqdm import tqdm
 
-from rnd.model import RND
+from rnd.model import RND, RNDUnet, LogZOMlp
 
 
 
@@ -64,9 +62,9 @@ def plot_loss_curve(losses, output_dir):
 @click.option('--task', '-t', default='can', help='Task of interest')
 @click.option('--output-dir', '-o', default='data/rnd/', help='Output directory for saving models and logs')
 @click.option('--hidden-dims', default='[512, 512]', help='Hidden dimensions as list')
-@click.option('--output-dim', default=512, help='Output dimension for RND networks')
+@click.option('--n_action_steps', default=4, help='Action steps in a chunk')
 @click.option('--batch-size', '-b', default=64, help='Batch size for training')
-@click.option('--num-epochs', '-e', default=300, help='Number of training epochs')
+@click.option('--num-epochs', '-e', default=200, help='Number of training epochs')
 @click.option('--learning-rate', '-lr', default=1e-4, help='Learning rate')
 @click.option('--weight-decay', default=1e-4, help='Weight decay for optimizer')
 @click.option('--num-workers', '-w', default=4, help='Number of workers for data loading')
@@ -77,7 +75,7 @@ def main(
         task,
         output_dir,
         hidden_dims,
-        output_dim,
+        n_action_steps,
         batch_size,
         num_epochs,
         learning_rate,
@@ -112,14 +110,15 @@ def main(
     output_dir = str(pathlib.Path(output_dir) / task / now)
     os.makedirs(output_dir, exist_ok=True)
     
-    # 1.1 load observation embeddings
-    data_path = f'data/rnd/{task}_image_20_flow_obs_emb.pt'
+    # 1.1 load observation embeddings and nactions
+    data_path = f'data/rnd/{task}_image_20_flow_obs_emb_action.pt'
     payload = torch.load(data_path)
     obs_emb = payload['obs_emb']  # Shape: (N, Do)
+    naction = payload['action'][:, 1:1+n_action_steps]  # Shape: (N, Ta, Da)
     policy = payload['checkpoint']
     
     # 1.2 Create datasets and dataloader
-    dataset =  TensorDataset(obs_emb)
+    dataset =  TensorDataset(obs_emb, naction)
     train_loader = DataLoader(
         dataset, 
         batch_size=batch_size,
@@ -129,21 +128,22 @@ def main(
     )
     
     # 2. Create model
-    input_dim = obs_emb.shape[1]  # Input dimension is the embedding size
-    model = RND(
+    # input_dim = naction.shape[-1]  # Input dimension is Da
+    # model = RNDUnet(
+    #     input_dim=input_dim,
+    #     hidden_dims=hidden_dims,
+    #     cond_dim=obs_emb.shape[-1],  # obs_emb as condition
+    # ).to(device)
+    input_dim = obs_emb.shape[1] + n_action_steps * naction.shape[-1]  # Do + Ta * Da
+    model = LogZOMlp(
         input_dim=input_dim,
         hidden_dims=hidden_dims,
-        output_dim=output_dim
-    )
-    model.to(device)
-    total_params = sum(p.numel() for p in model.parameters()) / 1_000
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1_000
-    print(f"Total parameters: {total_params:,} K")
-    print(f"Trainable parameters: {trainable_params:,} K")
+        diffusion_step_dim=64,  # Example dimension for diffusion step embedding
+    ).to(device)
     
     # 3. Create optimizer and loss function
     optimizer = optim.AdamW(
-        model.predictor.parameters(),  # Only train predictor, target is frozen
+        model.parameters(),  # Only train predictor, target is frozen
         lr=learning_rate,
         weight_decay=weight_decay
     )
@@ -153,7 +153,8 @@ def main(
         'data_path': data_path,
         'input_dim': input_dim,
         'hidden_dims': hidden_dims,
-        'output_dim': output_dim,
+        "obs_emb_dim": obs_emb.shape[-1],
+        'n_action_steps': n_action_steps,
         'batch_size': batch_size,
         'num_epochs': num_epochs,
         'learning_rate': learning_rate,
@@ -161,7 +162,6 @@ def main(
         'device': device,
         'seed': seed,
         'total_samples': len(obs_emb),
-        'train_samples': len(dataset),
         'timestamp': now,
         'policy': policy,
     }
@@ -180,11 +180,12 @@ def main(
         
         with tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [Train]",
                 leave=False) as tepoch:
-            for batch_idx, (obs_emb,) in enumerate(tepoch):
+            for batch_idx, (obs_emb, naction) in enumerate(tepoch):
                 obs_emb = obs_emb.to(device)
+                naction = naction.to(device)
 
                 optimizer.zero_grad()            
-                loss = model.compute_loss(obs_emb)
+                loss = model.compute_loss(obs_emb, naction)
 
                 loss.backward()
                 optimizer.step()

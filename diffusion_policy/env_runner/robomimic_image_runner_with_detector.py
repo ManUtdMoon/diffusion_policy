@@ -14,7 +14,7 @@ from diffusion_policy.env_runner.robomimic_image_runner import RobomimicImageRun
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.common.pytorch_util import dict_apply
 
-from rnd.model import RND
+from rnd.model import RND, RNDUnet, LogZOMlp
 
 class RobomimicImageRunnerWithDetector(RobomimicImageRunner):
     """
@@ -47,7 +47,7 @@ class RobomimicImageRunnerWithDetector(RobomimicImageRunner):
             n_obs_steps, n_action_steps, render_obs_key, fps, crf, past_action,
             abs_action, tqdm_interval_sec, n_envs)
 
-    def run_with_detector(self, policy: BaseImagePolicy, detector: RND):
+    def run_with_detector(self, policy: BaseImagePolicy, detector):
         device = policy.device
         dtype = policy.dtype
         env = self.env
@@ -120,8 +120,12 @@ class RobomimicImageRunnerWithDetector(RobomimicImageRunner):
                 
                 # RND score starts
                 obs_emb = action_dict['obs_emb']
+                naction = action_dict['naction']
                 with torch.no_grad():
-                    rnd_score = detector(obs_emb).cpu().numpy() # (B,)
+                    if isinstance(detector, RNDUnet) or isinstance(detector, LogZOMlp):
+                        rnd_score = detector(obs_emb, naction).cpu().numpy() # (B,)
+                    elif isinstance(detector, RND):
+                        rnd_score = detector(obs_emb).cpu().numpy() # (B,)
                 # RND score ends
 
                 # step env

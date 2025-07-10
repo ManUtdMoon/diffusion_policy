@@ -77,6 +77,7 @@ def main(
     
     # 3. Collect observation embeddings
     obs_embs = []
+    actions = []
     sample_indices = []
     
     with torch.no_grad():
@@ -90,9 +91,13 @@ def main(
             obs_emb = policy.obs_encoder(this_nobs) # (B*To, do)
             obs_emb = obs_emb.reshape(B, -1) # (B, Do=To*do)
 
+            # action process
+            nactions = policy.normalizer['action'].normalize(batch['action'])
+
             # Move to CPU and store
             obs_emb_cpu = obs_emb.cpu()
             obs_embs.append(obs_emb_cpu)
+            actions.append(nactions.cpu())
 
             # Keep track of sample indices
             start_idx = batch_idx * batch_size
@@ -100,18 +105,22 @@ def main(
             sample_indices.extend(range(start_idx, end_idx))
     
     print(f'obs_embeddings shape: {obs_embs[0].shape} (B, Do)')
+    print(f'actions shape: {actions[0].shape} (B, H, Da)')
     
     # 4. Concatenate all embeddings
     obs_embs = torch.cat(obs_embs, dim=0)
     print(f'Total obs_embeddings shape: {obs_embs.shape} (N, Do)')
+    actions = torch.cat(actions, dim=0)
+    print(f'Total actions shape: {actions.shape} (N, H, Da)')
 
     # 5. Save results
     task = cfg.task.name
     num_demo = cfg.task.dataset.num_demo
     policy_type = 'flow' if 'flow' in cfg.name else 'diffusion'
-    file_name = f'{output}/{task}_{num_demo}_{policy_type}_obs_emb.pt'
+    file_name = f'{output}/{task}_{num_demo}_{policy_type}_obs_emb_action.pt'
     torch.save({
         'obs_emb': obs_embs,
+        'action': actions,
         'checkpoint': checkpoint,
     }, file_name)
 
