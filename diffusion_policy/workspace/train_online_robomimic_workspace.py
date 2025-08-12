@@ -72,6 +72,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         self.base_policy.eval()
         self.base_policy.requires_grad_(False)
 
+        ## load demo_obs_emb from base policy
+        checkpoint = cfg.online_task.base_ckpt
+        ckpt_dir = pathlib.Path(checkpoint).parent
+        ckpt_name = pathlib.Path(checkpoint).stem
+        demo_emb_path = ckpt_dir / f'{ckpt_name}_obs_emb_action.pt'
+        demo_emb = torch.load(open(demo_emb_path, 'rb'), pickle_module=dill)
+
         ## configure res policy
         obs_emb_dim = self.base_policy.obs_feature_dim # do, Do=To*do
         act_dim = cfg.shape_meta.action.shape[0] # da
@@ -158,6 +165,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         device = torch.device(cfg.training.device)
         self.base_policy.to(device)
         self.res_policy.to(device)
+        demo_obs_emb = demo_emb['obs_emb'].to(device)
         optimizers = self.res_policy.get_optimizer(
             policy_lr=cfg.training.policy_lr,
             q_lr=cfg.training.q_lr
@@ -263,16 +271,28 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*Da)
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
+                    res_ratio = 1.0
+                    this_unc_thres = cfg.unc.thres_ub * np.exp(
+                        -self.global_step / cfg.unc.decay_rate)
+                    with torch.no_grad():
+                        this_unc = torch.cdist(
+                            base_dict['obs_emb'].detach(), demo_obs_emb).min(dim=1).values
                     if not learning_started:  # random action
-                        res_naction_flat = np.array(
-                            [dummy_action_space.sample() for _ in range(n_envs)]) # (B,Ta*Da)
+                        # res_naction_flat = np.array(
+                        #     [dummy_action_space.sample() for _ in range(n_envs)]) # (B,Ta*Da)
+                        res_naction_flat = np.zeros_like(base_naction_flat)
                         sum_naction_flat = res_scale * res_naction_flat + base_naction_flat
                         naction = sum_naction_flat.reshape(-1, cfg.n_action_steps, act_dim)
                         action = self.base_policy.normalizer['action'].unnormalize(naction).cpu().numpy()
                     else:  # use res_policy
                         assert self.global_step >= 0
                         ## prepare masks
-                        res_masks = torch.rand(n_envs, device=device) >= res_ratio
+                        # res_masks = torch.rand(n_envs, device=device) >= res_ratio
+
+                        ## mask res_action when uncertainty is low
+                        ## i.e., only use base policy
+                        res_masks = this_unc <= this_unc_thres
+
 
                         ## forward sum policy with cached base info
                         sum_dict = sum_policy.predict_train_action(
@@ -381,6 +401,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
+                    'info/uncertainty_thres': this_unc_thres,
+                    'info/uncertainty': this_unc.mean().item(),
                     
                     'loss/critic_loss': critic_loss.item() / 2.0,
                     'loss/actor_loss': actor_loss.item(),

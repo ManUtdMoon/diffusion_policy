@@ -9,6 +9,9 @@ sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1)
 sys.stderr = open(sys.stderr.fileno(), mode='w', buffering=1)
 
 import os
+import random
+import numpy as np
+import torch
 import pathlib
 import click
 import hydra
@@ -17,6 +20,8 @@ import dill
 import wandb
 import json
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from diffusion_policy.env_runner.robomimic_image_runner_with_uncertainty import RobomimicImageRunnerWithUncertainty
+
 
 @click.command()
 @click.option('-c', '--checkpoint', required=True)
@@ -30,10 +35,25 @@ def main(checkpoint, output_dir, device):
     # load checkpoint
     payload = torch.load(open(checkpoint, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
+
+    n_action_steps = 4 # hardcode
+    cfg.n_action_steps = n_action_steps
+    cfg.policy.n_action_steps = n_action_steps
+    cfg.task.env_runner.n_action_steps = n_action_steps
+    cfg.task.dataset.pad_after = n_action_steps - 1
+
     cls = hydra.utils.get_class(cfg._target_)
     workspace = cls(cfg, output_dir=output_dir)
     workspace: BaseWorkspace
     workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+
+    seed = cfg.training.seed
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     
     # get policy from workspace
     policy = workspace.model
@@ -43,18 +63,32 @@ def main(checkpoint, output_dir, device):
     device = torch.device(device)
     policy.to(device)
     policy.eval()
+
+    # get corresponding demo_emb
+    ckpt_dir = pathlib.Path(checkpoint).parent
+    ckpt_name = pathlib.Path(checkpoint).stem
+    demo_emb_path = ckpt_dir / f'{ckpt_name}_obs_emb_action.pt'
+    demo_emb = torch.load(open(demo_emb_path, 'rb'), pickle_module=dill)
+    demo_obs_emb = demo_emb['obs_emb'].to(device)
     
     # run eval
     cfg.task.env_runner.n_train = 0
     cfg.task.env_runner.n_train_vis = 0
-    cfg.task.env_runner.n_test = 50
-    cfg.task.env_runner.n_test_vis = 10
+    cfg.task.env_runner.n_test = 150
+    cfg.task.env_runner.n_test_vis = 20
     cfg.task.env_runner.test_start_seed = 100_000
     cfg.task.env_runner.n_envs = 25
-    env_runner = hydra.utils.instantiate(
+    cfg.task.env_runner._target_ = 'diffusion_policy.env_runner.robomimic_image_runner_with_uncertainty.RobomimicImageRunnerWithUncertainty'
+    env_runner: RobomimicImageRunnerWithUncertainty = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir)
-    runner_log = env_runner.run(policy)
+    runner_log = env_runner.run_with_uncertainty(policy, demo_obs_emb)
+
+    # save uncertainty
+    uncertainty = np.array(runner_log['uncertainty'])
+    del runner_log['uncertainty']
+    uncertainty_path = pathlib.Path(output_dir) / 'uncertainty.npy'
+    np.save(uncertainty_path, uncertainty)
     
     # dump log to json
     json_log = dict()
@@ -63,6 +97,7 @@ def main(checkpoint, output_dir, device):
             json_log[key] = value._path
         else:
             json_log[key] = value
+    json_log['failure'] = np.array(runner_log['failure'], dtype=bool).tolist()
     out_path = os.path.join(output_dir, 'eval_log.json')
     json.dump(json_log, open(out_path, 'w'), indent=2, sort_keys=True)
 

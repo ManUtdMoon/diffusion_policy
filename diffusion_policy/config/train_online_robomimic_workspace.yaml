@@ -14,6 +14,10 @@ n_obs_steps: 2
 n_action_steps: 4
 n_latency_steps: 0
 
+unc:
+  thres_ub: 0.0
+  decay_rate: 500000
+
 res_policy:
   _target_: diffusion_policy.policy.residue_policy.ResiduePolicy
   obs_dim: ???
