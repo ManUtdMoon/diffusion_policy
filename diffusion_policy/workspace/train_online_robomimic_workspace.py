@@ -85,7 +85,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         act_seq_dim = cfg.n_action_steps * act_dim # Da=Ta*da
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
             cfg.res_policy, obs_dim=obs_emb_dim, action_dim=act_seq_dim)
-        print(f"Residue policy with obs_dim={obs_emb_dim}, action_dim={act_seq_dim}")
+        print(f"Residue policy with do={obs_emb_dim}, Da={act_seq_dim}, gamma={self.res_policy.gamma}")
 
         ## sum policy
         sum_policy = SumPolicy(
