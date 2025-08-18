@@ -105,13 +105,13 @@ def main(
             sample_indices.extend(range(start_idx, end_idx))
     
     print(f'obs_embeddings shape: {obs_embs[0].shape} (B, Do)')
-    print(f'actions shape: {actions[0].shape} (B, H, Da)')
+    print(f'actions shape: {actions[0].shape} (B, H, da)')
     
     # 4. Concatenate all embeddings
     obs_embs = torch.cat(obs_embs, dim=0)
     print(f'Total obs_embeddings shape: {obs_embs.shape} (N, Do)')
     actions = torch.cat(actions, dim=0)
-    print(f'Total actions shape: {actions.shape} (N, H, Da)')
+    print(f'Total actions shape: {actions.shape} (N, H, da)')
 
     # 5. Save results
     task = cfg.task.name

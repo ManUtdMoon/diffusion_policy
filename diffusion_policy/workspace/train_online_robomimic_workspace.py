@@ -165,7 +165,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         device = torch.device(cfg.training.device)
         self.base_policy.to(device)
         self.res_policy.to(device)
-        demo_obs_emb = demo_emb['obs_emb'].to(device)
+        demo_ot_emb = demo_emb['obs_emb'][..., -obs_emb_dim:].to(device)  # (N, do)
         optimizers = self.res_policy.get_optimizer(
             policy_lr=cfg.training.policy_lr,
             q_lr=cfg.training.q_lr
@@ -268,18 +268,16 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## retrieve from base cache
                     obs_emb_tensor = base_dict['obs_emb'][:, -obs_emb_dim:].detach()
                     base_naction_tensor = base_dict['naction'].detach()
-                    base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*Da)
+                    base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
+
+                    ## pi-dec progressive exploration
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
                     res_ratio = 1.0
-                    this_unc_thres = cfg.unc.thres_ub * np.exp(
-                        -self.global_step / cfg.unc.decay_rate)
-                    with torch.no_grad():
-                        this_unc = torch.cdist(
-                            base_dict['obs_emb'].detach(), demo_obs_emb).min(dim=1).values
+
                     if not learning_started:  # random action
                         # res_naction_flat = np.array(
-                        #     [dummy_action_space.sample() for _ in range(n_envs)]) # (B,Ta*Da)
+                        #     [dummy_action_space.sample() for _ in range(n_envs)]) # (B,Ta*da)
                         res_naction_flat = np.zeros_like(base_naction_flat)
                         sum_naction_flat = res_scale * res_naction_flat + base_naction_flat
                         naction = sum_naction_flat.reshape(-1, cfg.n_action_steps, act_dim)
@@ -287,12 +285,11 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     else:  # use res_policy
                         assert self.global_step >= 0
                         ## prepare masks
+                        ## option 1: pi-dec's progressive exploration
                         # res_masks = torch.rand(n_envs, device=device) >= res_ratio
-
-                        ## mask res_action when uncertainty is low
-                        ## i.e., only use base policy
-                        res_masks = this_unc <= this_unc_thres
-
+                        
+                        ## option 2: no mask
+                        res_masks = None
 
                         ## forward sum policy with cached base info
                         sum_dict = sum_policy.predict_train_action(
@@ -357,8 +354,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## fetch data
                     batch = rb.sample(cfg.training.batch_size)
 
+                    ## compute d2d of this batch
+                    with torch.no_grad():
+                        batch_d2d = torch.cdist(
+                            batch.observations, demo_ot_emb
+                        ).min(dim=1).values # (B,)
+
                     ## update critics
-                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch)
+                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, batch_d2d)
                     q_opt.zero_grad()
                     critic_loss.backward()
                     q1_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -401,8 +404,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
-                    'info/uncertainty_thres': this_unc_thres,
-                    'info/uncertainty': this_unc.mean().item(),
+                    'info/uncertainty': batch_d2d.mean().item(),
                     
                     'loss/critic_loss': critic_loss.item() / 2.0,
                     'loss/actor_loss': actor_loss.item(),

@@ -26,7 +26,8 @@ class ResiduePolicy(ModuleAttrMixin):
             tau: float = 0.01,
             init_alpha: float = 0.01,
             auto_alpha: bool = True,
-            res_scale: float = 0.05):
+            res_scale: float = 0.05,
+            power: float = 0.4):
         super().__init__()
 
         # create models
@@ -65,6 +66,7 @@ class ResiduePolicy(ModuleAttrMixin):
         self.target_entropy = target_entropy
         self.res_scale = res_scale
         self.actor_input = actor_input
+        self.power = power
 
         # dimensions
         self.obs_dim = obs_dim
@@ -104,7 +106,7 @@ class ResiduePolicy(ModuleAttrMixin):
 
         return res['sample'], res['log_prob']
 
-    def compute_critic_loss(self, batch: ReplayBufferSamples):
+    def compute_critic_loss(self, batch: ReplayBufferSamples, dist=None):
         bs = batch.rewards.shape[0]
         res_naction, base_naction, base_next_naction = \
             torch.split(batch.actions, self.action_dim, dim=-1)
@@ -133,10 +135,17 @@ class ResiduePolicy(ModuleAttrMixin):
         q1 = self.q1(batch.observations, current_naction).view(-1)  # (B,)
         q2 = self.q2(batch.observations, current_naction).view(-1)  # (B,)
 
+        # compute priorities and weights for samples
+        with torch.no_grad():
+            priority = torch.ones_like(q1)
+            if dist is not None:
+                priority = torch.maximum(priority, dist.pow(self.power))
+
         # compute critic loss
-        q1_loss = F.mse_loss(q1, target_q)
-        q2_loss = F.mse_loss(q2, target_q)
+        q1_loss = (F.mse_loss(q1, target_q, reduction='none') * priority).mean()
+        q2_loss = (F.mse_loss(q2, target_q, reduction='none') * priority).mean()
         critic_loss = q1_loss + q2_loss
+        critic_loss /= priority.mean().detach()
 
         info = {
             'q_target': target_q.mean().item(),

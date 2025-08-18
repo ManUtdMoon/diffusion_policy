@@ -14,10 +14,6 @@ n_obs_steps: 2
 n_action_steps: 4
 n_latency_steps: 0
 
-unc:
-  thres_ub: 0.0
-  decay_rate: 500000
-
 res_policy:
   _target_: diffusion_policy.policy.residue_policy.ResiduePolicy
   obs_dim: ???
@@ -30,6 +26,7 @@ res_policy:
   init_alpha: 0.01
   auto_alpha: True
   res_scale: ${training.res_scale}
+  power: 0.8
 
 training:
   device: "cuda:0"

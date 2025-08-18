@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Union
 import torch
 import torch.nn as nn
 
@@ -77,7 +77,7 @@ class SumPolicy:
     def predict_train_action(self,
             base_naction: torch.Tensor,
             obs_emb: torch.Tensor,
-            res_mask: torch.Tensor
+            res_mask: Union[torch.Tensor, None] = None
             ) -> Dict[str, torch.Tensor]:
         """
         Compute the final action and intermediate results given base info and masks.
@@ -96,7 +96,8 @@ class SumPolicy:
             res_input = torch.cat(
                 [obs_emb, base_naction.flatten(start_dim=1)], dim=-1)
         res_naction_flat = self.res_policy.predict_res_naction(res_input)
-        res_naction_flat[res_mask] = 0.0  # apply the mask
+        if res_mask is not None:
+            res_naction_flat[res_mask] = 0.0  # apply the mask
 
         # 2. compute the sum action
         res_naction = res_naction_flat.reshape_as(base_naction)
