@@ -17,6 +17,7 @@ import random
 import wandb
 import tqdm
 import dill
+import h5py
 import numpy as np
 import gymnasium as gym
 from stable_baselines3.common.buffers import ReplayBuffer
@@ -149,6 +150,19 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
 
+        ### uncomment to set all train env as in-demo env
+        # env_init_fn_dills = list()
+        # with h5py.File(dataset_path, 'r') as f:
+        #     for i in range(cfg.training.n_envs):
+        #         init_state = f[f'data/demo_{i}/states'][0]
+
+        #         def init_fn(env, init_state=init_state):
+        #             assert isinstance(env.env, RobomimicImageWrapper)
+        #             env.env.init_state = init_state
+        #         env_init_fn_dills.append(dill.dumps(init_fn))
+        # envs.call_each('run_dill_function', 
+        #     args_list=[(x,) for x in env_init_fn_dills])
+
         # configure logging
         wandb_run = wandb.init(
             dir=str(self.output_dir),
@@ -165,7 +179,11 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         device = torch.device(cfg.training.device)
         self.base_policy.to(device)
         self.res_policy.to(device)
-        demo_ot_emb = demo_emb['obs_emb'][..., -obs_emb_dim:].to(device)  # (N, do)
+        ## extract rgb_emb from demo_obs_emb
+        lowdim_dim = sum([self.base_policy.obs_encoder.key_shape_map[k][0] for k in self.base_policy.obs_encoder.low_dim_keys])
+        rgb_emb_dim = obs_emb_dim - lowdim_dim
+        demo_rgb_emb = demo_emb['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim].to(device)  # (N, di)
+
         optimizers = self.res_policy.get_optimizer(
             policy_lr=cfg.training.policy_lr,
             q_lr=cfg.training.q_lr
@@ -273,7 +291,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## pi-dec progressive exploration
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
-                    res_ratio = 1.0
+                    ## uncomment to disable progressive exploration
+                    # res_ratio = 1.0
 
                     if not learning_started:  # random action
                         # res_naction_flat = np.array(
@@ -356,12 +375,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
                     ## compute d2d of this batch
                     with torch.no_grad():
+                        batch_rgb = batch.observations[..., :rgb_emb_dim]
                         batch_d2d = torch.cdist(
-                            batch.observations, demo_ot_emb
+                            batch_rgb, demo_rgb_emb
                         ).min(dim=1).values # (B,)
 
                     ## update critics
-                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, batch_d2d)
+                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
                     q_opt.zero_grad()
                     critic_loss.backward()
                     q1_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -405,7 +425,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
                     'info/uncertainty': batch_d2d.mean().item(),
-                    
+                    'info/res_naction_norm': actor_info['res_naction_norm'],
+
                     'loss/critic_loss': critic_loss.item() / 2.0,
                     'loss/actor_loss': actor_loss.item(),
                     'loss/q1_grad_norm': q1_grad_norm.item(),
@@ -436,6 +457,17 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         'res_policy': self.res_policy.state_dict(),
                     }
                     torch.save(payload, path.open('wb'), pickle_module=dill)
+
+                if self.global_step % 10_000 == 0 and self.global_step <= 50_000:
+                    rb_obs_emb = rb.observations
+                    if not rb.full:
+                        rb_obs_emb = rb.observations[:rb.pos]
+                    print(rb_obs_emb.shape) # (N, n_env, do)
+
+                    rb_obs_emb_path = pathlib.Path(self.output_dir) / f'rb_obs_emb_{self.global_step}.npy'
+                    np.save(rb_obs_emb_path, rb_obs_emb)
+                    print(f"RB obs embeddings saved to {rb_obs_emb_path}")
+
                 sum_policy.train()
 
         # envs.close()

@@ -139,7 +139,7 @@ class ResiduePolicy(ModuleAttrMixin):
         with torch.no_grad():
             priority = torch.ones_like(q1)
             if dist is not None:
-                priority = torch.maximum(priority, dist.pow(self.power))
+                priority = torch.maximum(priority, (dist + 1).pow(self.power))
 
         # compute critic loss
         q1_loss = (F.mse_loss(q1, target_q, reduction='none') * priority).mean()
@@ -183,6 +183,7 @@ class ResiduePolicy(ModuleAttrMixin):
 
         info = {
             'actor_entropy': -log_prob.mean().item(),
+            'res_naction_norm': torch.norm(res_naction, dim=-1).mean().item(),
         }
 
         return actor_loss, info

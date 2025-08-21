@@ -69,20 +69,24 @@ def main(checkpoint, output_dir, device):
     ckpt_name = pathlib.Path(checkpoint).stem
     demo_emb_path = ckpt_dir / f'{ckpt_name}_obs_emb_action.pt'
     demo_emb = torch.load(open(demo_emb_path, 'rb'), pickle_module=dill)
-    demo_obs_emb = demo_emb['obs_emb'].to(device)
+
+    obs_emb_dim = policy.obs_feature_dim
+    lowdim_dim = sum([policy.obs_encoder.key_shape_map[k][0] for k in policy.obs_encoder.low_dim_keys])
+    rgb_emb_dim = obs_emb_dim - lowdim_dim # do = dim(images) + dim(proprio)
+    demo_rgb_emb = demo_emb['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim].to(device) # (N,di)
     
     # run eval
     cfg.task.env_runner.n_train = 0
     cfg.task.env_runner.n_train_vis = 0
-    cfg.task.env_runner.n_test = 150
-    cfg.task.env_runner.n_test_vis = 20
+    cfg.task.env_runner.n_test = 50
+    cfg.task.env_runner.n_test_vis = 0
     cfg.task.env_runner.test_start_seed = 100_000
-    cfg.task.env_runner.n_envs = 25
+    cfg.task.env_runner.n_envs = 50
     cfg.task.env_runner._target_ = 'diffusion_policy.env_runner.robomimic_image_runner_with_uncertainty.RobomimicImageRunnerWithUncertainty'
     env_runner: RobomimicImageRunnerWithUncertainty = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir)
-    runner_log = env_runner.run_with_uncertainty(policy, demo_obs_emb)
+    runner_log = env_runner.run_with_uncertainty(policy, demo_rgb_emb)
 
     # save uncertainty
     uncertainty = np.array(runner_log['uncertainty'])
@@ -98,6 +102,8 @@ def main(checkpoint, output_dir, device):
         else:
             json_log[key] = value
     json_log['failure'] = np.array(runner_log['failure'], dtype=bool).tolist()
+    json_log['checkpoint'] = checkpoint
+    json_log['n_action_steps'] = n_action_steps
     out_path = os.path.join(output_dir, 'eval_log.json')
     json.dump(json_log, open(out_path, 'w'), indent=2, sort_keys=True)
 

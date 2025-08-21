@@ -50,7 +50,10 @@ class RobomimicImageRunnerWithUncertainty(RobomimicImageRunner):
         device = policy.device
         dtype = policy.dtype
         env = self.env
-        
+        obs_emb_dim = policy.obs_feature_dim
+        low_dims = sum([policy.obs_encoder.key_shape_map[k][0] for k in policy.obs_encoder.low_dim_keys])
+        rgb_emb_dim = obs_emb_dim - low_dims
+
         # plan for rollout
         n_envs = len(self.env_fns)
         n_inits = len(self.env_init_fn_dills)
@@ -118,7 +121,7 @@ class RobomimicImageRunnerWithUncertainty(RobomimicImageRunner):
                     raise RuntimeError("Nan or Inf action")
                 
                 # dist-to-data starts
-                obs_emb = action_dict['obs_emb'] # (B,To*do)
+                obs_emb = action_dict['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim] # (B,di)
                 with torch.no_grad():
                     dist_to_data = torch.cdist(obs_emb, demo_obs_emb) # (B,N)
                     uncertainty = dist_to_data.min(dim=1).values # (B,)

@@ -27,7 +27,7 @@ abs_action: &abs_action True
 base_ckpt: "data/outputs/2025.06.26/13.08.44_train_flow_match_unet_image_square_image/checkpoints/latest.ckpt"
 
 # train
-n_envs: 25
+n_envs: 20
 
 # eval
 env_runner:

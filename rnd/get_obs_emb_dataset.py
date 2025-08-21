@@ -23,13 +23,11 @@ from diffusion_policy.common.pytorch_util import dict_apply
 
 @click.command()
 @click.option('--checkpoint', '-c', required=True, help='Path to trained flow_match policy checkpoint')
-@click.option('--output', '-o', required=True, help='Output path to store observation embeddings')
 @click.option('--batch-size', '-b', default=64, help='Batch size for processing')
 @click.option('--num-workers', '-w', default=8, help='Number of workers for data loading')
 @click.option('--device', '-d', default='cuda:0', help='Device to use for inference')
 def main(
         checkpoint,
-        output,
         batch_size,
         num_workers,
         device):
@@ -41,7 +39,7 @@ def main(
     samples and stores them.
     """
     # 1. create output directory if it doesn't exist
-    pathlib.Path(output).mkdir(parents=True, exist_ok=True)
+    # pathlib.Path(output).mkdir(parents=True, exist_ok=True)
     
     # 2. Load checkpoint, extract cfg, dataset, and policy
     device = torch.device(device)
@@ -117,7 +115,9 @@ def main(
     task = cfg.task.name
     num_demo = cfg.task.dataset.num_demo
     policy_type = 'flow' if 'flow' in cfg.name else 'diffusion'
-    file_name = f'{output}/{task}_{num_demo}_{policy_type}_obs_emb_action.pt'
+    ckpt_dir = pathlib.Path(checkpoint).parent
+    ckpt_name = pathlib.Path(checkpoint).stem
+    file_name = ckpt_dir / f'{ckpt_name}_obs_emb_action.pt'
     torch.save({
         'obs_emb': obs_embs,
         'action': actions,
