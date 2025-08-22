@@ -292,7 +292,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
                     ## uncomment to disable progressive exploration
-                    # res_ratio = 1.0
+                    res_ratio = 1.0
 
                     if not learning_started:  # random action
                         # res_naction_flat = np.array(
@@ -457,16 +457,17 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         'res_policy': self.res_policy.state_dict(),
                     }
                     torch.save(payload, path.open('wb'), pickle_module=dill)
+                
+                # uncomment to save early buffer for d2d visualization
+                # if self.global_step % 10_000 == 0 and self.global_step <= 50_000:
+                #     rb_obs_emb = rb.observations
+                #     if not rb.full:
+                #         rb_obs_emb = rb.observations[:rb.pos]
+                #     print(rb_obs_emb.shape) # (N, n_env, do)
 
-                if self.global_step % 10_000 == 0 and self.global_step <= 50_000:
-                    rb_obs_emb = rb.observations
-                    if not rb.full:
-                        rb_obs_emb = rb.observations[:rb.pos]
-                    print(rb_obs_emb.shape) # (N, n_env, do)
-
-                    rb_obs_emb_path = pathlib.Path(self.output_dir) / f'rb_obs_emb_{self.global_step}.npy'
-                    np.save(rb_obs_emb_path, rb_obs_emb)
-                    print(f"RB obs embeddings saved to {rb_obs_emb_path}")
+                #     rb_obs_emb_path = pathlib.Path(self.output_dir) / f'rb_obs_emb_{self.global_step}.npy'
+                #     np.save(rb_obs_emb_path, rb_obs_emb)
+                #     print(f"RB obs embeddings saved to {rb_obs_emb_path}")
 
                 sum_policy.train()
 

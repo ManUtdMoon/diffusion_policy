@@ -45,11 +45,15 @@ def main(checkpoint, output_dir, device):
     torch.backends.cudnn.deterministic = True
 
     ## 1. base_policy
-    base_policy: BaseImagePolicy = hydra.utils.instantiate(cfg.base_policy)
     base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
     base_cfg = base_payload['cfg']
     assert base_cfg.task_name == cfg.task_name, \
         f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
+    base_cfg.n_action_steps = cfg.n_action_steps
+    base_cfg.policy.n_action_steps = cfg.n_action_steps
+    base_cfg.task.env_runner.n_action_steps = cfg.n_action_steps
+    base_cfg.task.dataset.pad_after = cfg.n_action_steps - 1
+    base_policy: BaseImagePolicy = hydra.utils.instantiate(base_cfg.policy)
     base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])
     print(f"Loaded base policy from {cfg.online_task.base_ckpt}")
     base_policy.eval()
@@ -83,9 +87,9 @@ def main(checkpoint, output_dir, device):
     cfg.online_task.env_runner.n_train = 0
     cfg.online_task.env_runner.n_train_vis = 0
     cfg.online_task.env_runner.n_test = 50
-    cfg.online_task.env_runner.n_test_vis = 10
+    cfg.online_task.env_runner.n_test_vis = 0
     cfg.online_task.env_runner.test_start_seed = 100_000
-    cfg.online_task.env_runner.n_envs = 25
+    cfg.online_task.env_runner.n_envs = 50
     env_runner = hydra.utils.instantiate(
         cfg.online_task.env_runner,
         output_dir=output_dir)
