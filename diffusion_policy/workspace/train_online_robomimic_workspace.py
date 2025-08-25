@@ -359,7 +359,15 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     obs_seq = next_obs_seq
                     base_dict = next_base_dict
 
-                if self.global_step < 0:
+                if self.global_step <= 0:
+                    if self.global_step == 0:
+                        # eval init policy
+                        sum_policy.eval()
+                        eval_log = eval_env_runner.run(sum_policy)
+                        sum_policy.train()
+                        # logging
+                        logger.log(eval_log)
+                        wandb_run.log(eval_log, step=self.global_step)
                     continue
                 learning_started = True
 

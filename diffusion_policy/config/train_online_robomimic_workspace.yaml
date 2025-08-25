@@ -42,7 +42,7 @@ training:
   max_grad_norm: 50.0
   policy_freq: 1
   target_freq: 1
-  training_freq: 100
+  training_freq: 1000
   utd: 0.5
   n_envs: ${online_task.n_envs}
   # residue progress
@@ -52,7 +52,7 @@ training:
   # training loop control in steps
   num_steps: 1000000
   buffer_size: 1000000
-  log_every: 500
+  log_every: 1000
   eval_every: 50000
   checkpoint_every: 100000
   # misc
