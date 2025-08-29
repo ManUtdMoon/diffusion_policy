@@ -28,6 +28,37 @@ class SoftQNet(nn.Module):
         return self.net(x)
 
 
+class ValueNet(nn.Module):
+    def __init__(self,
+            obs_dim,
+            action_dim,
+            hidden_dim=256,
+            input_type='obs_action', # 'obs' or 'obs_action'
+        ):
+        super().__init__()
+
+        input_dim = None
+        if input_type == 'obs':
+            input_dim = obs_dim
+        elif input_type == 'obs_action':
+            input_dim = obs_dim + action_dim
+        else:
+            raise ValueError("input_type must be 'obs' or 'obs_action'")
+
+        self.net = nn.Sequential(
+            layer_init(nn.Linear(input_dim, hidden_dim)),
+            nn.GELU(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.GELU(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.GELU(),
+            layer_init(nn.Linear(hidden_dim, 1), std=1.0)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class Actor(nn.Module):
     def __init__(self,
             obs_dim,
@@ -48,11 +79,11 @@ class Actor(nn.Module):
             raise ValueError("input_type must be 'obs' or 'obs_action'")
 
         self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            layer_init(nn.Linear(input_dim, hidden_dim)),
             nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.GELU(),
         )
         self.log_std_min = log_std_min

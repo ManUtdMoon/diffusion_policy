@@ -1,0 +1,69 @@
+defaults:
+  - _self_
+  - online_task: can_image_abs
+
+name: train_on_policy_robomimic_workspace
+_target_: diffusion_policy.workspace.train_on_policy_robomimic_workspace.TrainOnPolicyRobomimicWorkspace
+
+task_name: ${online_task.name}
+shape_meta: ${online_task.shape_meta}
+exp_name: "default"
+
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 4
+n_latency_steps: 0
+
+res_policy:
+  _target_: diffusion_policy.policy.residue_policy_ppo.ResiduePolicyPPO
+  obs_dim: ???
+  action_dim: ???
+  log_std_max: 1.6
+  log_std_min: -5.0
+  actor_input: obs_action
+  gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
+  gae_lambda: 0.95
+  clip_range: 0.2
+  vf_coef: 0.5
+  res_scale: ${training.res_scale}
+
+training:
+  device: "cuda:0"
+  seed: 42
+  debug: False
+  # optimization
+  n_epochs: 10
+  batch_size: 40
+  policy_lr: 1e-4  # 1e-4, 3e-4
+  max_grad_norm: 1.0
+  # lr_scheduler: cosine
+  # lr_warmup_steps: 100
+  n_envs: ${online_task.n_envs}
+  # residue progress
+  res_scale: 0.1
+  # training loop control in steps
+  num_steps: 1000000
+  training_freq: 1000
+  log_every: 1000
+  eval_every: 50000
+  checkpoint_every: 100000
+  # misc
+  tqdm_interval_sec: 1.0
+
+logging:
+  project: online_debug
+  resume: True
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+  tags: ["${name}", "${task_name}", "${exp_name}"]
+  id: null
+  group: null
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}
