@@ -157,8 +157,7 @@ class ResiduePolicyPPO(ModuleAttrMixin):
             self.clip_range
         )
         critic_loss_clipped = F.mse_loss(v_clipped, returns)
-        # critic_loss = 0.5 * critic_loss_unclipped 
-        critic_loss = 0.5 * torch.max(critic_loss_unclipped, critic_loss_clipped).mean()
+        critic_loss = torch.max(critic_loss_unclipped, critic_loss_clipped).mean()
 
         ## 4.3 entropy loss
         entropy_loss = -entropies.mean()

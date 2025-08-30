@@ -19,7 +19,8 @@ import tqdm
 import dill
 import h5py
 import numpy as np
-import gymnasium as gym
+import gymnasium
+import gym
 from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.utils import explained_variance
 
@@ -120,7 +121,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
                 shape_meta=shape_meta
             )
             robomimic_env.env.hard_reset = False
-            return MultiStepWrapper(
+            env = MultiStepWrapper(
                 RobomimicImageWrapper(
                     env=robomimic_env,
                     shape_meta=shape_meta,
@@ -131,13 +132,16 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps
             )
+            env = gym.wrappers.NormalizeReward(env)
+            env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+            return env
         def dummy_env_fn():
             robomimic_env = create_env(
                 env_meta=env_meta, 
                 shape_meta=shape_meta,
                 enable_render=False
             )
-            return MultiStepWrapper(
+            env = MultiStepWrapper(
                 RobomimicImageWrapper(
                     env=robomimic_env,
                     shape_meta=shape_meta,
@@ -148,6 +152,9 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps
             )
+            env = gym.wrappers.NormalizeReward(env)
+            env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+            return env
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
 
@@ -188,15 +195,15 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
         policy_opt = self.res_policy.get_optimizer(policy_lr=cfg.training.policy_lr)
 
         # replay buffer
-        dummy_obs_space = gym.spaces.Box(
+        dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
             shape=(obs_emb_dim,), dtype=np.float32
         )
-        dummy_buf_action_space = gym.spaces.Box(
+        dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
             shape=(act_seq_dim * 2,), dtype=np.float32
         )  # only store res_naction & base_naction in on-policy
-        dummy_action_space = gym.spaces.Box(
+        dummy_action_space = gymnasium.spaces.Box(
             low=-1.0, high=1.0,
             shape=(act_seq_dim,), dtype=np.float32
         )
