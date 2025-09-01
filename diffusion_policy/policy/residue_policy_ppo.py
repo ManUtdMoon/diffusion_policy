@@ -99,26 +99,16 @@ class ResiduePolicyPPO(ModuleAttrMixin):
         value = self.vf(policy_input)  # (B,1)
 
         # get current normal dist
-        mean, log_std = self.actor.forward(policy_input)
-        normal = torch.distributions.Normal(mean, torch.exp(log_std))
-        ## y = res_naction = tanh(x), x ~ normal_dist
-        eps = 1e-6
-        clipped_y_t = torch.clamp(res_naction, -1. + eps, 1. - eps)
-        x_t = torch.atanh(clipped_y_t)
-        ## compute log_prob with the change of variables formula
-        log_prob = normal.log_prob(x_t) - torch.log(1 - res_naction.pow(2) + eps)
-        log_prob = log_prob.sum(dim=-1) # (B,)
+        log_prob = self.actor.log_prob_action(policy_input, res_naction)  # (B,1)
 
-        # entropy is the ent of normal
-        entropy = normal.entropy().sum(dim=-1) # (B,)
-
-        return value, log_prob, entropy
+        return value, log_prob.squeeze(-1), -log_prob.squeeze(-1)
 
     def compute_loss(self, batch: RolloutBufferSamples):
         bs = batch.observations.shape[0]
         # 1. extract data
         ## 1.1 naction
-        res_naction, base_naction = torch.split(batch.actions, self.action_dim, dim=-1)
+        # res_naction, base_naction = torch.split(batch.actions, self.action_dim, dim=-1)
+        res_naction, base_naction = batch.actions, None  # for mujoco test only
 
         ## 1.2 build policy input (the actual state of res_policy)
         policy_input = batch.observations

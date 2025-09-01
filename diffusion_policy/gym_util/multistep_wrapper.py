@@ -8,6 +8,8 @@ def stack_repeated(x, n):
     return np.repeat(np.expand_dims(x,axis=0),n,axis=0)
 
 def repeated_box(box_space, n):
+    if n == 1:
+        return box_space
     return spaces.Box(
         low=stack_repeated(box_space.low, n),
         high=stack_repeated(box_space.high, n),
@@ -61,6 +63,8 @@ def stack_last_n_obs(all_obs, n_steps):
     if n_steps > len(all_obs):
         # pad
         result[:start_idx] = result[start_idx]
+    if n_steps == 1:
+        result = result.squeeze()
     return result
 
 
@@ -160,3 +164,73 @@ class MultiStepWrapper(gym.Wrapper):
         for k, v in self.info.items():
             result[k] = list(v)
         return result
+    
+
+class ObsActionSeqWrapper(gym.Wrapper):
+    def __init__(self, 
+            env, 
+            n_obs_steps, 
+            n_action_steps, 
+            max_episode_steps=None,
+        ):
+        super().__init__(env)
+        self._action_space = repeated_space(env.action_space, n_action_steps)
+        self._observation_space = repeated_space(env.observation_space, n_obs_steps)
+        self.max_episode_steps = max_episode_steps
+        self.n_obs_steps = n_obs_steps
+        self.n_action_steps = n_action_steps
+
+        self.obs = deque(maxlen=n_obs_steps+1)
+        self.done = list()
+
+    def reset(self, **kwargs):
+        """Resets the environment using kwargs."""
+        obs = super().reset(**kwargs)
+
+        self.obs = deque([obs], maxlen=self.n_obs_steps+1)
+        self.done = list()
+
+        obs = self._get_obs(self.n_obs_steps)
+        return obs
+    
+    def step(self, action):
+        """
+        actions: (n_action_steps,) + action_shape
+        """
+        reward_sum = 0
+        assert action.shape == self.action_space.shape, f"Expected action shape {self.action_space.shape}, but got {action.shape}"
+        for act in action:
+            if len(self.done) > 0 and self.done[-1]:
+                # termination
+                break
+            observation, reward, done, info = super().step(act)
+            reward_sum += reward
+
+            self.obs.append(observation)
+            if (self.max_episode_steps is not None) \
+                and (len(self.done) >= self.max_episode_steps):
+                # truncation
+                done = True
+            self.done.append(done)
+
+        observation = self._get_obs(self.n_obs_steps)
+        done = aggregate(self.done, 'max')
+        return observation, reward_sum, done, info
+
+    def _get_obs(self, n_steps=1):
+        """
+        Output (n_steps,) + obs_shape
+        """
+        assert(len(self.obs) > 0)
+        if isinstance(self.observation_space, spaces.Box):
+            return stack_last_n_obs(self.obs, n_steps)
+        elif isinstance(self.observation_space, spaces.Dict):
+            result = dict()
+            for key in self.observation_space.keys():
+                result[key] = stack_last_n_obs(
+                    [obs[key] for obs in self.obs],
+                    n_steps
+                )
+            return result
+        else:
+            raise RuntimeError('Unsupported space type')

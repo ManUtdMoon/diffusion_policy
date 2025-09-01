@@ -104,22 +104,31 @@ class Actor(nn.Module):
     
     def get_eval_action(self, x):
         mean = self.mean(self.net(x))
-        return torch.tanh(mean)
+        mean = torch.tanh(mean)
+        return mean
 
     def get_action(self, x):
         mean, log_std = self.forward(x)
-        std = torch.exp(log_std)
-        normal = torch.distributions.Normal(mean, std)
+        mean = torch.tanh(mean)
+        normal = torch.distributions.Normal(mean, torch.exp(log_std))
 
-        x_t = normal.rsample()
-        y_t = torch.tanh(x_t) # [-1, 1]
+        x_t = self._clamp(normal.rsample())
+        log_prob = normal.log_prob(x_t).sum(dim=-1, keepdim=True) # (B, 1)
 
-        log_prob = normal.log_prob(x_t)
-        log_prob -= torch.log(1 - y_t.pow(2) + 1e-6)
-        log_prob = log_prob.sum(dim=-1, keepdim=True) # (B, 1)
-        
         return {
-            'sample': y_t,
-            'mean': torch.tanh(mean),
+            'sample': x_t,
+            'mean': mean,
             'log_prob': log_prob,
         }
+
+    def log_prob_action(self, x, action):
+        mean, log_std = self.forward(x)
+        mean = torch.tanh(mean)
+        normal = torch.distributions.Normal(mean, torch.exp(log_std))
+        log_prob = normal.log_prob(action).sum(dim=-1, keepdim=True) # (B, 1)
+        return log_prob
+
+    def _clamp(self, x, low=-1.0, high=1.0, eps=1e-6):
+        clamped_x = torch.clamp(x, low + eps, high - eps)
+        x = x - x.detach() + clamped_x.detach()
+        return x
