@@ -35,7 +35,7 @@ training:
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   n_envs: 16
-  n_eval_trajs: 50
+  n_eval_trajs: 100
   n_eval_envs: 25
   # residue progress
   res_scale: 1.0

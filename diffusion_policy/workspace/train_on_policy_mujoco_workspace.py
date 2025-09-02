@@ -47,7 +47,7 @@ def collect_episode_info(infos, result=None):
 
 @torch.no_grad()
 def evaluate_policy(policy: ResiduePolicyPPO, eval_envs, n_trajs, device):
-    policy.train()
+    policy.eval()
     eval_log = dict()
     eval_result = defaultdict(list)
     obs = eval_envs.reset()
@@ -63,9 +63,8 @@ def evaluate_policy(policy: ResiduePolicyPPO, eval_envs, n_trajs, device):
 
     for k, v in eval_result.items():
         eval_log[f'eval/{k}'] = np.mean(v)
-    policy.eval()
+    policy.train()
     print(f"Eval log: {eval_log}")
-    print(eval_result)
     return eval_log
 
 
@@ -81,6 +80,7 @@ class TrainOnPolicyMujocoWorkspace(BaseWorkspace):
         np.random.seed(seed)
         random.seed(seed)
         torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
         # configure training state
         self.global_step = 0
@@ -101,8 +101,6 @@ class TrainOnPolicyMujocoWorkspace(BaseWorkspace):
                 #     n_action_steps=cfg.n_action_steps,
                 #     max_episode_steps=env.env.env._max_episode_steps,
                 # )
-                env = gym.wrappers.NormalizeObservation(env)
-                env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
                 env = gym.wrappers.NormalizeReward(env)
                 env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
 
@@ -116,9 +114,9 @@ class TrainOnPolicyMujocoWorkspace(BaseWorkspace):
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=env_fn(0))
         envs.seed(cfg.training.seed)
 
-        eval_env_fns = [env_fn(i + 10_000) for i in range(cfg.training.n_eval_envs)]
+        eval_env_fns = [env_fn(i + 100_000) for i in range(cfg.training.n_eval_envs)]
         eval_envs = AsyncVectorEnv(eval_env_fns, dummy_env_fn=env_fn(0))
-        eval_envs.seed(cfg.training.seed + 10_000)
+        eval_envs.seed(cfg.training.seed + 100_000)
 
         ## configure res policy
         obs_dim = np.prod(envs.single_observation_space.shape).item()
@@ -146,6 +144,13 @@ class TrainOnPolicyMujocoWorkspace(BaseWorkspace):
         policy_opt = self.res_policy.get_optimizer(policy_lr=cfg.training.policy_lr)
         lr_scheduler = torch.optim.lr_scheduler.LinearLR(policy_opt, start_factor=1.0, end_factor=0.0, total_iters=cfg.training.num_steps // cfg.training.training_freq)
 
+        if cfg.training.debug:
+            cfg.training.training_freq = 1000
+            cfg.training.num_steps = 5000
+            cfg.training.log_every = 1000
+            cfg.training.checkpoint_every = 5000
+            cfg.training.eval_every = 5000
+
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
@@ -165,13 +170,6 @@ class TrainOnPolicyMujocoWorkspace(BaseWorkspace):
             gamma=cfg.res_policy.gamma,
             gae_lambda=cfg.res_policy.gae_lambda,
         )
-
-        if cfg.training.debug:
-            cfg.training.training_freq = 1000
-            cfg.training.num_steps = 5000
-            cfg.training.log_every = 1000
-            cfg.training.checkpoint_every = 5000
-            cfg.training.every = 5000
 
         # simplify necessary cfg
         training_freq = cfg.training.training_freq
