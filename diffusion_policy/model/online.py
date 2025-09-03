@@ -89,43 +89,62 @@ class Actor(nn.Module):
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
 
-        self.mean = layer_init(nn.Linear(hidden_dim, action_dim), std=0.01)
-        self.log_std = layer_init(nn.Linear(hidden_dim, action_dim), std=0.01)
+        self.alpha_layer = layer_init(nn.Linear(hidden_dim, action_dim))
+        self.beta_layer = layer_init(nn.Linear(hidden_dim, action_dim))        
+        self.softplus = nn.Softplus()
 
         self.input_type = input_type
 
     def forward(self, x):
         x = self.net(x)
-        mean = self.mean(x)
-        log_std = torch.tanh(self.log_std(x))
-        log_std = self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (log_std + 1.0)
+        epsilon = 1. + 1e-6  # do not want ill-conditioned beta distribution
+        alpha = self.softplus(self.alpha_layer(x)) + epsilon
+        beta = self.softplus(self.beta_layer(x)) + epsilon
+        return alpha, beta
 
-        return mean, log_std
-    
     def get_eval_action(self, x):
-        mean = self.mean(self.net(x))
-        mean = torch.tanh(mean)
-        return mean
+        alpha, beta = self.forward(x)
+        dist = torch.distributions.Beta(alpha, beta)
+        mean = dist.mode
+        return 2. * mean - 1.
 
     def get_action(self, x):
-        mean, log_std = self.forward(x)
-        mean = torch.tanh(mean)
-        normal = torch.distributions.Normal(mean, torch.exp(log_std))
+        alpha, beta = self.forward(x)
+        dist = torch.distributions.Beta(alpha, beta)
 
-        x_t = self._clamp(normal.rsample())
-        log_prob = normal.log_prob(x_t).sum(dim=-1, keepdim=True) # (B, 1)
+        x_t = dist.rsample()
+        
+        # First, clamp to get a definitely safe value
+        clamped_x_t = self._clamp(x_t, low=0.0, high=1.0)
+        
+        # Use the safe value to calculate the final action
+        y_t = 2. * clamped_x_t - 1.
+        
+        # For the 'mean' key, we can use the safe mode as well for consistency
+        mean = 2. * dist.mode - 1.
+        
+        # log_prob must also use the safe value
+        log_prob = (dist.log_prob(clamped_x_t) + torch.log(torch.tensor(0.5, device=clamped_x_t.device))).sum(dim=-1, keepdim=True) # (B, 1)
+
+        assert torch.all(torch.isfinite(y_t))
+        assert torch.all(torch.isfinite(log_prob))
 
         return {
-            'sample': x_t,
+            'sample': y_t,
             'mean': mean,
             'log_prob': log_prob,
         }
 
     def log_prob_action(self, x, action):
-        mean, log_std = self.forward(x)
-        mean = torch.tanh(mean)
-        normal = torch.distributions.Normal(mean, torch.exp(log_std))
-        log_prob = normal.log_prob(action).sum(dim=-1, keepdim=True) # (B, 1)
+        alpha, beta = self.forward(x)
+        dist = torch.distributions.Beta(alpha, beta)
+
+        x_t = (action + 1.) / 2.
+        # Clamp the value to be slightly away from the boundaries 0 and 1
+        clamped_x_t = self._clamp(x_t, low=0.0, high=1.0)
+        
+        # Use the clamped value for log_prob calculation
+        log_prob = (dist.log_prob(clamped_x_t) + torch.log(torch.tensor(0.5, device=clamped_x_t.device))).sum(dim=-1, keepdim=True) # (B, 1)
         return log_prob
 
     def _clamp(self, x, low=-1.0, high=1.0, eps=1e-6):
