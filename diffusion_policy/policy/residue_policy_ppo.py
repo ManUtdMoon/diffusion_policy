@@ -25,6 +25,9 @@ class RunningMeanStd(nn.Module):
         self.register_buffer('var', torch.ones(shape, dtype=torch.float32))
         self.register_buffer('count', torch.tensor(1e-4, dtype=torch.float32))
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.normalize(x)
+
     @torch.no_grad()
     def update(self, x: torch.Tensor):
         # Use float64 for update step to improve precision
@@ -60,9 +63,8 @@ class ResiduePolicyPPO(ModuleAttrMixin):
             # network params
             obs_dim: int,
             action_dim: int,
-            log_std_max: float = 2.0,
-            log_std_min: float = -10.0,
             actor_input: str = 'obs_action',
+            use_rms: bool = True,
             # training params
             gamma: float = 0.97,
             gae_lambda: float = 0.95,
@@ -75,8 +77,6 @@ class ResiduePolicyPPO(ModuleAttrMixin):
         actor = Actor(
             obs_dim=obs_dim,
             action_dim=action_dim,
-            log_std_min=log_std_min,
-            log_std_max=log_std_max,
             input_type=actor_input)
         vf = ValueNet(obs_dim=obs_dim, action_dim=action_dim, input_type=actor_input)
 
@@ -85,10 +85,14 @@ class ResiduePolicyPPO(ModuleAttrMixin):
 
         # This policy instance should receive rms unnormalized input.
         # Then rms normalizes them, sends n_inputs to actor & vf.
-        input_dim = obs_dim
-        if actor_input == 'obs_action':
-            input_dim += action_dim
-        self.input_rms = RunningMeanStd(input_dim)
+        self.use_rms = use_rms
+        if self.use_rms:
+            input_dim = obs_dim
+            if actor_input == 'obs_action':
+                input_dim += action_dim
+            self.input_rms = RunningMeanStd(input_dim)
+        else:
+            self.input_rms = nn.Identity()
 
         # training params
         self.gamma = gamma
@@ -163,7 +167,7 @@ class ResiduePolicyPPO(ModuleAttrMixin):
         policy_input = batch.observations
         if self.actor_input == 'obs_action':
             policy_input = torch.cat([batch.observations, base_naction], dim=-1)
-        npolicy_input = self.input_rms.normalize(policy_input)
+        npolicy_input = self.input_rms(policy_input)
 
         ## 1.3 get variables of shape (B,)
         old_log_probs = batch.old_log_prob
@@ -235,7 +239,7 @@ class ResiduePolicyPPO(ModuleAttrMixin):
             res_naction (torch.Tensor): The predicted residual action.
         """
         assert argmax, print("Argmax should be True. Because when we explore w/ PPO, we always need value and log_prob.")
-        nactor_input = self.input_rms.normalize(actor_input)
+        nactor_input = self.input_rms(actor_input)
         return self.actor.get_eval_action(nactor_input)
 
     def predict_value(self, policy_input: torch.Tensor) -> torch.Tensor:
@@ -250,7 +254,7 @@ class ResiduePolicyPPO(ModuleAttrMixin):
             value (torch.Tensor): The predicted value of the current state. 
                 Shape: (B, 1)
         """
-        npolicy_input = self.input_rms.normalize(policy_input)
+        npolicy_input = self.input_rms(policy_input)
         return self.vf(npolicy_input)
 
     def predict_all(self, policy_input: torch.Tensor):
@@ -264,10 +268,10 @@ class ResiduePolicyPPO(ModuleAttrMixin):
             log_prob (torch.Tensor): The log probability of the residual action.
             value (torch.Tensor): The predicted value of the current state.
         """
-        if self.training:
+        if self.training and self.use_rms:
             self.input_rms.update(policy_input)
 
-        npolicy_input = self.input_rms.normalize(policy_input)
+        npolicy_input = self.input_rms(policy_input)
         res_naction, log_prob = self._sample_naction_log_prob(npolicy_input)
         value = self.vf(npolicy_input)  # (B,1)
         return res_naction, log_prob, value

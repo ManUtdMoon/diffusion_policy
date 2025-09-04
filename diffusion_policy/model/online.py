@@ -64,8 +64,6 @@ class Actor(nn.Module):
             obs_dim,
             action_dim,
             hidden_dim=256,
-            log_std_min=-20.0,
-            log_std_max=2.0,
             input_type='obs', # 'obs' or 'obs_action'
             ):
         super(Actor, self).__init__()
@@ -86,8 +84,6 @@ class Actor(nn.Module):
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.GELU(),
         )
-        self.log_std_min = log_std_min
-        self.log_std_max = log_std_max
 
         self.alpha_layer = layer_init(nn.Linear(hidden_dim, action_dim))
         self.beta_layer = layer_init(nn.Linear(hidden_dim, action_dim))        

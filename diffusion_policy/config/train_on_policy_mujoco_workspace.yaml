@@ -14,9 +14,8 @@ res_policy:
   _target_: diffusion_policy.policy.residue_policy_ppo.ResiduePolicyPPO
   obs_dim: ???
   action_dim: ???
-  log_std_max: 1.0
-  log_std_min: -5.0
   actor_input: obs
+  use_rms: True
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
   gae_lambda: 0.95
   clip_range: 0.2
@@ -28,8 +27,8 @@ training:
   seed: 42
   debug: False
   # optimization
-  n_epochs: 30
-  batch_size: 128
+  n_epochs: 20
+  batch_size: 64
   policy_lr: 1e-4  # 1e-4, 3e-4
   max_grad_norm: 0.5
   # lr_scheduler: cosine
