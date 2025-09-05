@@ -118,6 +118,17 @@ class RobomimicImageWrapper(gym.Env):
         return img
 
 
+class RobomimicEarlyStopWrapper(gym.Wrapper):
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+    
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        if reward > 0.9:
+            done = True
+        return obs, reward, done, info
+
+
 def test():
     import os
     from omegaconf import OmegaConf

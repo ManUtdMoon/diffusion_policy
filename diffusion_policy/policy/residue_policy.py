@@ -18,8 +18,6 @@ class ResiduePolicy(ModuleAttrMixin):
             # network params
             obs_dim: int,
             action_dim: int,
-            log_std_max: float = 2.0,
-            log_std_min: float = -10.0,
             actor_input: str = 'obs_action',
             # training params
             gamma: float = 0.97,
@@ -34,8 +32,6 @@ class ResiduePolicy(ModuleAttrMixin):
         actor = Actor(
             obs_dim=obs_dim,
             action_dim=action_dim,
-            log_std_min=log_std_min,
-            log_std_max=log_std_max,
             input_type=actor_input)
         q1 = SoftQNet(obs_dim=obs_dim, action_dim=action_dim)
         q2 = SoftQNet(obs_dim=obs_dim, action_dim=action_dim)

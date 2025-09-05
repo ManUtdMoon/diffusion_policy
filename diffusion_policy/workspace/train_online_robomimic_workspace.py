@@ -34,7 +34,7 @@ from diffusion_policy.model.common.rotation_transformer import RotationTransform
 from diffusion_policy.env_runner.robomimic_image_runner import create_env
 from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
-from diffusion_policy.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper
+from diffusion_policy.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper, RobomimicEarlyStopWrapper
 import robomimic.utils.file_utils as FileUtils
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -121,7 +121,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             robomimic_env.env.hard_reset = False
             return MultiStepWrapper(
                 RobomimicImageWrapper(
-                    env=robomimic_env,
+                    env=RobomimicEarlyStopWrapper(robomimic_env),
                     shape_meta=shape_meta,
                     init_state=None,
                     render_obs_key=cfg.online_task.env_runner.render_obs_key
@@ -138,7 +138,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             )
             return MultiStepWrapper(
                 RobomimicImageWrapper(
-                    env=robomimic_env,
+                    env=RobomimicEarlyStopWrapper(robomimic_env),
                     shape_meta=shape_meta,
                     init_state=None,
                     render_obs_key=cfg.online_task.env_runner.render_obs_key
@@ -292,7 +292,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
                     ## uncomment to disable progressive exploration
-                    res_ratio = 1.0
+                    # res_ratio = 1.0
 
                     if not learning_started:  # random action
                         # res_naction_flat = np.array(
@@ -305,10 +305,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         assert self.global_step >= 0
                         ## prepare masks
                         ## option 1: pi-dec's progressive exploration
-                        # res_masks = torch.rand(n_envs, device=device) >= res_ratio
+                        res_masks = torch.rand(n_envs, device=device) >= res_ratio
                         
                         ## option 2: no mask
-                        res_masks = None
+                        # res_masks = None
 
                         ## forward sum policy with cached base info
                         sum_dict = sum_policy.predict_train_action(

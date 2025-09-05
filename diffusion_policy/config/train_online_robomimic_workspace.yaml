@@ -18,8 +18,6 @@ res_policy:
   _target_: diffusion_policy.policy.residue_policy.ResiduePolicy
   obs_dim: ???
   action_dim: ???
-  log_std_max: 1.6
-  log_std_min: -10.0
   actor_input: obs_action
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
   tau: 0.01
