@@ -18,9 +18,8 @@ res_policy:
   _target_: diffusion_policy.policy.residue_policy_ppo.ResiduePolicyPPO
   obs_dim: ???
   action_dim: ???
-  log_std_max: 1.6
-  log_std_min: -5.0
   actor_input: obs_action
+  use_rms: False
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
   gae_lambda: 0.95
   clip_range: 0.2
@@ -32,10 +31,10 @@ training:
   seed: 42
   debug: False
   # optimization
-  n_epochs: 10
-  batch_size: 40
-  policy_lr: 1e-4  # 1e-4, 3e-4
-  max_grad_norm: 1.0
+  n_epochs: 20
+  batch_size: 64
+  policy_lr: 3e-4  # 1e-4, 3e-4
+  max_grad_norm: 0.5
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   n_envs: ${online_task.n_envs}
@@ -43,10 +42,10 @@ training:
   res_scale: 0.1
   # training loop control in steps
   num_steps: 1000000
-  training_freq: 1000
-  log_every: 1000
-  eval_every: 50000
-  checkpoint_every: 100000
+  training_freq: 2048
+  log_every: 2048
+  eval_every: 51200
+  checkpoint_every: 204800
   # misc
   tqdm_interval_sec: 1.0
 

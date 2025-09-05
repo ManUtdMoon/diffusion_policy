@@ -41,6 +41,18 @@ import robomimic.utils.file_utils as FileUtils
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
+
+class RobomimicEarlyStopWrapper(gym.Wrapper):
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+    
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        if reward > 0.9:
+            done = True
+        return obs, reward, done, info
+
+
 class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'global_update', 'base_ckpt']
 
@@ -53,6 +65,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
         np.random.seed(seed)
         random.seed(seed)
         torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
         # configure training state
         self.global_step = 0
@@ -123,7 +136,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
             robomimic_env.env.hard_reset = False
             env = MultiStepWrapper(
                 RobomimicImageWrapper(
-                    env=robomimic_env,
+                    env=RobomimicEarlyStopWrapper(robomimic_env),
                     shape_meta=shape_meta,
                     init_state=None,
                     render_obs_key=cfg.online_task.env_runner.render_obs_key
@@ -143,7 +156,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
             )
             env = MultiStepWrapper(
                 RobomimicImageWrapper(
-                    env=robomimic_env,
+                    env=RobomimicEarlyStopWrapper(robomimic_env),
                     shape_meta=shape_meta,
                     init_state=None,
                     render_obs_key=cfg.online_task.env_runner.render_obs_key
@@ -193,6 +206,14 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
         demo_rgb_emb = demo_emb['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim].to(device)  # (N, di)
 
         policy_opt = self.res_policy.get_optimizer(policy_lr=cfg.training.policy_lr)
+        lr_scheduler = torch.optim.lr_scheduler.LinearLR(policy_opt, start_factor=1.0, end_factor=0.0, total_iters=cfg.training.num_steps // cfg.training.training_freq)
+
+        if cfg.training.debug:
+            cfg.training.training_freq = 1000
+            cfg.training.num_steps = 5000
+            cfg.training.log_every = 1000
+            cfg.training.checkpoint_every = 5000
+            cfg.training.eval_every = 5000
 
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
@@ -217,12 +238,6 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
             gamma=cfg.res_policy.gamma,
             gae_lambda=cfg.res_policy.gae_lambda,
         )
-
-        if cfg.training.debug:
-            cfg.training.num_steps = 5000
-            cfg.training.log_every = 1000
-            cfg.training.checkpoint_every = 5000
-            cfg.training.eval_every = 5000
 
         # simplify necessary cfg
         training_freq = cfg.training.training_freq
@@ -283,6 +298,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
             wandb_run.log(eval_log, step=self.global_step)
 
             while self.global_step < n_steps:
+                step_log = dict()
                 # 1. collect samples
                 rb.reset()
                 for _ in tqdm.tqdm(
@@ -308,7 +324,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
                             res_input = torch.cat(
                                 [obs_emb_tensor, base_naction_tensor.flatten(start_dim=1)], dim=-1)
                         res_naction_tensor, log_prob, value = self.res_policy.predict_all(res_input)
-                        res_naction_flat = res_naction_tensor.flatten(start_dim=1).cpu().numpy()
+                        res_naction_flat = res_naction_tensor.cpu().numpy()
 
                         # 1.1.3 Combine two policies
                         sum_naction_tensor = res_scale * res_naction_tensor.reshape_as(base_naction_tensor) + base_naction_tensor
@@ -370,6 +386,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
                         loss.backward()
                         actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.res_policy.parameters(), cfg.training.max_grad_norm)
                         policy_opt.step()
+                lr_scheduler.step()
 
                 ## compute d2d of this batch
                 with torch.no_grad():
@@ -380,7 +397,7 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
 
                 # 4. training metrics
                 explained_var = explained_variance(rb.values.flatten(), rb.returns.flatten())
-                step_log = {
+                step_log.update({
                     'info/global_step': self.global_step,
                     'info/global_update': self.global_update,
 
@@ -391,18 +408,19 @@ class TrainOnPolicyRobomimicWorkspace(BaseWorkspace):
                     'info/uncertainty': batch_d2d.mean().item(),
                     'info/res_naction_norm': info['res_naction_norm'],
                     'info/explained_var': explained_var,
+                    'info/lr': lr_scheduler.get_last_lr()[0],
 
                     'loss/critic_loss': info['critic_loss'],
                     'loss/actor_loss': info['actor_loss'],
                     'loss/actor_grad_norm': actor_grad_norm.item(),
-                }
+                })
 
                 # 5. evaluation
-                if self.global_step % eval_every == 0:
+                if self.global_step % eval_every == 0 or self.global_step >= n_steps:
                     sum_policy.eval()
                     eval_log = eval_env_runner.run(sum_policy)
-                    step_log.update(eval_log)
                     sum_policy.train()
+                    step_log.update(eval_log)
 
                 # 6. logging
                 logger.log(step_log)

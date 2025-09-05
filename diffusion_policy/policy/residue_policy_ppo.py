@@ -160,8 +160,8 @@ class ResiduePolicyPPO(ModuleAttrMixin):
         bs = batch.observations.shape[0]
         # 1. extract data
         ## 1.1 naction
-        # res_naction, base_naction = torch.split(batch.actions, self.action_dim, dim=-1)
-        res_naction, base_naction = batch.actions, None  # for mujoco test only
+        res_naction, base_naction = torch.split(batch.actions, self.action_dim, dim=-1)
+        # res_naction, base_naction = batch.actions, None  # for mujoco test only
 
         ## 1.2 build policy input (the actual state of res_policy)
         policy_input = batch.observations
