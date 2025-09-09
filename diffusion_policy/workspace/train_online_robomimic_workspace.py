@@ -19,7 +19,8 @@ import tqdm
 import dill
 import h5py
 import numpy as np
-import gymnasium as gym
+import gym
+import gymnasium
 from stable_baselines3.common.buffers import ReplayBuffer
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
@@ -193,17 +194,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         alpha_opt = optimizers['alpha_optimizer']
 
         # replay buffer
-        dummy_obs_space = gym.spaces.Box(
+        dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
             shape=(obs_emb_dim,), dtype=np.float32
         )
-        dummy_buf_action_space = gym.spaces.Box(
+        dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
             shape=(act_seq_dim * 3,), dtype=np.float32
-        )
-        dummy_action_space = gym.spaces.Box(
-            low=-1.0, high=1.0,
-            shape=(act_seq_dim,), dtype=np.float32
         )
         rb = ReplayBuffer(
             cfg.training.buffer_size,
@@ -219,8 +216,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             cfg.training.prog_explore = 1000
             cfg.training.learning_start = 1000
             cfg.training.checkpoint_every = 1000
-            cfg.training.eval_every = 2500
-            cfg.training.log_every = 100
+            cfg.training.eval_every = 5000
+            cfg.training.log_every = 1000
 
         # simplify necessary cfg
         training_freq = cfg.training.training_freq
@@ -265,8 +262,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 uaction = uaction.reshape((*raw_shape[:-1], 14))
             return uaction
 
-        learning_started = False
-
         # training loop
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
@@ -292,34 +287,26 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
                     ## uncomment to disable progressive exploration
-                    # res_ratio = 1.0
+                    res_ratio = 1.0
 
-                    if not learning_started:  # random action
-                        # res_naction_flat = np.array(
-                        #     [dummy_action_space.sample() for _ in range(n_envs)]) # (B,Ta*da)
-                        res_naction_flat = np.zeros_like(base_naction_flat)
-                        sum_naction_flat = res_scale * res_naction_flat + base_naction_flat
-                        naction = sum_naction_flat.reshape(-1, cfg.n_action_steps, act_dim)
-                        action = self.base_policy.normalizer['action'].unnormalize(naction).cpu().numpy()
-                    else:  # use res_policy
-                        assert self.global_step >= 0
-                        ## prepare masks
-                        ## option 1: pi-dec's progressive exploration
+                    ## prepare masks for progressive exploration
+                    if self.global_step < 0:
+                        # Mask all residues during warmup phase: base only
+                        res_masks = torch.ones(n_envs, device=device, dtype=torch.bool)
+                    else:
+                        # Progressive exploration: pi-dec style
                         res_masks = torch.rand(n_envs, device=device) >= res_ratio
-                        
-                        ## option 2: no mask
-                        # res_masks = None
 
-                        ## forward sum policy with cached base info
-                        sum_dict = sum_policy.predict_train_action(
-                            base_naction_tensor,
-                            obs_emb_tensor,
-                            res_mask=res_masks
-                        )
-                        sum_dict = dict_apply(
-                            sum_dict, lambda x: x.detach().cpu().numpy())
-                        res_naction_flat = sum_dict['res_naction_flat']
-                        action = sum_dict['action']
+                    ## forward sum policy with cached base info
+                    sum_dict = sum_policy.predict_train_action(
+                        base_naction_tensor,
+                        obs_emb_tensor,
+                        res_mask=res_masks
+                    )
+                    sum_dict = dict_apply(
+                        sum_dict, lambda x: x.detach().cpu().numpy())
+                    res_naction_flat = sum_dict['res_naction_flat']
+                    action = sum_dict['action']
 
                     ## env_action and step
                     env_action = undo_transform_action(action)
@@ -359,17 +346,16 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     obs_seq = next_obs_seq
                     base_dict = next_base_dict
 
-                if self.global_step <= 0:
-                    if self.global_step == 0:
-                        # eval init policy
-                        sum_policy.eval()
-                        eval_log = eval_env_runner.run(sum_policy)
-                        sum_policy.train()
-                        # logging
-                        logger.log(eval_log)
-                        wandb_run.log(eval_log, step=self.global_step)
+                if self.global_step < 0:
+                    # Warmup phase: skip training, only collect data
                     continue
-                learning_started = True
+                elif self.global_step == 0:
+                    # Evaluate baseline performance before first training
+                    sum_policy.eval()
+                    eval_log = eval_env_runner.run(sum_policy)
+                    sum_policy.train()
+                    logger.log(eval_log)
+                    wandb_run.log(eval_log, step=self.global_step)
 
                 # training
                 for _ in tqdm.tqdm(
@@ -447,9 +433,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
                 # evaluation
                 sum_policy.eval()
-                if self.global_step % eval_every == 0:
+                if self.global_step > 0 and self.global_step % eval_every == 0:
                     eval_log = eval_env_runner.run(sum_policy)
                     step_log.update(eval_log)
+                sum_policy.train()
 
                 # logging
                 logger.log(step_log)
@@ -477,14 +464,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 #     np.save(rb_obs_emb_path, rb_obs_emb)
                 #     print(f"RB obs embeddings saved to {rb_obs_emb_path}")
 
-                sum_policy.train()
-
         # envs.close()
 
 
 @hydra.main(
     version_base=None,
-    config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
+    config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
     workspace = TrainOnlineRobomimicWorkspace(cfg)
