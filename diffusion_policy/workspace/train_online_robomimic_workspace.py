@@ -129,7 +129,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 ),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
-                max_episode_steps=cfg.online_task.env_runner.max_steps
+                max_episode_steps=cfg.online_task.env_runner.max_steps,
+                reward_agg_method='discounted_sum'
             )
         def dummy_env_fn():
             robomimic_env = create_env(
@@ -146,7 +147,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 ),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
-                max_episode_steps=cfg.online_task.env_runner.max_steps
+                max_episode_steps=cfg.online_task.env_runner.max_steps,
+                reward_agg_method='discounted_sum'
             )
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)

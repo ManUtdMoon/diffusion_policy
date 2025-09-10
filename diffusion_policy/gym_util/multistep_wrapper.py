@@ -39,7 +39,7 @@ def dict_take_last_n(x, n):
         result[key] = take_last_n(value, n)
     return result
 
-def aggregate(data, method='max'):
+def aggregate(data, method='max', gamma=0.99):
     if method == 'max':
         # equivalent to any
         return np.max(data)
@@ -50,6 +50,8 @@ def aggregate(data, method='max'):
         return np.mean(data)
     elif method == 'sum':
         return np.sum(data)
+    elif method == 'discounted_sum':
+        return sum((gamma ** i) * reward for i, reward in enumerate(data))
     else:
         raise NotImplementedError()
 
@@ -74,7 +76,8 @@ class MultiStepWrapper(gym.Wrapper):
             n_obs_steps, 
             n_action_steps, 
             max_episode_steps=None,
-            reward_agg_method='max'
+            reward_agg_method='max',
+            gamma=0.99
         ):
         super().__init__(env)
         self._action_space = repeated_space(env.action_space, n_action_steps)
@@ -83,6 +86,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self.reward_agg_method = reward_agg_method
+        self.gamma = gamma
         self.n_obs_steps = n_obs_steps
 
         self.obs = deque(maxlen=n_obs_steps+1)
@@ -106,6 +110,8 @@ class MultiStepWrapper(gym.Wrapper):
         """
         actions: (n_action_steps,) + action_shape
         """
+        chunk_rewards = []
+        chunk_dones = []
         for act in action:
             if len(self.done) > 0 and self.done[-1]:
                 # termination
@@ -114,16 +120,18 @@ class MultiStepWrapper(gym.Wrapper):
 
             self.obs.append(observation)
             self.reward.append(reward)
+            chunk_rewards.append(reward)
             if (self.max_episode_steps is not None) \
                 and (len(self.reward) >= self.max_episode_steps):
                 # truncation
                 done = True
             self.done.append(done)
+            chunk_dones.append(done)
             self._add_info(info)
 
         observation = self._get_obs(self.n_obs_steps)
-        reward = aggregate(self.reward, self.reward_agg_method)
-        done = aggregate(self.done, 'max')
+        reward = aggregate(chunk_rewards, self.reward_agg_method, self.gamma)
+        done = aggregate(chunk_dones, 'max')
         info = dict_take_last_n(self.info, self.n_obs_steps)
         return observation, reward, done, info
 

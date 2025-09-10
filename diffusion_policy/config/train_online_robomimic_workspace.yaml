@@ -20,7 +20,7 @@ res_policy:
   action_dim: ???
   actor_input: obs_action
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
-  tau: 0.01
+  tau: 0.005
   init_alpha: 0.01
   auto_alpha: True
   res_scale: ${training.res_scale}
@@ -38,10 +38,10 @@ training:
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
-  policy_freq: 1
+  policy_freq: 2
   target_freq: 1
   training_freq: 1000
-  utd: 0.5
+  utd: 1.0
   n_envs: ${online_task.n_envs}
   # residue progress
   res_scale: 0.1
