@@ -39,7 +39,7 @@ training:
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
   policy_freq: 2
-  target_freq: 1
+  target_freq: 2
   training_freq: 1000
   utd: 1.0
   n_envs: ${online_task.n_envs}

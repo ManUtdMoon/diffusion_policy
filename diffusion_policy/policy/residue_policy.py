@@ -146,6 +146,8 @@ class ResiduePolicy(ModuleAttrMixin):
         info = {
             'q_target': target_q.mean().item(),
             'q_predicted': torch.mean(torch.stack([q1, q2], dim=0)).item(),
+            'q_predicted_min': torch.min(torch.stack([q1, q2], dim=0)).item(),
+            'q_predicted_max': torch.max(torch.stack([q1, q2], dim=0)).item(),
             "rewards": batch.rewards.mean().item(),
             "dones": batch.dones.float().mean().item(),
         }

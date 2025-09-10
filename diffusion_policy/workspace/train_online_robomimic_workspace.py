@@ -54,7 +54,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         torch.backends.cudnn.deterministic = True
 
         # configure training state
-        self.global_step = -cfg.training.learning_start
+        self.global_step = 0
         self.global_update = 0
 
     def run(self):
@@ -230,6 +230,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         n_steps = cfg.training.num_steps
         n_envs = cfg.online_task.n_envs
         n_updates_per_training = int(training_freq * utd)
+        learning_start = cfg.training.learning_start
         res_scale = cfg.training.res_scale
 
         ## check parameters for code clarity
@@ -237,8 +238,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             log_every % training_freq == 0 and
             eval_every % training_freq == 0 and
             checkpoint_every % training_freq == 0 and
+            learning_start % training_freq == 0 and
             eval_every % log_every == 0
-        ), f"log_every({log_every}), eval_every({eval_every}), checkpoint_every({checkpoint_every}) must be divisible by training_freq({training_freq}) for code clarity."
+        ), f"log_every({log_every}), eval_every({eval_every}), checkpoint_every({checkpoint_every}), learning_start({learning_start}) must be divisible by training_freq({training_freq}) for code clarity."
 
         # action preprocess: from action to env action
         rot_tf = None
@@ -271,6 +273,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         base_dict = self.base_policy.predict_action(obs_seq_tensor)
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as logger:
+            sum_policy.eval()
+            eval_log = eval_env_runner.run(sum_policy)
+            sum_policy.train()
+            logger.log(eval_log)
+            wandb_run.log(eval_log, step=self.global_step)
+
             while self.global_step < n_steps:
                 step_log = dict()
                 # collect samples
@@ -292,7 +300,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     res_ratio = 1.0
 
                     ## prepare masks for progressive exploration
-                    if self.global_step < 0:
+                    if self.global_step < learning_start:
                         # Mask all residues during warmup phase: base only
                         res_masks = torch.ones(n_envs, device=device, dtype=torch.bool)
                     else:
@@ -348,16 +356,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     obs_seq = next_obs_seq
                     base_dict = next_base_dict
 
-                if self.global_step < 0:
+                if self.global_step < learning_start:
                     # Warmup phase: skip training, only collect data
                     continue
-                elif self.global_step == 0:
-                    # Evaluate baseline performance before first training
-                    sum_policy.eval()
-                    eval_log = eval_env_runner.run(sum_policy)
-                    sum_policy.train()
-                    logger.log(eval_log)
-                    wandb_run.log(eval_log, step=self.global_step)
 
                 # training
                 for _ in tqdm.tqdm(
@@ -417,6 +418,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/res_ratio': res_ratio,
                     'info/q_target': critic_info['q_target'],
                     'info/q_predicted': critic_info['q_predicted'],
+                    'info/q_predicted_min': critic_info['q_predicted_min'],
+                    'info/q_predicted_max': critic_info['q_predicted_max'],
                     'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
