@@ -48,6 +48,7 @@ training:
   prog_explore: 50000
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
+  q_pretrain_steps: 0
   num_steps: 1000000
   buffer_size: 1000000
   log_every: 1000
