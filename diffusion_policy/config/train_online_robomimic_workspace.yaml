@@ -25,6 +25,8 @@ res_policy:
   auto_alpha: True
   res_scale: ${training.res_scale}
   power: 0.8
+  num_qs: 2
+  num_subset: 2
 
 training:
   device: "cuda:0"

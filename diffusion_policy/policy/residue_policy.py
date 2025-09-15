@@ -9,7 +9,7 @@ from stable_baselines3.common.type_aliases import ReplayBufferSamples
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.model.common.shape_util import assert_shape
-from diffusion_policy.model.online import SoftQNet, Actor
+from diffusion_policy.model.online import Actor, BatchedSoftQNet
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,10 @@ class ResiduePolicy(ModuleAttrMixin):
             init_alpha: float = 0.01,
             auto_alpha: bool = True,
             res_scale: float = 0.05,
-            power: float = 0.4):
+            power: float = 0.4,
+            # batched-q params
+            num_qs: int = 2,
+            num_subset: int = 2,):
         super().__init__()
 
         # create models
@@ -33,14 +36,11 @@ class ResiduePolicy(ModuleAttrMixin):
             obs_dim=obs_dim,
             action_dim=action_dim,
             input_type=actor_input)
-        q1 = SoftQNet(obs_dim=obs_dim, action_dim=action_dim)
-        q2 = SoftQNet(obs_dim=obs_dim, action_dim=action_dim)
-        q1_target = SoftQNet(obs_dim=obs_dim, action_dim=action_dim)
-        q2_target = SoftQNet(obs_dim=obs_dim, action_dim=action_dim)
-        q1_target.load_state_dict(q1.state_dict())
-        q2_target.load_state_dict(q2.state_dict())
-        q1_target.requires_grad_(False)
-        q2_target.requires_grad_(False)
+        
+        qs = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs)
+        q_targets = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs)
+        q_targets.load_state_dict(qs.state_dict())
+        q_targets.requires_grad_(False)
 
         log_alpha = nn.Parameter(
             torch.log(torch.tensor(init_alpha, dtype=torch.float32))
@@ -48,10 +48,8 @@ class ResiduePolicy(ModuleAttrMixin):
         target_entropy = -action_dim / 2 # heuristic target entropy
 
         self.actor = actor
-        self.q1 = q1
-        self.q2 = q2
-        self.q1_target = q1_target
-        self.q2_target = q2_target
+        self.qs = qs
+        self.q_targets = q_targets
         self.log_alpha = log_alpha
 
         # training params
@@ -67,6 +65,8 @@ class ResiduePolicy(ModuleAttrMixin):
         # dimensions
         self.obs_dim = obs_dim
         self.action_dim = action_dim
+        self.num_qs = num_qs
+        self.num_subset = num_subset
 
         logger.info(
             "number of parameters: %.2f M", sum(p.numel() for p in self.parameters()) / 1e6
@@ -75,7 +75,7 @@ class ResiduePolicy(ModuleAttrMixin):
     # training
     def get_optimizer(self, policy_lr, q_lr):
         actor_optimizer = torch.optim.AdamW(self.actor.parameters(), lr=policy_lr, weight_decay=1e-4)
-        q_optimizer = torch.optim.AdamW(list(self.q1.parameters()) + list(self.q2.parameters()), lr=q_lr, weight_decay=1e-4)
+        q_optimizer = torch.optim.AdamW(self.qs.parameters(), lr=q_lr, weight_decay=1e-4)
         alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=q_lr)
         return {
             'actor_optimizer': actor_optimizer,
@@ -119,35 +119,36 @@ class ResiduePolicy(ModuleAttrMixin):
             res_next_naction, next_log_prob = self._sample_naction_log_prob(actor_input)
             next_naction = res_next_naction * self.res_scale + base_next_naction
 
-            target_q1_next = self.q1_target(batch.next_observations, next_naction) # (B,1)
-            target_q2_next = self.q2_target(batch.next_observations, next_naction)
-            target_q_next = torch.minimum(target_q1_next, target_q2_next)# - alpha * next_log_prob # (B,1)
+            target_q_all = self.q_targets(batch.next_observations, next_naction)
+            subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
+            target_q_subset = target_q_all[subset_indices]
+
+            target_q_next = torch.min(target_q_subset, dim=0).values  # (B,1)
             assert_shape(target_q_next, (bs, 1))
             target_q = batch.rewards.flatten() + (1 - batch.dones.flatten()) * self.gamma * target_q_next.view(-1) # (B,)
-            assert_shape(target_q, (bs,))
+            target_q = target_q.unsqueeze(0).expand(self.num_qs, -1) # broadcast to (num_qs, B)
+            assert_shape(target_q, (self.num_qs, bs))
 
         # compute current Q values
         current_naction = self.res_scale * res_naction + base_naction
-        q1 = self.q1(batch.observations, current_naction).view(-1)  # (B,)
-        q2 = self.q2(batch.observations, current_naction).view(-1)  # (B,)
+        all_q_preds = self.qs(batch.observations, current_naction).squeeze(-1)  # (num_qs, B)
 
         # compute priorities and weights for samples
         with torch.no_grad():
-            priority = torch.ones_like(q1)
+            priority = torch.ones_like(all_q_preds[0])
             if dist is not None:
                 priority = torch.maximum(priority, (dist + 1).pow(self.power))
 
         # compute critic loss
-        q1_loss = (F.mse_loss(q1, target_q, reduction='none') * priority).mean()
-        q2_loss = (F.mse_loss(q2, target_q, reduction='none') * priority).mean()
-        critic_loss = q1_loss + q2_loss
-        critic_loss /= priority.mean().detach()
+        critic_loss = F.mse_loss(
+            all_q_preds, target_q, reduction='none'
+        ).mean(dim=-1).sum()
 
         info = {
             'q_target': target_q.mean().item(),
-            'q_predicted': torch.mean(torch.stack([q1, q2], dim=0)).item(),
-            'q_predicted_min': torch.min(torch.stack([q1, q2], dim=0)).item(),
-            'q_predicted_max': torch.max(torch.stack([q1, q2], dim=0)).item(),
+            'q_predicted': all_q_preds.mean().item(),
+            'q_predicted_min': all_q_preds.mean(dim=0).min().item(),
+            'q_predicted_max': all_q_preds.mean(dim=0).max().item(),
             "rewards": batch.rewards.mean().item(),
             "dones": batch.dones.float().mean().item(),
         }
@@ -170,11 +171,8 @@ class ResiduePolicy(ModuleAttrMixin):
         res_naction, log_prob = self._sample_naction_log_prob(actor_input)
 
         naction = self.res_scale * res_naction + base_naction  # (B,Da)
-        predicted_q1 = self.q1(batch.observations, naction) # (B,1)
-        predicted_q2 = self.q2(batch.observations, naction) # (B,1)
-        predicted_q = torch.mean(
-            torch.stack([predicted_q1, predicted_q2], dim=0), dim=0
-        ) # (B,1)
+        all_q_preds = self.qs(batch.observations, naction)  # (num_qs, B, 1)
+        predicted_q = torch.mean(all_q_preds, dim=0)  # (B, 1)
         assert_shape(predicted_q, (bs, 1))
 
         actor_loss = (alpha * log_prob - predicted_q).mean()
@@ -203,9 +201,7 @@ class ResiduePolicy(ModuleAttrMixin):
         return alpha_loss
 
     def target_update(self,):
-        for param, target_param in zip(self.q1.parameters(), self.q1_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
-        for param, target_param in zip(self.q2.parameters(), self.q2_target.parameters()):
+        for param, target_param in zip(self.qs.parameters(), self.q_targets.parameters()):
             target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
 
     def predict_res_naction(

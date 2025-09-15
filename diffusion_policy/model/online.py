@@ -147,3 +147,53 @@ class Actor(nn.Module):
         clamped_x = torch.clamp(x, low + eps, high - eps)
         x = x - x.detach() + clamped_x.detach()
         return x
+
+class BatchedLinear(nn.Module):
+    def __init__(self, num_batch, in_features, out_features, bias=True):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_batch, in_features, out_features))
+        self.use_bias = bias
+        if self.use_bias:
+            self.bias = nn.Parameter(torch.empty(num_batch, 1, out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Simplified Kaiming uniform initialization for the batch
+        for i in range(self.weight.size(0)):
+            nn.init.kaiming_uniform_(self.weight[i], a=5**0.5)
+            if self.use_bias:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight[i])
+                bound = 1 / (fan_in**0.5) if fan_in > 0 else 0
+                nn.init.uniform_(self.bias[i], -bound, bound)
+
+    def forward(self, x):
+        # x: (num_batch, B, in_features)
+        x = torch.bmm(x, self.weight)
+        if self.use_bias:
+            x = x + self.bias
+        return x
+
+class BatchedSoftQNet(nn.Module):
+    def __init__(self, obs_dim, action_dim, num_qs, hidden_dim=256):
+        super().__init__()
+        self.num_qs = num_qs
+        self.net = nn.Sequential(
+            BatchedLinear(num_qs, obs_dim + action_dim, hidden_dim),
+            nn.GELU(),
+            BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            nn.GELU(),
+            BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            nn.GELU(),
+            BatchedLinear(num_qs, hidden_dim, 1),
+            nn.Tanh(),
+        )
+
+    def forward(self, obs, action):
+        x = torch.cat([obs, action], dim=-1)
+        # expand for batch
+        x = x.unsqueeze(0).expand(self.num_qs, -1, -1) # (num_qs, B, D_in)
+        q_logits = self.net(x) # (num_qs, B, 1)
+        q_values = 0.5 * (q_logits + 1.) # scale to [0, 1]
+        return q_values

@@ -425,9 +425,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     q_opt.zero_grad()
                     critic_loss.backward()
                     q1_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        self.res_policy.q1.parameters(), cfg.training.max_grad_norm)
-                    q2_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        self.res_policy.q2.parameters(), cfg.training.max_grad_norm)
+                        self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
+                    # q2_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    #     self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
                     q_opt.step()
 
                     ## update target
@@ -472,7 +472,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'loss/critic_loss': critic_loss.item() / 2.0,
                     'loss/actor_loss': actor_loss.item(),
                     'loss/q1_grad_norm': q1_grad_norm.item(),
-                    'loss/q2_grad_norm': q2_grad_norm.item(),
+                    # 'loss/q2_grad_norm': q2_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),
                     'loss/alpha': alpha,
                 }
