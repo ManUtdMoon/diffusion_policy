@@ -10,7 +10,7 @@ shape_meta: ${online_task.shape_meta}
 exp_name: "default"
 
 horizon: 16
-n_obs_steps: 2
+n_obs_steps: 1
 n_action_steps: 4
 n_latency_steps: 0
 
@@ -35,7 +35,7 @@ training:
   # optimization
   batch_size: 256
   policy_lr: 1e-4
-  q_lr: 1e-4
+  q_lr: 3e-4
   learning_start: 1000
   # lr_scheduler: cosine
   # lr_warmup_steps: 100

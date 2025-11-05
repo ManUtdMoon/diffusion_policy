@@ -8,8 +8,6 @@ def stack_repeated(x, n):
     return np.repeat(np.expand_dims(x,axis=0),n,axis=0)
 
 def repeated_box(box_space, n):
-    if n == 1:
-        return box_space
     return spaces.Box(
         low=stack_repeated(box_space.low, n),
         high=stack_repeated(box_space.high, n),
@@ -65,8 +63,8 @@ def stack_last_n_obs(all_obs, n_steps):
     if n_steps > len(all_obs):
         # pad
         result[:start_idx] = result[start_idx]
-    if n_steps == 1:
-        result = result.squeeze()
+    # if n_steps == 1:
+    #     result = result.squeeze()
     return result
 
 

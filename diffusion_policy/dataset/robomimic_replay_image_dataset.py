@@ -61,7 +61,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
 
         replay_buffer = None
         if use_cache:
-            cache_zarr_path = dataset_path + '.zarr.zip'
+            cache_zarr_path = dataset_path + '.zarr'
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
             with FileLock(cache_lock_path):
@@ -78,7 +78,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                             rotation_transformer=rotation_transformer,
                             num_demo=num_demo)
                         print('Saving cache to disk.')
-                        with zarr.ZipStore(cache_zarr_path) as zip_store:
+                        with zarr.DirectoryStore(cache_zarr_path) as zip_store:
                             replay_buffer.save_to_store(
                                 store=zip_store
                             )
@@ -87,7 +87,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                         raise e
                 else:
                     print('Loading cached ReplayBuffer from Disk.')
-                    with zarr.ZipStore(cache_zarr_path, mode='r') as zip_store:
+                    with zarr.DirectoryStore(cache_zarr_path) as zip_store:
                         replay_buffer = ReplayBuffer.copy_from_store(
                             src_store=zip_store, store=zarr.MemoryStore())
                     print('Loaded!')
@@ -389,9 +389,9 @@ def normalizer_from_stat(stat):
 
 
 def main():
-    task = "can"
+    task = "square"
     dataset_type = "ph"
-    dataset_path = f"/ssd1/yudongjie/robomimicv030/{task}/{dataset_type}/image_v141_abs.hdf5"
+    dataset_path = f"/media/datahub-2/ydj/robomimicv030/{task}/{dataset_type}/image_v141_abs.hdf5"
     shape_meta = {
         "obs": {
             "agentview_image": {

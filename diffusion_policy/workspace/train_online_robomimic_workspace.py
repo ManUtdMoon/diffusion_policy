@@ -79,7 +79,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         ckpt_dir = pathlib.Path(checkpoint).parent
         ckpt_name = pathlib.Path(checkpoint).stem
         demo_emb_path = ckpt_dir / f'{ckpt_name}_obs_emb_action.pt'
-        demo_emb = torch.load(open(demo_emb_path, 'rb'), pickle_module=dill)
+        # demo_emb = torch.load(open(demo_emb_path, 'rb'), pickle_module=dill)
 
         ## configure res policy
         obs_emb_dim = self.base_policy.obs_feature_dim # do, Do=To*do
@@ -185,7 +185,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         ## extract rgb_emb from demo_obs_emb
         lowdim_dim = sum([self.base_policy.obs_encoder.key_shape_map[k][0] for k in self.base_policy.obs_encoder.low_dim_keys])
         rgb_emb_dim = obs_emb_dim - lowdim_dim
-        demo_rgb_emb = demo_emb['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim].to(device)  # (N, di)
+        # demo_rgb_emb = demo_emb['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim].to(device)  # (N, di)
 
         optimizers = self.res_policy.get_optimizer(
             policy_lr=cfg.training.policy_lr,
