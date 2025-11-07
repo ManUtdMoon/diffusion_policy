@@ -64,6 +64,8 @@ class Actor(nn.Module):
             obs_dim,
             action_dim,
             hidden_dim=256,
+            log_std_min=-20.0,
+            log_std_max=2.0,
             input_type='obs', # 'obs' or 'obs_action'
             ):
         super(Actor, self).__init__()
@@ -84,64 +86,46 @@ class Actor(nn.Module):
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.GELU(),
         )
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
 
-        self.alpha_layer = layer_init(nn.Linear(hidden_dim, action_dim))
-        self.beta_layer = layer_init(nn.Linear(hidden_dim, action_dim))        
-        self.softplus = nn.Softplus()
+        self.mean = layer_init(nn.Linear(hidden_dim, action_dim), std=0.01)
+        self.log_std = layer_init(nn.Linear(hidden_dim, action_dim), std=0.01)
 
         self.input_type = input_type
 
     def forward(self, x):
         x = self.net(x)
-        epsilon = 1. + 1e-6  # do not want ill-conditioned beta distribution
-        alpha = self.softplus(self.alpha_layer(x)) + epsilon
-        beta = self.softplus(self.beta_layer(x)) + epsilon
-        return alpha, beta
+        mean = self.mean(x)
+        logstd = self._clamp(self.log_std(x), self.log_std_min, self.log_std_max)
+        return mean, logstd
 
     def get_eval_action(self, x):
-        alpha, beta = self.forward(x)
-        dist = torch.distributions.Beta(alpha, beta)
-        mean = dist.mode
-        return 2. * mean - 1.
+        mean = self.mean(self.net(x))
+        return torch.tanh(mean)
 
     def get_action(self, x):
-        alpha, beta = self.forward(x)
-        dist = torch.distributions.Beta(alpha, beta)
+        mean, logstd = self.forward(x)
+        dist = torch.distributions.Normal(mean, logstd.exp())
 
         x_t = dist.rsample()
+        y_t = torch.tanh(x_t) # [-1, 1]
         
-        # First, clamp to get a definitely safe value
-        clamped_x_t = self._clamp(x_t, low=0.0, high=1.0)
-        
-        # Use the safe value to calculate the final action
-        y_t = 2. * clamped_x_t - 1.
-        
-        # For the 'mean' key, we can use the safe mode as well for consistency
-        mean = 2. * dist.mode - 1.
-        
-        # log_prob must also use the safe value
-        log_prob = (dist.log_prob(clamped_x_t) + torch.log(torch.tensor(0.5, device=clamped_x_t.device))).sum(dim=-1, keepdim=True) # (B, 1)
+        log_prob = dist.log_prob(x_t)
+        log_prob -= torch.log(1 - y_t**2 + 1e-6)
+        log_prob = log_prob.sum(dim=-1, keepdim=True) # (B, 1)
 
         assert torch.all(torch.isfinite(y_t))
         assert torch.all(torch.isfinite(log_prob))
 
         return {
             'sample': y_t,
-            'mean': mean,
+            'mean': torch.tanh(mean),
             'log_prob': log_prob,
         }
 
     def log_prob_action(self, x, action):
-        alpha, beta = self.forward(x)
-        dist = torch.distributions.Beta(alpha, beta)
-
-        x_t = (action + 1.) / 2.
-        # Clamp the value to be slightly away from the boundaries 0 and 1
-        clamped_x_t = self._clamp(x_t, low=0.0, high=1.0)
-        
-        # Use the clamped value for log_prob calculation
-        log_prob = (dist.log_prob(clamped_x_t) + torch.log(torch.tensor(0.5, device=clamped_x_t.device))).sum(dim=-1, keepdim=True) # (B, 1)
-        return log_prob
+        return None
 
     def _clamp(self, x, low=-1.0, high=1.0, eps=1e-6):
         clamped_x = torch.clamp(x, low + eps, high - eps)
@@ -187,7 +171,6 @@ class BatchedSoftQNet(nn.Module):
             BatchedLinear(num_qs, hidden_dim, hidden_dim),
             nn.GELU(),
             BatchedLinear(num_qs, hidden_dim, 1),
-            nn.Tanh(),
         )
 
     def forward(self, obs, action):
@@ -195,5 +178,5 @@ class BatchedSoftQNet(nn.Module):
         # expand for batch
         x = x.unsqueeze(0).expand(self.num_qs, -1, -1) # (num_qs, B, D_in)
         q_logits = self.net(x) # (num_qs, B, 1)
-        q_values = 0.5 * (q_logits + 1.) # scale to [0, 1]
+        q_values = 0.5 * (torch.tanh(q_logits) + 1.)  # scale to [0, 1]
         return q_values

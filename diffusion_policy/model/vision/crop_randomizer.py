@@ -162,12 +162,13 @@ class CropRandomizerV2(nn.Module):
         self.crop_height = crop_height
         self.crop_width = crop_width
         self.crop_size = (crop_height, crop_width)
+        self.force_random_crop = False
 
         self.random_cropper = v2.RandomCrop(size=self.crop_size)
         self.center_cropper = v2.CenterCrop(size=self.crop_size)
 
     def forward_in(self, inputs: torch.Tensor) -> torch.Tensor:
-        if self.training:
+        if self.training or self.force_random_crop:
             return self.random_cropper(inputs)
         else:
             return self.center_cropper(inputs)

@@ -32,6 +32,7 @@ from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
+from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.env_runner.robomimic_image_runner import create_env
 from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
@@ -73,6 +74,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         print(f"Loaded base policy from {cfg.online_task.base_ckpt}")
         self.base_policy.eval()
         self.base_policy.requires_grad_(False)
+
+        crop_randomizers = list()
+        for m in self.base_policy.modules():
+            if isinstance(m, CropRandomizerV2):
+                crop_randomizers.append(m)
+        def set_rand_crop(mode):
+            for m in crop_randomizers:
+                m.force_random_crop = mode
 
         ## load demo_obs_emb from base policy
         checkpoint = cfg.online_task.base_ckpt
@@ -273,9 +282,11 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         base_dict = self.base_policy.predict_action(obs_seq_tensor)
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as logger:
+            set_rand_crop(False)
             sum_policy.eval()
             eval_log = eval_env_runner.run(sum_policy)
             sum_policy.train()
+            set_rand_crop(True)
             logger.log(eval_log)
             wandb_run.log(eval_log, step=self.global_step)
 
@@ -482,8 +493,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 # evaluation
                 sum_policy.eval()
                 if self.global_step > 0 and self.global_step % eval_every == 0:
+                    set_rand_crop(False)
                     eval_log = eval_env_runner.run(sum_policy)
                     step_log.update(eval_log)
+                    set_rand_crop(True)
                 sum_policy.train()
 
                 # logging

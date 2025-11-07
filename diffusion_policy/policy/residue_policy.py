@@ -19,6 +19,7 @@ class ResiduePolicy(ModuleAttrMixin):
             obs_dim: int,
             action_dim: int,
             actor_input: str = 'obs_action',
+            hidden_dim: int = 256,
             # training params
             gamma: float = 0.97,
             tau: float = 0.01,
@@ -35,10 +36,11 @@ class ResiduePolicy(ModuleAttrMixin):
         actor = Actor(
             obs_dim=obs_dim,
             action_dim=action_dim,
-            input_type=actor_input)
-        
-        qs = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs)
-        q_targets = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs)
+            input_type=actor_input,
+            hidden_dim=hidden_dim,)
+
+        qs = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
+        q_targets = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
         q_targets.load_state_dict(qs.state_dict())
         q_targets.requires_grad_(False)
 

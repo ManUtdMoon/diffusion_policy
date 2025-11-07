@@ -129,6 +129,48 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         obs_emb = self.obs_encoder(batched_nobs) # (B*To, do)
         obs_emb = obs_emb.reshape(B, -1) # (B, Do=To*do)
         return obs_emb
+    
+    def conditional_predict(self, obs_emb: torch.Tensor) -> Dict[str, torch.Tensor]:
+        B = obs_emb.shape[0]
+        T = self.horizon
+        Da = self.action_dim
+        To = self.n_obs_steps
+
+        # build input
+        device = self.device
+        dtype = self.dtype
+
+        # condition through global feature
+        global_cond = obs_emb
+        # empty data for action
+        cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
+        cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+
+        # run sampling
+        nsample = self.conditional_sample(
+            cond_data, 
+            cond_mask,
+            local_cond=None,
+            global_cond=global_cond,
+            **self.kwargs)
+        
+        # unnormalize prediction
+        naction_pred = nsample
+        action_pred = self.normalizer['action'].unnormalize(naction_pred)
+
+        # get action
+        start = To - 1
+        end = start + self.n_action_steps
+        action = action_pred[:,start:end]
+        
+        result = {
+            'action': action,
+            'action_pred': action_pred,
+            'naction': naction_pred[:,start:end],
+            'naction_pred': naction_pred,
+            'obs_emb': global_cond,
+        }
+        return result
 
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
