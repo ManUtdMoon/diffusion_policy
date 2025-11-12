@@ -1,7 +1,56 @@
+import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import distributions as pyd
+
+
+class TanhTransform(pyd.transforms.Transform):
+    domain = pyd.constraints.real
+    codomain = pyd.constraints.interval(-1.0, 1.0)
+    bijective = True
+    sign = +1
+
+    def __init__(self, cache_size=1):
+        super().__init__(cache_size=cache_size)
+
+    @staticmethod
+    def atanh(x):
+        return 0.5 * (x.log1p() - (-x).log1p())
+
+    def __eq__(self, other):
+        return isinstance(other, TanhTransform)
+
+    def _call(self, x):
+        return x.tanh()
+
+    def _inverse(self, y):
+        # We do not clamp to the boundary here as it may degrade the performance of certain algorithms.
+        # one should use `cache_size=1` instead
+        return self.atanh(y)
+
+    def log_abs_det_jacobian(self, x, y):
+        # We use a formula that is more numerically stable, see details in the following link
+        # https://github.com/tensorflow/probability/commit/ef6bb176e0ebd1cf6e25c6b5cecdd2428c22963f#diff-e120f70e92e6741bca649f04fcd907b7
+        return 2. * (math.log(2.) - x - F.softplus(-2. * x))
+
+
+class SquashedNormal(pyd.transformed_distribution.TransformedDistribution):
+    def __init__(self, loc, scale):
+        self.loc = loc
+        self.scale = scale
+
+        self.base_dist = pyd.Normal(loc, scale)
+        transforms = [TanhTransform()]
+        super().__init__(self.base_dist, transforms)
+
+    @property
+    def mean(self):
+        mu = self.loc
+        for tr in self.transforms:
+            mu = tr(mu)
+        return mu
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -64,7 +113,7 @@ class Actor(nn.Module):
             obs_dim,
             action_dim,
             hidden_dim=256,
-            log_std_min=-20.0,
+            log_std_min=-10.0,
             log_std_max=2.0,
             input_type='obs', # 'obs' or 'obs_action'
             ):
@@ -97,7 +146,8 @@ class Actor(nn.Module):
     def forward(self, x):
         x = self.net(x)
         mean = self.mean(x)
-        logstd = self._clamp(self.log_std(x), self.log_std_min, self.log_std_max)
+        logstd = torch.tanh(self.log_std(x))
+        logstd = self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (logstd + 1)
         return mean, logstd
 
     def get_eval_action(self, x):
@@ -106,21 +156,17 @@ class Actor(nn.Module):
 
     def get_action(self, x):
         mean, logstd = self.forward(x)
-        dist = torch.distributions.Normal(mean, logstd.exp())
+        dist = SquashedNormal(mean, logstd.exp())
 
-        x_t = dist.rsample()
-        y_t = torch.tanh(x_t) # [-1, 1]
-        
-        log_prob = dist.log_prob(x_t)
-        log_prob -= torch.log(1 - y_t**2 + 1e-6)
-        log_prob = log_prob.sum(dim=-1, keepdim=True) # (B, 1)
+        y_t = dist.rsample()
+        log_prob = dist.log_prob(y_t).sum(dim=-1, keepdim=True)  # (B, 1)
 
         assert torch.all(torch.isfinite(y_t))
         assert torch.all(torch.isfinite(log_prob))
 
         return {
             'sample': y_t,
-            'mean': torch.tanh(mean),
+            'mean': dist.mean,
             'log_prob': log_prob,
         }
 
