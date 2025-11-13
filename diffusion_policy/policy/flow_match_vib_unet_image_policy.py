@@ -179,19 +179,18 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         obs_emb = obs_emb.reshape(B, -1) # (B, Do=To*do)
         return obs_emb
     
-    def vib_forward(self, global_cond, perturb=None):
+    def vib_forward(self, global_cond, deterministic=False):
         # 1. Get final logvar directly from encoder
         z_mean, z_logvar = self.vib_encoder(global_cond)
         
-        # 2. Sample using the final variance
-        std = torch.exp(0.5 * z_logvar)
-        eps = torch.randn_like(std)
-        
-        z_mean_perturbed = z_mean
-        if perturb is not None:
-            raise NotImplementedError("VIB perturbation not implemented yet")
-            
-        z = z_mean_perturbed + eps * std
+        if deterministic:
+            z = z_mean
+        else:
+            # 2. Sample using the final variance (reparameterization trick)
+            std = torch.exp(0.5 * z_logvar)
+            eps = torch.randn_like(std)
+            z = z_mean + eps * std
+
         modified_global_cond = self.vib_decoder(z)
         
         # 3. Return the final logvar for KL loss calculation
@@ -207,11 +206,8 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         device = self.device
         dtype = self.dtype
 
-        # VIB forward pass
-        modified_obs_emb, _, _ = self.vib_forward(obs_emb)
-
         # condition through global feature
-        global_cond = modified_obs_emb
+        global_cond = obs_emb
         # empty data for action
         cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
         cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
@@ -238,8 +234,6 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             'action_pred': action_pred,
             'naction': naction_pred[:,start:end],
             'naction_pred': naction_pred,
-            'obs_emb': obs_emb,
-            'modified_obs_emb': modified_obs_emb
         }
         return result
 
@@ -249,8 +243,21 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         result: must include "action" key
         """
         assert self.obs_as_global_cond, "VIB policy only supports obs_as_global_cond=True"
+        
+        # 1. encode observation
         obs_emb = self.encode_obs(obs_dict)
-        return self.conditional_predict(obs_emb)
+        
+        # 2. pass through VIB module
+        modified_obs_emb, _, _ = self.vib_forward(obs_emb, deterministic=True)
+        
+        # 3. predict action
+        result = self.conditional_predict(modified_obs_emb)
+        
+        # 4. append embeddings to result for debugging
+        result['obs_emb'] = obs_emb
+        result['modified_obs_emb'] = modified_obs_emb
+        
+        return result
 
     # ========= training  ============
     def set_normalizer(self, normalizer: LinearNormalizer):
@@ -303,7 +310,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         # The main IL loss will be conditioned on the VIB output.
         # This ensures the UNet learns to handle the VIB's transformations.
         # No need to detach global_cond, as we want to train the whole pipeline end-to-end.
-        modified_global_cond, z_mean, z_logvar = self.vib_forward(global_cond)
+        modified_global_cond, z_mean, z_logvar = self.vib_forward(global_cond, deterministic=False)
 
         # --- IL Flow Loss (now conditioned on VIB output) ---
         pred_il = self.model(noisy_trajectory, timesteps, global_cond=modified_global_cond)

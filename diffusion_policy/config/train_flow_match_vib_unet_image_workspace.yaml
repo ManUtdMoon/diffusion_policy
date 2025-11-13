@@ -20,7 +20,7 @@ obs_as_global_cond: True
 
 policy:
   _target_: diffusion_policy.policy.flow_match_vib_unet_image_policy.FlowMatchVibUnetImagePolicy
-  vib_latent_dim: 16
+  vib_latent_dim: 32
   vib_alpha: 2.0
   vib_beta: 1.0e-3
 
