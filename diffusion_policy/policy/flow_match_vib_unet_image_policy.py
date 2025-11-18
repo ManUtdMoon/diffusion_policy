@@ -124,6 +124,10 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         self.obs_as_global_cond = obs_as_global_cond
         self.kwargs = kwargs
 
+        self.vib_alpha = vib_alpha
+        self.vib_beta = vib_beta
+        self.vib_latent_dim = vib_latent_dim
+
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps

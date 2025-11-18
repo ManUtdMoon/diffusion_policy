@@ -24,7 +24,7 @@ dataset_type: &dataset_type ph
 dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_abs.hdf5
 abs_action: &abs_action True
 
-base_ckpt: "data/outputs/2025.11.04/15.00.26_train_flow_match_unet_image_square_image/checkpoints/epoch=0800-score=0.280.ckpt"
+base_ckpt: "data/outputs/2025.11.17/20.43.10_train_flow_match_vib_unet_image_square_image/checkpoints/epoch=0800-score=0.480.ckpt"
 
 # train
 n_envs: 20

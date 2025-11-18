@@ -62,4 +62,4 @@ dataset:
   use_cache: True
   seed: 42
   val_ratio: 0.02
-  num_demo: 20
+  num_demo: 50
