@@ -22,7 +22,8 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
 @click.option('-c', '--checkpoint', required=True)
 @click.option('-o', '--output_dir', required=True)
 @click.option('-d', '--device', default='cuda:0')
-def main(checkpoint, output_dir, device):
+@click.option('-t', '--n_action_steps', default=4, type=int, required=True)
+def main(checkpoint, output_dir, device, n_action_steps):
     if os.path.exists(output_dir):
         click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -30,6 +31,12 @@ def main(checkpoint, output_dir, device):
     # load checkpoint
     payload = torch.load(open(checkpoint, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
+
+    cfg.n_action_steps = n_action_steps
+    cfg.policy.n_action_steps = n_action_steps
+    cfg.task.env_runner.n_action_steps = n_action_steps
+    cfg.task.dataset.pad_after = n_action_steps - 1
+
     cls = hydra.utils.get_class(cfg._target_)
     workspace = cls(cfg, output_dir=output_dir)
     workspace: BaseWorkspace

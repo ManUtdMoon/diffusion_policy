@@ -1,4 +1,5 @@
 from typing import Dict
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,20 +13,26 @@ from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
 from diffusion_policy.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
 from diffusion_policy.common.pytorch_util import dict_apply
 
+logger = logging.getLogger(__name__)
+
 class VIBEncoder(nn.Module):
     def __init__(self, input_dim, latent_dim, hidden_dim=256, alpha=1.0):
         super().__init__()
         self.network = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU()
+            nn.GELU()
         )
         self.mean_head = nn.Linear(hidden_dim, latent_dim)
         self.logvar_head = nn.Linear(hidden_dim, latent_dim)
         self.alpha = alpha
+
+        logger.info(
+            "number of parameters: %.2f M", sum(p.numel() for p in self.parameters()) / 1e6
+        )
 
     def forward(self, x):
         features = self.network(x)
@@ -40,12 +47,16 @@ class VIBDecoder(nn.Module):
         super().__init__()
         self.network = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, output_dim)
+        )
+
+        logger.info(
+            "number of parameters: %.2f M", sum(p.numel() for p in self.parameters()) / 1e6
         )
 
     def forward(self, z):
@@ -69,6 +80,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             vib_latent_dim=16,
             vib_alpha=2.0,
             vib_beta=1e-3,
+            vib_recon=0.1,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -126,6 +138,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
 
         self.vib_alpha = vib_alpha
         self.vib_beta = vib_beta
+        self.vib_recon = vib_recon
         self.vib_latent_dim = vib_latent_dim
 
         if num_inference_steps is None:
@@ -323,14 +336,18 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         # --- VIB KL Loss ---
         # KL divergence loss to regularize the latent space
         vib_kl_loss = -0.5 * torch.mean(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
+
+        # --- VIB reconstruction loss ---
+        vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
         
         # Total loss
-        loss = il_loss + self.vib_beta * vib_kl_loss
+        loss = il_loss + self.vib_beta * vib_kl_loss + self.vib_recon * vib_recon_loss
 
         # logging
         info = {
             'il_loss': il_loss.item(),
-            'vib_kl_loss': vib_kl_loss.item()
+            'vib_kl_loss': vib_kl_loss.item(),
+            'vib_recon_loss': vib_recon_loss.item(),
         }
 
         return loss, info
