@@ -20,7 +20,7 @@ res_policy:
   z_dim: ???
   action_dim: ???
   actor_input_type: obs_action
-  hidden_dim: 512
+  hidden_dim: 256
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
   tau: 0.005
   init_alpha: 0.01

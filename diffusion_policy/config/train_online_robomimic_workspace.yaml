@@ -19,13 +19,12 @@ res_policy:
   obs_dim: ???
   action_dim: ???
   actor_input: obs_action
-  hidden_dim: 512
+  hidden_dim: 256
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
   tau: 0.005
   init_alpha: 0.01
   auto_alpha: True
   res_scale: ${training.res_scale}
-  power: 0.8
   num_qs: 2
   num_subset: 2
 

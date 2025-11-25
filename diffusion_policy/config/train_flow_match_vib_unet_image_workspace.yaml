@@ -24,6 +24,7 @@ policy:
   vib_alpha: 1.0
   vib_beta: 2.0e-4
   vib_recon: 0.1
+  vib_hidden_dim: 256
 
   shape_meta: ${shape_meta}
   

@@ -81,6 +81,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             vib_alpha=2.0,
             vib_beta=1e-3,
             vib_recon=0.1,
+            vib_hidden_dim=256,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -115,8 +116,12 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         self.vib_encoder = VIBEncoder(
             input_dim=global_cond_dim, 
             latent_dim=vib_latent_dim,
+            hidden_dim=vib_hidden_dim,
             alpha=vib_alpha)
-        self.vib_decoder = VIBDecoder(latent_dim=vib_latent_dim, output_dim=global_cond_dim)
+        self.vib_decoder = VIBDecoder(
+            latent_dim=vib_latent_dim,
+            output_dim=global_cond_dim,
+            hidden_dim=vib_hidden_dim)
         self.vib_beta = vib_beta
 
         self.noise_scheduler = noise_scheduler

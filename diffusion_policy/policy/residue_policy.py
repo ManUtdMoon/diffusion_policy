@@ -26,7 +26,6 @@ class ResiduePolicy(ModuleAttrMixin):
             init_alpha: float = 0.01,
             auto_alpha: bool = True,
             res_scale: float = 0.05,
-            power: float = 0.4,
             # batched-q params
             num_qs: int = 2,
             num_subset: int = 2,):
@@ -62,7 +61,6 @@ class ResiduePolicy(ModuleAttrMixin):
         self.target_entropy = target_entropy
         self.res_scale = res_scale
         self.actor_input = actor_input
-        self.power = power
 
         # dimensions
         self.obs_dim = obs_dim
@@ -134,12 +132,6 @@ class ResiduePolicy(ModuleAttrMixin):
         # compute current Q values
         current_naction = self.res_scale * res_naction + base_naction
         all_q_preds = self.qs(batch.observations, current_naction).squeeze(-1)  # (num_qs, B)
-
-        # compute priorities and weights for samples
-        with torch.no_grad():
-            priority = torch.ones_like(all_q_preds[0])
-            if dist is not None:
-                priority = torch.maximum(priority, (dist + 1).pow(self.power))
 
         # compute critic loss
         critic_loss = F.mse_loss(
