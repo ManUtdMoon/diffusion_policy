@@ -21,6 +21,7 @@ import h5py
 import numpy as np
 import gym
 import gymnasium
+import collections
 from stable_baselines3.common.buffers import ReplayBuffer
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
@@ -276,6 +277,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             return uaction
 
         # training loop
+        recent_done_successes = collections.deque(maxlen=100)
+        def get_recent_success_stats():
+            count = len(recent_done_successes)
+            rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
+            return count, rate
+
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
             obs_seq, lambda x: torch.from_numpy(x).to(device=device))
@@ -332,6 +339,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## env_action and step
                     env_action = undo_transform_action(action)
                     next_obs_seq, rewards, dones, infos = envs.step(env_action)
+                    for reward, done in zip(rewards, dones):
+                        if done:
+                            recent_done_successes.append(float(reward) > 0.9)
 
                     ## reward preprocess
                     ## 1. fixed epi len performs better with positive rewards
@@ -465,6 +475,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                             alpha = self.res_policy.log_alpha.exp().item()
 
                 ## training metrics
+                recent_done_count, recent_done_sr = get_recent_success_stats()
+
                 step_log = {
                     'info/global_step': self.global_step,
                     'info/global_update': self.global_update,
@@ -479,6 +491,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/dones': critic_info['dones'],
                     # 'info/uncertainty': batch_d2d.mean().item(),
                     'info/res_naction_norm': actor_info['res_naction_norm'],
+                    'info/recent_done_sr': recent_done_sr,
+                    'info/recent_done_count': recent_done_count,
 
                     'loss/critic_loss': critic_loss.item() / 2.0,
                     'loss/actor_loss': actor_loss.item(),

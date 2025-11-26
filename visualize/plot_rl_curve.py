@@ -6,6 +6,16 @@ import matplotlib.pyplot as plt
 import json
 from pathlib import Path
 
+MODE = "train" # "train" or "eval"
+MODE_KEY_MAP = {
+    "train": "info/recent_done_sr",
+    "eval": "test/mean_score",
+}
+MODE_EVAL_EVERY_MAP = {
+    "train": 1000,
+    "eval": 50000,
+}
+
 # =============================================================================
 # 1. Helper function to retrieve eval data
 # This part is the same as before.
@@ -24,8 +34,9 @@ def load_data(run_dir, expected_len):
         for line in f:
             try:
                 log_data = json.loads(line)
-                if 'test/mean_score' in log_data:
-                    scores.append(log_data['test/mean_score'])
+                key = MODE_KEY_MAP[MODE]
+                if key in log_data:
+                    scores.append(log_data[key])
             except json.JSONDecodeError:
                 # Ignore malformed lines
                 continue
@@ -40,28 +51,23 @@ def load_data(run_dir, expected_len):
 
 # Data sources dictionary remains the same
 data_sources = {
-    'demo_env': [
-        '2025.08.20/14.03.30_train_online_robomimic_workspace_square_image',
-        '2025.08.20/10.48.21_train_online_robomimic_workspace_square_image',
-        '2025.08.19/13.50.14_train_online_robomimic_workspace_square_image',
+    'ResRL': [
+        '2025.11.25/20.05.52_train_online_robomimic_workspace_square_image',
     ],
-    'random_env': [
-        '2025.08.20/14.02.36_train_online_robomimic_workspace_square_image',
-        '2025.08.20/10.48.03_train_online_robomimic_workspace_square_image',
-        '2025.08.19/13.57.35_train_online_robomimic_workspace_square_image',
-    ],
-    'pi-dec': [
-        '2025.08.21/16.45.01_train_online_robomimic_workspace_square_image',
-        '2025.08.21/16.45.16_train_online_robomimic_workspace_square_image',
-        '2025.08.21/16.45.54_train_online_robomimic_workspace_square_image',
+    'ZPRL': [
+        '2025.11.25/20.03.35_train_online_vib_robomimic_workspace_square_image',
     ]
 }
 
 # --- Create a "long-form" DataFrame from all experimental data ---
 ## assume all runs shares the same train_step & eval_every, now 1M, 50K
-EVAL_EVERY = 50_000
+EVAL_EVERY = MODE_EVAL_EVERY_MAP[MODE]
 TOTAL_STEPS = 1_000_000
-x_steps = np.arange(0, TOTAL_STEPS + 1, EVAL_EVERY) / float(TOTAL_STEPS)
+x_steps = None
+if MODE == "train":
+    x_steps = np.arange(0, TOTAL_STEPS, EVAL_EVERY) / float(TOTAL_STEPS)
+else:  # MODE == "eval"
+    x_steps = np.arange(0, TOTAL_STEPS + 1, EVAL_EVERY) / float(TOTAL_STEPS)
 
 all_data = []
 for i, (name, dirs) in enumerate(data_sources.items()):
@@ -91,9 +97,8 @@ df = pd.concat(all_data, ignore_index=True)
 # --- Plotting Configuration ---
 # Use the same color and marker schemes
 palette = {
-    'random_env': '#E63983',
-    'demo_env': '#56B4E9',
-    'pi-dec': "#59D171",
+    'ResRL': '#E63983',
+    'ZPRL': '#56B4E9',
 }
 markers = {
     'random_env': 'o',
@@ -116,7 +121,7 @@ sns.lineplot(
     y='Performance',
     hue='Algorithm',      # Color lines by algorithm
     style='Algorithm',    # Change markers by algorithm
-    markers=markers,      # Dictionary mapping algorithms to markers
+    # markers=markers,      # Dictionary mapping algorithms to markers
     palette=palette,      # Dictionary mapping algorithms to colors
     dashes=False,
     errorbar=('ci', 95),        # Show standard deviation as the error band
@@ -141,4 +146,4 @@ handles, labels = ax.get_legend_handles_labels()
 ax.legend(handles=handles, labels=labels, fontsize=10)
 
 plt.tight_layout()
-fig.savefig('square.png', dpi=300, bbox_inches='tight')
+fig.savefig(f'square_{MODE}.png', dpi=300, bbox_inches='tight')
