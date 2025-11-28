@@ -32,10 +32,16 @@ class ResiduePolicy(ModuleAttrMixin):
         super().__init__()
 
         # create models
+        if actor_input == 'obs':
+            obs_agg_dim = obs_dim
+        elif actor_input == 'obs_action':
+            obs_agg_dim = obs_dim + action_dim
+        else:
+            raise ValueError(f"Invalid actor_input: {actor_input}")
+
         actor = Actor(
-            obs_dim=obs_dim,
+            obs_dim=obs_agg_dim,
             action_dim=action_dim,
-            input_type=actor_input,
             hidden_dim=hidden_dim,)
 
         qs = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
@@ -114,7 +120,7 @@ class ResiduePolicy(ModuleAttrMixin):
         # compute targets
         with torch.no_grad():
             actor_input = batch.next_observations
-            if self.actor.input_type == 'obs_action':
+            if self.actor_input == 'obs_action':
                 actor_input = torch.cat([batch.next_observations, base_next_naction], dim=-1)
             res_next_naction, next_log_prob = self._sample_naction_log_prob(actor_input)
             next_naction = res_next_naction * self.res_scale + base_next_naction
@@ -160,7 +166,7 @@ class ResiduePolicy(ModuleAttrMixin):
             alpha = self.init_alpha
 
         actor_input = batch.observations
-        if self.actor.input_type == 'obs_action':
+        if self.actor_input == 'obs_action':
             actor_input = torch.cat([batch.observations, base_naction], dim=-1)
         res_naction, log_prob = self._sample_naction_log_prob(actor_input)
 
@@ -184,7 +190,7 @@ class ResiduePolicy(ModuleAttrMixin):
             torch.split(batch.actions, self.action_dim, dim=-1)
 
         actor_input = batch.observations
-        if self.actor.input_type == 'obs_action':
+        if self.actor_input == 'obs_action':
             actor_input = torch.cat([batch.observations, base_naction], dim=-1)
 
         with torch.no_grad():

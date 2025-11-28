@@ -115,20 +115,11 @@ class Actor(nn.Module):
             hidden_dim=256,
             log_std_min=-10.0,
             log_std_max=2.0,
-            input_type='obs', # 'obs' or 'obs_action'
             ):
         super(Actor, self).__init__()
 
-        input_dim = None
-        if input_type == 'obs':
-            input_dim = obs_dim
-        elif input_type == 'obs_action':
-            input_dim = obs_dim + action_dim
-        else:
-            raise ValueError("input_type must be 'obs' or 'obs_action'")
-
         self.net = nn.Sequential(
-            layer_init(nn.Linear(input_dim, hidden_dim)),
+            layer_init(nn.Linear(obs_dim, hidden_dim)),
             nn.GELU(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.GELU(),
@@ -140,8 +131,6 @@ class Actor(nn.Module):
 
         self.mean = layer_init(nn.Linear(hidden_dim, action_dim), std=0.01)
         self.log_std = layer_init(nn.Linear(hidden_dim, action_dim), std=0.01)
-
-        self.input_type = input_type
 
     def forward(self, x):
         x = self.net(x)

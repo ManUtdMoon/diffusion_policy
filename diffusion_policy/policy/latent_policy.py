@@ -38,19 +38,25 @@ class ResiduePolicy(ModuleAttrMixin):
         # create models
         # The actor learns a residue of vib z, conditioned on a rich observation
         # The Q-function estimates the value of decoding a combined z
+        if actor_input_type == 'obs':
+            obs_agg_dim = obs_dim
+        elif actor_input_type == 'obs_action':
+            obs_agg_dim = obs_dim + z_dim
+        else:
+            raise NotImplementedError("Invalid actor_input_type")
+
         actor = Actor(
-            obs_dim=obs_dim,
+            obs_dim=obs_agg_dim,
             action_dim=z_dim,
-            input_type=actor_input_type,
             hidden_dim=hidden_dim,)
 
         qs = BatchedSoftQNet(
-            obs_dim=obs_dim,
+            obs_dim=obs_agg_dim,
             action_dim=z_dim,
             num_qs=num_qs, 
             hidden_dim=hidden_dim)
         q_targets = BatchedSoftQNet(
-            obs_dim=obs_dim,
+            obs_dim=obs_agg_dim,
             action_dim=z_dim,
             num_qs=num_qs, 
             hidden_dim=hidden_dim)
@@ -78,6 +84,7 @@ class ResiduePolicy(ModuleAttrMixin):
 
         # dimensions
         self.obs_dim = obs_dim
+        self.obs_agg_dim = obs_agg_dim
         self.z_dim = z_dim
         self.action_dim = action_dim
         self.num_qs = num_qs
@@ -132,11 +139,11 @@ class ResiduePolicy(ModuleAttrMixin):
 
         # compute targets
         with torch.no_grad():
-            actor_input_next = _get_actor_input(self.actor_input_type, obs_next, z_mean_next)
-            res_z_next, _ = self._sample_log_prob(actor_input_next)
+            obs_agg_next = _agg_obs(self.actor_input_type, obs_next, z_mean_next)
+            res_z_next, _ = self._sample_log_prob(obs_agg_next)
             z_next = res_z_next * self.res_scale + z_mean_next
 
-            target_q_all = self.q_targets(obs_next, z_next)
+            target_q_all = self.q_targets(obs_agg_next, z_next)
             subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
             target_q_subset = target_q_all[subset_indices]
 
@@ -148,7 +155,8 @@ class ResiduePolicy(ModuleAttrMixin):
 
         # compute current Q values
         z_curr = res_z * self.res_scale + z_mean
-        all_q_preds = self.qs(obs, z_curr).squeeze(-1)  # (num_qs, B)
+        obs_agg = _agg_obs(self.actor_input_type, obs, z_mean)
+        all_q_preds = self.qs(obs_agg, z_curr).squeeze(-1)  # (num_qs, B)
 
         # compute critic loss
         critic_loss = F.mse_loss(
@@ -176,11 +184,11 @@ class ResiduePolicy(ModuleAttrMixin):
         else:
             alpha = self.init_alpha
 
-        actor_input = _get_actor_input(self.actor_input_type, obs, z_mean)
-        res_z, log_prob = self._sample_log_prob(actor_input)
+        obs_agg = _agg_obs(self.actor_input_type, obs, z_mean)
+        res_z, log_prob = self._sample_log_prob(obs_agg)
 
         z_curr = res_z * self.res_scale + z_mean
-        all_q_preds = self.qs(obs, z_curr)  # (num_qs, B, 1)
+        all_q_preds = self.qs(obs_agg, z_curr)  # (num_qs, B, 1)
         predicted_q = torch.mean(all_q_preds, dim=0)  # (B, 1)
         assert_shape(predicted_q, (bs, 1))
 
@@ -198,10 +206,10 @@ class ResiduePolicy(ModuleAttrMixin):
         obs_z = batch.observations
         obs, z_mean = torch.split(obs_z, [self.obs_dim, self.z_dim], dim=-1)
 
-        actor_input = _get_actor_input(self.actor_input_type, obs, z_mean)
+        obs_agg = _agg_obs(self.actor_input_type, obs, z_mean)
 
         with torch.no_grad():
-            _, log_prob = self._sample_log_prob(actor_input)
+            _, log_prob = self._sample_log_prob(obs_agg)
 
         alpha_loss = (-self.log_alpha.exp() * (log_prob + self.target_entropy)).mean()
 
@@ -273,7 +281,7 @@ class SumPolicy:
         z_mean, _ = self.base_policy.vib_encoder(obs_emb)
 
         # 2. Construct input for res_policy and predict residual (deterministically)
-        res_input = _get_actor_input(self.actor_input_type, obs_emb, z_mean)
+        res_input = _agg_obs(self.actor_input_type, obs_emb, z_mean)
         res_z = self.res_policy.predict_res_z(res_input, argmax=True)
 
         # 3. Apply residual and decode back to conditional embedding
@@ -304,7 +312,7 @@ class SumPolicy:
         z_mean, _ = self.base_policy.vib_encoder(obs_emb)
 
         # 2. Build input for res_policy and predict res z (stochastically)
-        res_input = _get_actor_input(self.actor_input_type, obs_emb, z_mean)
+        res_input = _agg_obs(self.actor_input_type, obs_emb, z_mean)
         if perturb:
             res_z = self.res_policy.predict_res_z(res_input, argmax=False)
         else:
@@ -328,14 +336,14 @@ class SumPolicy:
 
 
 
-def _get_actor_input(
-        actor_input_type: str,
+def _agg_obs(
+        input_type: str,
         obs_emb: torch.Tensor,
         z_mean: torch.Tensor
     ) -> torch.Tensor:
-    if actor_input_type == 'obs':
+    if input_type == 'obs':
         return obs_emb
-    elif actor_input_type == 'obs_action':
+    elif input_type == 'obs_action':
         return torch.cat([obs_emb, z_mean], dim=-1)
     else:
-        raise NotImplementedError("Invalid actor_input_type")
+        raise NotImplementedError("Invalid policy input type")
