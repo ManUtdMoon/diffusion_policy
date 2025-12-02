@@ -236,7 +236,7 @@ class SumPolicy:
 
         # 1. Get latent mean from base policy's encoders
         obs_emb = self.base_policy.encode_obs(obs_dict)
-        mod_obs_emb, _, _ = self.base_policy.vib_forward(obs_emb, deterministic=True)
+        mod_obs_emb, _, _, _ = self.base_policy.vib_forward(obs_emb, deterministic=True)
 
         # 2. Get init noise from rl policy
         noise = self.noise_policy.predict_noise(obs_emb, argmax=True)
@@ -268,7 +268,7 @@ class SumPolicy:
         da = self.base_policy.action_dim
 
         # 1. Get latent mean from base policy's VIB encoder
-        mod_obs_emb, z_mean, _ = self.base_policy.vib_forward(obs_emb, deterministic=False)
+        mod_obs_emb, z_mean, _, _ = self.base_policy.vib_forward(obs_emb, deterministic=False)
 
         # 2. Get init noise from rl policy
         nnoise = self.noise_policy.predict_noise(obs_emb)

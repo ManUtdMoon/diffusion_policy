@@ -20,6 +20,8 @@ res_policy:
   action_dim: ???
   actor_input: obs_action
   hidden_dim: 256
+  log_std_min: -10.0
+  log_std_max: 2.0
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
   tau: 0.005
   init_alpha: 0.01

@@ -216,7 +216,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         modified_global_cond = self.vib_decoder(z)
         
         # 3. Return the final logvar for KL loss calculation
-        return modified_global_cond, z_mean, z_logvar
+        return modified_global_cond, z_mean, z_logvar, z
 
     def conditional_predict(self, obs_emb: torch.Tensor) -> Dict[str, torch.Tensor]:
         B = obs_emb.shape[0]
@@ -319,7 +319,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         obs_emb = self.encode_obs(obs_dict)
         
         # 2. pass through VIB module
-        modified_obs_emb, _, _ = self.vib_forward(obs_emb, deterministic=True)
+        modified_obs_emb, _, _, _ = self.vib_forward(obs_emb, deterministic=True)
         
         # 3. predict action
         result = self.conditional_predict(modified_obs_emb)
@@ -381,7 +381,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         # The main IL loss will be conditioned on the VIB output.
         # This ensures the UNet learns to handle the VIB's transformations.
         # No need to detach global_cond, as we want to train the whole pipeline end-to-end.
-        modified_global_cond, z_mean, z_logvar = self.vib_forward(global_cond, deterministic=False)
+        modified_global_cond, z_mean, z_logvar, _ = self.vib_forward(global_cond, deterministic=False)
 
         # --- IL Flow Loss (now conditioned on VIB output) ---
         pred_il = self.model(noisy_trajectory, timesteps, global_cond=modified_global_cond)

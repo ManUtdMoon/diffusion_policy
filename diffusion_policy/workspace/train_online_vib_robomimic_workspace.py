@@ -185,8 +185,8 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(Do + dz,), dtype=np.float32
-        )  # obs_emb + z_mean
+            shape=(Do + 3 * dz,), dtype=np.float32
+        )  # obs_emb + z_mean + z_logvar + z
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
             shape=(dz,), dtype=np.float32
@@ -262,7 +262,10 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
             obs_seq, lambda x: torch.from_numpy(x).to(device=device))
-        obs_emb_tensor = self.base_policy.encode_obs(obs_seq_tensor).detach()
+        with torch.no_grad():
+            obs_emb_tensor = self.base_policy.encode_obs(obs_seq_tensor)
+            _, z_mean, z_logvar, z = self.base_policy.vib_forward(obs_emb_tensor)
+            obs_z = torch.cat([obs_emb_tensor, z_mean, z_logvar, z], dim=-1)
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as logger:
             set_rand_crop(False)
@@ -289,10 +292,9 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                         perturb = True
 
                     ## forward sum policy
-                    sum_dict = sum_policy.predict_train_action(obs_emb_tensor, perturb)
+                    sum_dict = sum_policy.predict_train_action(obs_z, perturb)
                     sum_dict = dict_apply(
                         sum_dict, lambda x: x.detach())
-                    z_mean = sum_dict['z_mean']
                     res_z = sum_dict['res_z']
                     action = sum_dict['action'].cpu().numpy()
 
@@ -307,15 +309,14 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                     assert cfg.training.bootstrap_at_done == 'never'
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
-                    next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
-                    next_z_mean, _ = self.base_policy.vib_encoder(next_obs_emb_tensor)
-
-                    obs_to_save = torch.cat([obs_emb_tensor, z_mean], dim=-1)
-                    next_obs_to_save = torch.cat([next_obs_emb_tensor, next_z_mean], dim=-1)
+                    with torch.no_grad():
+                        next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
+                        _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
+                        next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
 
                     rb.add(
-                        obs=obs_to_save.cpu().numpy(),
-                        next_obs=next_obs_to_save.cpu().numpy(),
+                        obs=obs_z.detach().cpu().numpy(),
+                        next_obs=next_obs_z.detach().cpu().numpy(),
                         action=res_z.cpu().numpy(),
                         reward=rewards,
                         done=dones,
@@ -323,7 +324,7 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                     )
 
                     ## switch to next step
-                    obs_emb_tensor = next_obs_emb_tensor
+                    obs_z = next_obs_z
 
                 if self.global_step < learning_start:
                     # Warmup phase: skip training, only collect data
