@@ -61,7 +61,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
 
         replay_buffer = None
         if use_cache:
-            cache_zarr_path = dataset_path + '.zarr'
+            cache_zarr_path = dataset_path + f'-n_{num_demo}' + '.zarr'
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
             with FileLock(cache_lock_path):

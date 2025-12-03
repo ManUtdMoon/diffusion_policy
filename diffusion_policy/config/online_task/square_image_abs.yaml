@@ -18,7 +18,7 @@ shape_meta: &shape_meta
       shape: [2]
   action: 
     shape: [10]
-  
+
 task_name: &task_name square
 dataset_type: &dataset_type ph
 dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_abs.hdf5

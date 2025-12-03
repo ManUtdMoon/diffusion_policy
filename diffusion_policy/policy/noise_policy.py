@@ -22,6 +22,8 @@ class NoisePolicy(ModuleAttrMixin):
             obs_dim: int,
             action_dim: int,
             hidden_dim: int = 256,
+            log_std_min: float = -2.0,
+            log_std_max: float = 2.0,
             # training params
             gamma: float = 0.97,
             tau: float = 0.01,
@@ -37,7 +39,10 @@ class NoisePolicy(ModuleAttrMixin):
         actor = Actor(
             obs_dim=obs_dim,
             action_dim=action_dim,
-            hidden_dim=hidden_dim,)
+            hidden_dim=hidden_dim,
+            log_std_min=log_std_min,
+            log_std_max=log_std_max,
+        )
 
         qs = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
         q_targets = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
