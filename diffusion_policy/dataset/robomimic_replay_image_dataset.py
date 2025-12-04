@@ -390,7 +390,7 @@ def normalizer_from_stat(stat):
 
 def main():
     task = "square"
-    dataset_type = "ph"
+    dataset_type = "mh"
     dataset_path = f"/media/datahub-2/ydj/robomimicv030/{task}/{dataset_type}/image_v141_abs.hdf5"
     shape_meta = {
         "obs": {
@@ -421,14 +421,14 @@ def main():
         shape_meta,
         dataset_path=dataset_path,
         horizon=16,
-        pad_before=1,
+        pad_before=0,
         pad_after=7,
-        n_obs_steps=2,
+        n_obs_steps=1,
         abs_action=True,
         rotation_rep='rotation_6d',
         use_cache=True,
         val_ratio=0.02,
-        num_demo=20
+        num_demo=100
     )
 
     val_set = dataset.get_validation_dataset()
@@ -464,6 +464,10 @@ def main():
     actions = np.array(dataset.replay_buffer['action'].astype(np.float32))
     print("NAction mean:", action_normalizer.normalize(actions.mean(axis=0)))
     print("NAction median:", action_normalizer.normalize(np.median(actions, axis=0)))
+
+    epi_ends = dataset.replay_buffer.episode_ends[:]
+    epi_lens = np.diff(np.concatenate([[0], epi_ends]))
+    print("Episode length stats - mean:", epi_lens.mean(), "median:", np.median(epi_lens), "max:", epi_lens.max(), "min:", epi_lens.min(), "std:", epi_lens.std())
 
 if __name__ == "__main__":
     main()
