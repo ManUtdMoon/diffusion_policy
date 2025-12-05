@@ -378,30 +378,33 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         target = noise - trajectory
 
         # --- VIB Forward Pass ---
-        # The main IL loss will be conditioned on the VIB output.
-        # This ensures the UNet learns to handle the VIB's transformations.
-        # No need to detach global_cond, as we want to train the whole pipeline end-to-end.
-        modified_global_cond, z_mean, z_logvar, _ = self.vib_forward(global_cond, deterministic=False)
+        # Decouple il and vib training
+        modified_global_cond, z_mean, z_logvar, _ = self.vib_forward(global_cond.detach(), deterministic=False)
 
-        # --- IL Flow Loss (now conditioned on VIB output) ---
-        pred_il = self.model(noisy_trajectory, timesteps, global_cond=modified_global_cond)
+        # --- IL Flow Loss (still conditioned on original obs_emb) ---
+        pred_il = self.model(noisy_trajectory, timesteps, global_cond=global_cond)
         il_loss = F.mse_loss(pred_il, target)
 
         # --- VIB KL Loss ---
         # KL divergence loss to regularize the latent space
         vib_kl_loss = -0.5 * torch.mean(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
-
-        # --- VIB reconstruction loss ---
-        vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
+        # --- VIB IL Loss ---
+        pred_vib_il = self.model(noisy_trajectory, timesteps, global_cond=modified_global_cond)
+        vib_il_loss = F.mse_loss(pred_vib_il, target)
+        # --- VIB reconstruction loss ---, disabled for now
+        # vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
         
         # Total loss
-        loss = il_loss + self.vib_beta * vib_kl_loss + self.vib_recon * vib_recon_loss
+        loss = il_loss
+        vib_loss = vib_il_loss + self.vib_beta * vib_kl_loss # + self.vib_recon * vib_recon_loss
 
         # logging
         info = {
-            'il_loss': il_loss.item(),
+            # 'il_loss': il_loss.item(),
+            'vib_loss': vib_loss.item(),
+            'vib_il_loss': vib_il_loss.item(),
             'vib_kl_loss': vib_kl_loss.item(),
-            'vib_recon_loss': vib_recon_loss.item(),
+            # 'vib_recon_loss': vib_recon_loss.item(),
         }
 
-        return loss, info
+        return loss, vib_loss, info

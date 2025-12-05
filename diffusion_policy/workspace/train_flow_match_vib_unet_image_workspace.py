@@ -167,26 +167,27 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                             train_sampling_batch = batch
 
                         # compute loss
-                        raw_loss, info = self.model.compute_loss(batch)
-                        loss = raw_loss / cfg.training.gradient_accumulate_every
+                        loss, vib_loss, info = self.model.compute_loss(batch)
+
+                        vib_loss.backward(retain_graph=True)
+                        self.model.model.zero_grad()  # vib does not update denoiser
                         loss.backward()
 
                         # step optimizer
-                        if self.global_step % cfg.training.gradient_accumulate_every == 0:
-                            self.optimizer.step()
-                            self.optimizer.zero_grad()
-                            lr_scheduler.step()
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
+                        lr_scheduler.step()
                         
                         # update ema
                         if cfg.training.use_ema:
                             ema.step(self.model)
 
                         # logging
-                        raw_loss_cpu = raw_loss.item()
-                        tepoch.set_postfix(loss=raw_loss_cpu, refresh=False)
-                        train_losses.append(raw_loss_cpu)
+                        loss_cpu = loss.item()
+                        tepoch.set_postfix(loss=loss_cpu, refresh=False)
+                        train_losses.append(loss_cpu)
                         step_log = {
-                            'train_loss': raw_loss_cpu,
+                            'train_loss': loss_cpu,
                             'global_step': self.global_step,
                             'epoch': self.epoch,
                             'lr': lr_scheduler.get_last_lr()[0]
@@ -230,7 +231,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss, info = self.model.compute_loss(batch)
+                                loss, vib_loss, info = self.model.compute_loss(batch)
                                 val_losses.append(loss.item())
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
