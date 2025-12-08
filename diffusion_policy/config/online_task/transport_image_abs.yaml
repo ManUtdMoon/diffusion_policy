@@ -31,16 +31,16 @@ shape_meta: &shape_meta
       shape: [2]
   action: 
     shape: [20]
-  
+
 task_name: &task_name transport
-dataset_type: &dataset_type ph
-dataset_path: &dataset_path /ssd1/yudongjie/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_abs.hdf5
+dataset_type: &dataset_type mh
+dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_subset_abs.hdf5
 abs_action: &abs_action True
 
-base_ckpt: "data/outputs/2025.06.27/07.58.29_train_flow_match_unet_image_transport_image/checkpoints/epoch=0700-score=0.520.ckpt"
+base_ckpt: "data/outputs/2025.12.04/21.31.43_train_flow_match_vib_unet_image_transport_image/checkpoints/latest.ckpt"
 
 # train
-n_envs: 25
+n_envs: 20
 
 # eval
 env_runner:
