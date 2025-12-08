@@ -20,11 +20,11 @@ shape_meta: &shape_meta
     shape: [10]
 
 task_name: &task_name square
-dataset_type: &dataset_type ph
-dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_abs.hdf5
+dataset_type: &dataset_type mh
+dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_subset_abs.hdf5
 abs_action: &abs_action True
 
-base_ckpt: "data/outputs/2025.11.21/10.18.10_train_flow_match_vib_unet_image_square_image/checkpoints/epoch=0500-score=0.480.ckpt"
+base_ckpt: "data/outputs/2025.12.04/21.27.40_train_flow_match_vib_unet_image_square_image/checkpoints/epoch=1000-score=0.420.ckpt"
 
 # train
 n_envs: 20
@@ -42,7 +42,7 @@ env_runner:
   n_test_vis: 4
   test_start_seed: 100000
   # use python's eval function as resolver, single-quoted string as argument
-  max_steps: ${eval:'500 if "${online_task.dataset_type}" == "mh" else 200'}
+  max_steps: ${eval:'400 if "${online_task.dataset_type}" == "mh" else 200'}
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
   render_obs_key: 'agentview_image'
