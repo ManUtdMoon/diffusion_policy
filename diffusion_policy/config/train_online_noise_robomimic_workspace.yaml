@@ -21,7 +21,8 @@ noise_policy:
   hidden_dim: 256
   log_std_min: -2.0
   log_std_max: 2.0
-  gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
+  # gamma: ${eval:"round(0.997**${n_action_steps}, 3)"}  # for transport
+  gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}  # for can, square is enough
   tau: 0.005
   init_alpha: 0.01
   auto_alpha: True
