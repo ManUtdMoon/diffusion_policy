@@ -45,6 +45,23 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.06/17.42.44_train_online_noise_robomimic_workspace_square_image',
         ],
     },
+    'transport': { # robomimic-transport
+        'Po-dec': [
+            '2025.12.09/12.56.40_train_online_robomimic_workspace_transport_image',
+            '2025.12.09/18.47.08_train_online_robomimic_workspace_transport_image',
+            '2025.12.10/00.16.36_train_online_robomimic_workspace_transport_image',
+        ],
+        'ZPRL': [
+            '2025.12.09/16.08.09_train_online_vib_robomimic_workspace_transport_image',
+            '2025.12.09/10.05.15_train_online_vib_robomimic_workspace_transport_image',
+            '2025.12.10/17.09.40_train_online_vib_robomimic_workspace_transport_image',
+        ],
+        'DSRL': [
+            '2025.12.10/09.50.51_train_online_noise_robomimic_workspace_transport_image',
+            '2025.12.10/09.52.47_train_online_noise_robomimic_workspace_transport_image',
+            '2025.12.10/15.20.59_train_online_noise_robomimic_workspace_transport_image',
+        ],
+    },
 }
 
 # =============================================================================

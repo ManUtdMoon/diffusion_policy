@@ -162,7 +162,11 @@ def main(task, mode):
     if task == 'can':
         ax.set_xlim(right=5)
     elif task == 'square':
+        ax.set_xlim(right=8)
+    elif task == 'transport':
         ax.set_xlim(right=10)
+    else:
+        raise ValueError(f"Unknown task: {task}")
     ax.set_ylim(bottom=-0.05, top=1.05)
 
     # Customize the legend
