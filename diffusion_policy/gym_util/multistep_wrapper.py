@@ -90,7 +90,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.obs = deque(maxlen=n_obs_steps+1)
         self.reward = list()
         self.done = list()
-        self.info = defaultdict(lambda : deque(maxlen=n_obs_steps+1))
+        self.info = defaultdict(lambda : deque(maxlen=n_action_steps+1))
     
     def reset(self):
         """Resets the environment using kwargs."""
@@ -99,7 +99,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.obs = deque([obs], maxlen=self.n_obs_steps+1)
         self.reward = list()
         self.done = list()
-        self.info = defaultdict(lambda : deque(maxlen=self.n_obs_steps+1))
+        self.info = defaultdict(lambda : deque(maxlen=self.n_action_steps+1))
 
         obs = self._get_obs(self.n_obs_steps)
         return obs
@@ -130,7 +130,13 @@ class MultiStepWrapper(gym.Wrapper):
         observation = self._get_obs(self.n_obs_steps)
         reward = aggregate(chunk_rewards, self.reward_agg_method, self.gamma)
         done = aggregate(chunk_dones, 'max')
-        info = dict_take_last_n(self.info, self.n_obs_steps)
+        info = dict_take_last_n(self.info, self.n_action_steps)
+
+        # Special handling for goal_achieved: sum all occurrences during action chunk execution
+        if 'goal_achieved' in self.info:
+            # Get all goal_achieved values from the current action chunk execution
+            all_goal_achieved = list(self.info['goal_achieved'])[-len(chunk_rewards):]
+            info['goal_achieved'] = sum(all_goal_achieved)
         return observation, reward, done, info
 
     def _get_obs(self, n_steps=1):

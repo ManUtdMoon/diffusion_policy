@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: can_image_abs
+  - task: adroit_door
 
 name: train_flow_match_vib_unet_image
 _target_: diffusion_policy.workspace.train_flow_match_vib_unet_image_workspace.TrainFlowMatchVibUnetImageWorkspace
@@ -74,8 +74,8 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 256
-  num_workers: 12
+  batch_size: 128
+  num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: False
@@ -121,7 +121,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: offline_debug
+  project: adroit_offline_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}

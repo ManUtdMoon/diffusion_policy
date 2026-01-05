@@ -1,0 +1,161 @@
+if __name__ == "__main__":
+    import sys
+    import os
+    import pathlib
+
+    ROOT_DIR = str(pathlib.Path(__file__).parent.parent.parent)
+    sys.path.append(ROOT_DIR)
+
+
+from typing import Dict
+import torch
+import numpy as np
+import copy
+
+from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.common.replay_buffer import ReplayBuffer
+from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
+from diffusion_policy.model.common.normalizer import LinearNormalizer
+from diffusion_policy.dataset.base_dataset import BaseImageDataset
+from diffusion_policy.common.normalize_util import get_image_range_normalizer
+
+
+class AdroitImageDataset(BaseImageDataset):
+    def __init__(self,
+            zarr_path, 
+            horizon=16,
+            n_obs_steps=1,
+            pad_before=0,
+            pad_after=0,
+            seed=42,
+            val_ratio=0.0,
+            task_name=None,
+            ):
+        super().__init__()
+        self.task_name = task_name
+        self.replay_buffer = ReplayBuffer.copy_from_path(
+            zarr_path, keys=['state', 'action', 'img'])
+        val_mask = get_val_mask(
+            n_episodes=self.replay_buffer.n_episodes, 
+            val_ratio=val_ratio,
+            seed=seed)
+        train_mask = ~val_mask
+
+        self.sampler = SequenceSampler(
+            replay_buffer=self.replay_buffer, 
+            sequence_length=horizon,
+            pad_before=pad_before, 
+            pad_after=pad_after,
+            episode_mask=train_mask)
+        self.train_mask = train_mask
+        self.horizon = horizon
+        self.n_obs_steps = n_obs_steps
+        self.pad_before = pad_before
+        self.pad_after = pad_after
+
+    def get_validation_dataset(self):
+        val_set = copy.copy(self)
+        val_set.sampler = SequenceSampler(
+            replay_buffer=self.replay_buffer, 
+            sequence_length=self.horizon,
+            pad_before=self.pad_before, 
+            pad_after=self.pad_after,
+            episode_mask=~self.train_mask
+            )
+        val_set.train_mask = ~self.train_mask
+        return val_set
+
+    def get_normalizer(self, mode='limits', **kwargs):
+        data = {
+            'action': self.replay_buffer['action'],
+            'agent_pos': self.replay_buffer['state'][...,:],
+        }
+        normalizer = LinearNormalizer()
+        normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
+
+        normalizer['image'] = get_image_range_normalizer()
+        return normalizer
+
+    def __len__(self) -> int:
+        return len(self.sampler)
+
+    def _sample_to_data(self, sample):
+        T_slice = slice(self.n_obs_steps)
+        agent_pos = sample['state'][T_slice].astype(np.float32) # (agent_posx2, block_posex3)
+        image = sample['img'][T_slice].astype(np.float32) / 255.0 # (T,h,w,c)
+
+        data = {
+            'obs': {
+                'image': np.moveaxis(image, -1, 1), # T, 3, h, w
+                'agent_pos': agent_pos, # T, D_pos
+            },
+            'action': sample['action'].astype(np.float32) # T, D_action
+        }
+        return data
+    
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        sample = self.sampler.sample_sequence(idx)
+        data = self._sample_to_data(sample)
+        torch_data = dict_apply(data, torch.from_numpy)
+        return torch_data
+
+
+
+if __name__ == "__main__":
+    task = 'door'
+    dataset_prefix = '/media/datahub-2/ydj/adroit/'
+    dataset_name_map = {
+        'door': 'adroit_door_medium_expert.zarr',
+        'hammer': 'adroit_hammer_medium.zarr',
+        'pen': 'adroit_pen_expert.zarr',
+    }
+    dataset_path = dataset_prefix + dataset_name_map[task]
+
+    dataset = AdroitImageDataset(
+        zarr_path=dataset_path,
+        horizon=16,
+        n_obs_steps=1,
+        pad_before=0,
+        pad_after=3,
+        val_ratio=0.02,
+        task_name=task,
+    )
+    val_set = dataset.get_validation_dataset()
+    train_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=128,
+        num_workers=0,
+        shuffle=True,
+        # pin_memory=True,
+        # persistent_workers=False,
+    )
+
+    import time
+    from tqdm import tqdm
+    np.set_printoptions(precision=3)
+    num_epochs = 1
+    num_steps = 10
+    for epoch in range(num_epochs):
+        print(f"Epoch {epoch}:")
+        train_time_per_batch = []
+        start = time.time()
+        for i, batch in enumerate(tqdm(train_loader)):
+            time_get = time.time()
+            train_time_per_batch.append(time_get - start)
+            start = time_get
+            if i + 1 == num_steps:
+                break
+        train = np.array(train_time_per_batch)
+        print(f"Train mean: {train.mean():.3f}, std: {train.std():.3f}, max: {train.max():.3f}")
+        print("train:", train[:10])
+
+    # get action from replay buffer, median, mean
+    normalizer = dataset.get_normalizer()
+    action_normalizer = dataset.get_normalizer()['action']
+    actions = np.array(dataset.replay_buffer['action'].astype(np.float32))
+    print("NAction mean:", action_normalizer.normalize(actions.mean(axis=0)))
+    print("NAction median:", action_normalizer.normalize(np.median(actions, axis=0)))
+
+    epi_ends = dataset.replay_buffer.episode_ends[:]
+    epi_lens = np.diff(np.concatenate([[0], epi_ends]))
+    print("Episode length stats - mean:", epi_lens.mean(), "median:", np.median(epi_lens), "max:", epi_lens.max(), "min:", epi_lens.min(), "std:", epi_lens.std())
