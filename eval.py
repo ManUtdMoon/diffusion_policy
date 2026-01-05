@@ -52,12 +52,10 @@ def main(checkpoint, output_dir, device, n_action_steps):
     policy.eval()
     
     # run eval
-    cfg.task.env_runner.n_train = 0
-    cfg.task.env_runner.n_train_vis = 0
-    cfg.task.env_runner.n_test = 50
-    cfg.task.env_runner.n_test_vis = 10
-    cfg.task.env_runner.test_start_seed = 100_000
+    cfg.task.env_runner.render_device_id = int(str(device)[-1])
+    cfg.task.env_runner.eval_episodes = 50
     cfg.task.env_runner.n_envs = 25
+    cfg.task.env_runner.test_start_seed = 100_000
     env_runner = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir)

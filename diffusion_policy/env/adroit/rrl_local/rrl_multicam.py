@@ -27,10 +27,19 @@ def make_encoder(encoder, encoder_type, device, is_eval=True) :
 
 class BasicAdroitEnv(gym.Env): # , ABC
     def __init__(self, env, cameras, latent_dim=512, hybrid_state=True, channels_first=False, 
-    height=84, width=84, test_image=False, num_repeats=1, num_frames=1, encoder_type=None, device=None):
+    height=84, width=84, test_image=False, num_repeats=1, num_frames=1, encoder_type=None, device=None, render_device_id=0):
         self._env = env
         self.env_id = env.env.unwrapped.spec.id
         self.device = device
+        
+        render_id_map = {
+            0: 1,
+            1: 0,
+            2: 2,
+            3: 3,
+        }
+        self.render_device_id = render_id_map.get(render_device_id, 0)
+
 
         self._num_repeats = num_repeats
         self._num_frames = num_frames
@@ -111,7 +120,7 @@ class BasicAdroitEnv(gym.Env): # , ABC
         else:
             if not self.test_image:
                 for cam in self.cameras : # for each camera, render once
-                    img = self._env.env.sim.render(width=self.width, height=self.height, mode='offscreen', camera_name=cam, device_id=0) # TODO device id will think later
+                    img = self._env.env.sim.render(width=self.width, height=self.height, mode='offscreen', camera_name=cam, device_id=self.render_device_id) # TODO device id will think later
                     # img = img[::-1, :, : ] # Image given has to be flipped
                     if self.channels_first :
                         img = img.transpose((2, 0, 1)) # then it's 3 x width x height

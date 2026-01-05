@@ -1,5 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
+if __name__ == "__main__":
+    import sys
+    import os
+    import pathlib
+
+    ROOT_DIR = str(pathlib.Path(__file__).parent.parent.parent.parent)
+    sys.path.append(ROOT_DIR)
+    os.chdir(ROOT_DIR)
 
 
 from collections import deque
@@ -18,7 +26,7 @@ class AdroitEnv:
 
     # a wrapper class that will make Adroit env looks like a dmc env
     def __init__(self, env_name, test_image=False, cam_list=None,
-                 num_repeats=2, num_frames=1, env_feature_type='pixels', device='cuda', reward_rescale=True):
+                 num_repeats=2, num_frames=1, env_feature_type='pixels', device='cuda', render_device_id=0, reward_rescale=True):
         if '-v0' not in env_name:  # compatibility with gym env name
             env_name += '-v0'
         default_env_to_cam_list = {
@@ -51,7 +59,7 @@ class AdroitEnv:
         # RRL class instance is environment wrapper...
         env = BasicAdroitEnv(env, cameras=cam_list,
                                 height=height, width=width, latent_dim=latent_dim, hybrid_state=True,
-                                test_image=test_image, channels_first=True, num_repeats=num_repeats, num_frames=num_frames, device=device)
+                                test_image=test_image, channels_first=True, num_repeats=num_repeats, num_frames=num_frames, device=device, render_device_id=render_device_id)
 
         self._env = env
         self.obs_dim = env.spec.observation_dim
@@ -189,3 +197,4 @@ if __name__ == "__main__":
         img = env.render(mode='rgb_array')
         if done:
             obs = env.reset()
+    input("Press Enter to continue...")

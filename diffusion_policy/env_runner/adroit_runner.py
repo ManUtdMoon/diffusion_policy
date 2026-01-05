@@ -5,6 +5,7 @@ import tqdm
 from termcolor import cprint
 import time
 
+from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
 from diffusion_policy.env.adroit.adroit import AdroitEnv
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
@@ -15,7 +16,7 @@ from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 class AdroitRunner(BaseImageRunner):
     def __init__(self,
             output_dir,
-            eval_episodes=20,
+            eval_episodes=50,
             max_steps=300,
             n_obs_steps=1,
             n_action_steps=5,
@@ -23,7 +24,9 @@ class AdroitRunner(BaseImageRunner):
             crf=22,
             tqdm_interval_sec=5.0,
             task_name="door",
-            env_num=1,
+            n_envs=25,
+            test_start_seed=10000,
+            render_device_id=0,
         ):
         super().__init__(output_dir)
         self.task_name = task_name
@@ -34,25 +37,45 @@ class AdroitRunner(BaseImageRunner):
 
         steps_per_render = max(10 // fps, 1)
 
+        assert eval_episodes % n_envs == 0, "eval_episodes must be divisible by n_envs"
+
         def env_fn():
             return MultiStepWrapper(
                 AdroitEnv(
-                    env_name=task_name
+                    env_name=task_name,
+                    render_device_id=render_device_id,
                 ),
                 n_obs_steps=n_obs_steps,
                 n_action_steps=n_action_steps,
                 max_episode_steps=max_steps,
                 reward_agg_method='sum',
             )
+        def dummy_env_fn():
+            return MultiStepWrapper(
+                AdroitEnv(
+                    env_name=task_name,
+                    render_device_id=render_device_id,
+                ),
+                n_obs_steps=n_obs_steps,
+                n_action_steps=n_action_steps,
+                max_episode_steps=max_steps,
+                reward_agg_method='sum',
+            )
+        env_fns = [env_fn for _ in range(n_envs)]
+        env_seeds = [test_start_seed + i for i in range(eval_episodes)]
 
+        env = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
+
+        self.env = env
+        self.env_seeds = env_seeds
         self.eval_episodes = eval_episodes
-        self.env = env_fn()
+        self.n_envs = n_envs
 
         self.fps = fps
         self.crf = crf
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
-        self.max_steps = max_steps
+        self.max_steps = max_steps // 2 # default num_repeats is 2 in adroit
         self.tqdm_interval_sec = tqdm_interval_sec
 
 
@@ -61,63 +84,72 @@ class AdroitRunner(BaseImageRunner):
         dtype = policy.dtype
         env = self.env
 
-        all_goal_achieved = []
-        all_returns = []
-        hard_success = 0
+        # plan for rollout
+        n_envs = self.n_envs
+        n_epis = self.eval_episodes
+        n_chunks = n_epis // n_envs
 
-        for _ in tqdm.tqdm(
-            range(self.eval_episodes),
-            desc=f"Eval in Adroit {self.task_name} Env",
-            leave=False,
-            mininterval=self.tqdm_interval_sec
-        ):
+        all_goal_achieved = [[] for _ in range(n_epis)]
+        all_rewards = [[] for _ in range(n_epis)]
+
+        for i in range(n_chunks):
+            start = i * n_envs
+            end = (i + 1) * n_envs
+            global_slice = slice(start, end)
+            env.seed(self.env_seeds[global_slice])
+
             # start rollout
             obs = env.reset()
             policy.reset()
-
             done = False
-            num_goal_achieved = 0
-            episode_reward  = 0
+
+            task = self.task_name
+            pbar = tqdm.tqdm(total=self.max_steps, desc=f"Eval {task} {i+1} / {n_chunks}", leave=False, mininterval=self.tqdm_interval_sec)
 
             while not done:
                 # create obs dict
                 np_obs_dict = obs
 
-                # device transfer                
+                # device transfer
                 obs_dict = dict_apply(np_obs_dict,
                     lambda x: torch.from_numpy(x).to(device=device))
 
                 # run policy
                 with torch.no_grad():
                     obs_dict_input = {}  # flush unused keys
-                    obs_dict_input['agent_pos'] = obs_dict['agent_pos'].unsqueeze(0).to(torch.float)
-                    obs_dict_input['image'] = obs_dict['image'].unsqueeze(0).to(torch.float)
+                    obs_dict_input['agent_pos'] = obs_dict['agent_pos'].to(torch.float)
+                    obs_dict_input['image'] = obs_dict['image'].to(torch.float)
                     action_dict = policy.predict_action(obs_dict_input)
 
                 # device_transfer
                 np_action_dict = dict_apply(action_dict,
                     lambda x: x.detach().to('cpu').numpy())
-                action = np_action_dict['action'].squeeze(0)
+                action = np_action_dict['action']
 
                 # step env
                 obs, reward, done, info = env.step(action)
-                episode_reward += reward
                 
                 # process stats
-                num_goal_achieved += np.sum(info['goal_achieved'])
+                for sublist, r in zip(all_rewards[global_slice], reward):
+                    sublist.append(r)
+                for sublist, d in zip(all_goal_achieved[global_slice], info):
+                    sublist.append(np.sum(d["goal_achieved"]))
+
                 done = np.all(done)
 
-            all_goal_achieved.append(num_goal_achieved)
-            all_returns.append(episode_reward)
-            if num_goal_achieved > self.success_threshold:
-                hard_success += 1         
+                pbar.update(action.shape[1])
+            pbar.close()        
 
         # log
         log_data = dict()
-        all_success_rates = hard_success / self.eval_episodes
+        
+        all_returns = np.array([np.sum(r) for r in all_rewards])
+        all_n_goal_achieved = np.array([np.sum(g) for g in all_goal_achieved])
+        n_success = np.sum(all_n_goal_achieved >= self.success_threshold)
+        all_success_rates = n_success / self.eval_episodes
 
         log_data['test/mean_return'] = np.mean(all_returns)
-        log_data['test/mean_n_goal_achieved'] = np.mean(all_goal_achieved)
+        log_data['test/mean_n_goal_achieved'] = np.mean(all_n_goal_achieved)
         log_data['test/mean_score'] = all_success_rates
 
         cprint(f"test/mean_score: {all_success_rates}", 'green')
