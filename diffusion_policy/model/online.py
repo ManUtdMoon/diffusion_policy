@@ -200,10 +200,13 @@ class BatchedSoftQNet(nn.Module):
         self.num_qs = num_qs
         self.net = nn.Sequential(
             BatchedLinear(num_qs, obs_dim + action_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.GELU(),
             BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.GELU(),
             BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.GELU(),
             BatchedLinear(num_qs, hidden_dim, 1),
         )

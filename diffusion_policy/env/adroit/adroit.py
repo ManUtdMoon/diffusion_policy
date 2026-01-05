@@ -14,6 +14,7 @@ from collections import deque
 import warnings
 import numpy as np
 from dm_env import StepType, specs
+import gym
 from gym import spaces
 import mj_envs  # ensure Adroit tasks (e.g., door-v0) register with Gym
 from mjrl.utils.gym_env import GymEnv
@@ -175,6 +176,21 @@ class AdroitEnv:
         """
         return self._env.sim
 
+
+class AdroitEarlyStopWrapper(gym.Wrapper):
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+
+        if 'door_pos' in info:
+            done = True if info['door_pos'] < -0.1 else done
+        
+        if 'nail_pos_error' in info:
+            done = True if info['nail_pos_error'] < 0.010 else done
+
+        return obs, reward, done, info
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
-from diffusion_policy.env.adroit.adroit import AdroitEnv
+from diffusion_policy.env.adroit.adroit import AdroitEnv, AdroitEarlyStopWrapper
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -112,10 +112,10 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
         render_device_id = cfg.online_task.env_runner.render_device_id
         def env_fn():
             return MultiStepWrapper(
-                AdroitEnv(
+                AdroitEarlyStopWrapper(AdroitEnv(
                     env_name=task_name,
                     render_device_id=render_device_id,
-                ),
+                )),
                 n_obs_steps=To,
                 n_action_steps=Ta,
                 max_episode_steps=max_steps,
@@ -123,10 +123,10 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
             )
         def dummy_env_fn():
             return MultiStepWrapper(
-                AdroitEnv(
+                AdroitEarlyStopWrapper(AdroitEnv(
                     env_name=task_name,
                     render_device_id=render_device_id,
-                ),
+                )),
                 n_obs_steps=To,
                 n_action_steps=Ta,
                 max_episode_steps=max_steps,
@@ -213,7 +213,7 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
             return count, rate
-        SUCCESS_TRHES = 20 if 'pen' in task_name else 25
+        SUCCESS_TRHES = 40 if 'pen' in task_name else 50
 
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
@@ -270,7 +270,7 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
 
                     ## env_action and step
                     next_obs_seq, rewards, dones, infos = envs.step(action.copy())
-                    for done, info in zip(dones, infos):
+                    for reward, done, info in zip(rewards, dones, infos):
                         if done:
                             recent_done_successes.append(
                                 info["accumulated_goal_achieved"] >= SUCCESS_TRHES
@@ -280,13 +280,42 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
                     # rewards *= cfg.training.reward_scale
 
                     ## prepare transitions for rb
-                    ## because we do not bootstrap at done, we can use next_obs_seq directly
-                    assert cfg.training.bootstrap_at_done == 'never'
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                     next_base_dict = self.base_policy.predict_action(next_obs_seq_tensor)
-                    next_obs_emb_tensor = next_base_dict['obs_emb'][:, -do:].detach()
-                    next_base_naction_tensor = next_base_dict['naction'].detach()
+
+                    if cfg.training.bootstrap_at_done == 'never':
+                        next_obs_emb_tensor = next_base_dict['obs_emb'][:, -do:].detach()
+                        next_base_naction_tensor = next_base_dict['naction'].detach()
+
+                        stop_bootstrap = dones
+                    else:
+                        assert cfg.training.bootstrap_at_done == 'truncated'
+                        terminations = dones
+                        truncations = np.array(
+                            [d.get('TimeLimit.truncated', [False])[0] for d in infos], 
+                            dtype=bool
+                        )
+
+                        stop_bootstrap = np.logical_and(terminations, np.logical_not(truncations))
+
+                        real_next_obs = {
+                            k: v.copy() for k, v in next_obs_seq.items()
+                        }
+                        for i, need in enumerate(truncations):
+                            if need:
+                                for k in next_obs_seq.keys():
+                                    real_next_obs[k][i] = infos[i]['final_observation'][k]
+                        
+                        # for real obs in buffer
+                        real_next_obs_tensor = dict_apply(
+                            real_next_obs,
+                            lambda x: torch.from_numpy(x).to(device=device))
+                        real_next_base_dict = self.base_policy.predict_action(
+                            real_next_obs_tensor)
+                        next_obs_emb_tensor = real_next_base_dict['obs_emb'][:, -do:].detach()
+                        next_base_naction_tensor = real_next_base_dict['naction'].detach()
+
                     actions_to_save = np.concatenate(
                         [
                             res_naction_flat,
@@ -301,12 +330,11 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
                         next_obs=next_obs_emb_tensor.cpu().numpy(),
                         action=actions_to_save,
                         reward=rewards,
-                        done=dones,
-                        infos=infos
+                        done=stop_bootstrap,
+                        infos=[{}]
                     )
 
                     ## switch to next step
-                    obs_seq = next_obs_seq
                     base_dict = next_base_dict
 
                 if self.global_step < learning_start:

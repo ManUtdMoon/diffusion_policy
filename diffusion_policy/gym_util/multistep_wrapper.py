@@ -3,6 +3,7 @@ from gym import spaces
 import numpy as np
 from collections import defaultdict, deque
 import dill
+from copy import deepcopy
 
 def stack_repeated(x, n):
     return np.repeat(np.expand_dims(x,axis=0),n,axis=0)
@@ -124,6 +125,7 @@ class MultiStepWrapper(gym.Wrapper):
             if (self.max_episode_steps is not None) \
                 and (len(self.reward) >= self.max_episode_steps):
                 # truncation
+                info['TimeLimit.truncated'] = True
                 done = True
             self.done.append(done)
             chunk_dones.append(done)
@@ -135,13 +137,16 @@ class MultiStepWrapper(gym.Wrapper):
         info = dict_take_last_n(self.info, self.n_action_steps)
 
         # Special handling for goal_achieved: sum all occurrences during action chunk execution
-        if 'goal_achieved' in self.info:
-            # Get all goal_achieved values from the current action chunk execution
-            all_goal_achieved = list(self.info['goal_achieved'])[-len(chunk_rewards):]
-            info['goal_achieved'] = sum(all_goal_achieved)
-
-            self.accumulated_goal_achieved += sum(all_goal_achieved)
+        if 'n_goal_achieved' in self.info:
+            all_n_goal_achieved = list(self.info['n_goal_achieved'])[-len(chunk_rewards):]
+            info['n_goal_achieved'] = sum(all_n_goal_achieved)
+            self.accumulated_goal_achieved += sum(all_n_goal_achieved)
             info['accumulated_goal_achieved'] = self.accumulated_goal_achieved
+        
+        if 'TimeLimit.truncated' in info:
+            assert len(info['TimeLimit.truncated']) == 1 and info['TimeLimit.truncated'][0] == True
+            # copy real next obs
+            info['final_observation'] = deepcopy(observation)
 
         return observation, reward, done, info
 

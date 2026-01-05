@@ -35,9 +35,9 @@ class AdroitRunner(BaseImageRunner):
         super().__init__(output_dir)
         self.task_name = task_name
         if 'pen' in task_name:
-            self.success_threshold = 20
+            self.success_threshold = 40
         else:
-            self.success_threshold = 25
+            self.success_threshold = 50
 
         steps_per_render = max(10 // fps, 1)
         max_steps = max_steps // 2  # default num_repeats is 2 in adroit
@@ -139,7 +139,7 @@ class AdroitRunner(BaseImageRunner):
         n_epis = self.eval_episodes
         n_chunks = n_epis // n_envs
 
-        all_goal_achieved = [[] for _ in range(n_epis)]
+        all_n_goal_achieved = [[] for _ in range(n_epis)]
         all_rewards = [[] for _ in range(n_epis)]
         all_video_paths = [None for _ in range(n_epis)]
 
@@ -187,8 +187,8 @@ class AdroitRunner(BaseImageRunner):
                 # process stats
                 for sublist, r in zip(all_rewards[global_slice], reward):
                     sublist.append(r)
-                for sublist, d in zip(all_goal_achieved[global_slice], info):
-                    sublist.append(np.sum(d["goal_achieved"]))
+                for sublist, d in zip(all_n_goal_achieved[global_slice], info):
+                    sublist.append(d["n_goal_achieved"])
 
                 done = np.all(done)
 
@@ -202,7 +202,7 @@ class AdroitRunner(BaseImageRunner):
         log_data = dict()
         
         all_returns = np.array([np.sum(r) for r in all_rewards])
-        all_n_goal_achieved = np.array([np.sum(g) for g in all_goal_achieved])
+        all_n_goal_achieved = np.array([np.sum(g) for g in all_n_goal_achieved])
         n_success = np.sum(all_n_goal_achieved >= self.success_threshold)
         all_success_rates = n_success / self.eval_episodes
 

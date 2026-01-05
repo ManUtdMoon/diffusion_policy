@@ -9,9 +9,9 @@ task_name: ${online_task.name}
 shape_meta: ${online_task.shape_meta}
 exp_name: "default"
 
-horizon: 16
+horizon: 8
 n_obs_steps: 1
-n_action_steps: 1
+n_action_steps: 4
 n_latency_steps: 0
 
 res_policy:
@@ -24,7 +24,7 @@ res_policy:
   log_std_max: 2.0
   gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}
   tau: 0.005
-  init_alpha: 0.01
+  init_alpha: 0.1
   auto_alpha: True
   res_scale: ${training.res_scale}
   num_qs: 2
@@ -41,16 +41,16 @@ training:
   learning_start: 4000
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
-  max_grad_norm: 50.0
+  max_grad_norm: 1.0
   policy_freq: 2
   target_freq: 2
   training_freq: 1000
   utd: 1.0
   n_envs: ${online_task.n_envs}
   # residue progress
-  res_scale: 0.1
+  res_scale: 0.15
   prog_explore: 50000
-  bootstrap_at_done: never  # never, always, truncated
+  bootstrap_at_done: truncated  # never, always, truncated
   # training loop control in steps
   num_steps: 500000
   buffer_size: 500000
