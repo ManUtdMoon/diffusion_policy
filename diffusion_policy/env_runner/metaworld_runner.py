@@ -29,7 +29,7 @@ class MetaworldRunner(BaseImageRunner):
             task_name="peg-insert-side",
             n_envs=25,
             n_epi_vis=5,
-            device="cuda:0",
+            render_device_id=0,
         ):
         super().__init__(output_dir)
         self.task_name = task_name
@@ -43,7 +43,7 @@ class MetaworldRunner(BaseImageRunner):
                 VideoRecordingWrapper(
                     MetaWorldEnv(
                         task_name=task_name,
-                        device=device,
+                        device_id=render_device_id,
                     ),
                     video_recoder=VideoRecorder.create_h264(
                         fps=fps,
@@ -66,7 +66,7 @@ class MetaworldRunner(BaseImageRunner):
                 VideoRecordingWrapper(
                     MetaWorldEnv(
                         task_name=task_name,
-                        device=device,
+                        device_id=render_device_id,
                     ),
                     video_recoder=VideoRecorder.create_h264(
                         fps=fps,

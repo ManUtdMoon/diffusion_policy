@@ -20,7 +20,7 @@ class MetaWorldEnv(gym.Env):
 
     def __init__(self,
             task_name,
-            device="cuda:0",
+            device_id=0,
             rgb_size=84
         ):
         super(MetaWorldEnv, self).__init__()
@@ -38,7 +38,6 @@ class MetaWorldEnv(gym.Env):
         self.env.sim.model.vis.map.znear = 0.1
         self.env.sim.model.vis.map.zfar = 1.5
 
-        device_id = int(device.split(':')[-1])
         device_id_map = {
             0: 1,
             1: 0,

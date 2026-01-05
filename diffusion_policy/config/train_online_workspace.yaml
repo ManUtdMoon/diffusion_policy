@@ -1,9 +1,9 @@
 defaults:
   - _self_
-  - online_task: adroit_door
+  - online_task: metaworld_peg-insert-side
 
-name: train_online_adroit_workspace
-_target_: diffusion_policy.workspace.train_online_adroit_workspace.TrainOnlineAdroitWorkspace
+name: train_online_workspace
+_target_: diffusion_policy.workspace.train_online_workspace.TrainOnlineWorkspace
 
 task_name: ${online_task.name}
 shape_meta: ${online_task.shape_meta}
@@ -61,7 +61,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: adroit_online_debug
+  project: metaworld_online_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}

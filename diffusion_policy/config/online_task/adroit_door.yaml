@@ -17,6 +17,8 @@ base_ckpt: "data/outputs/2025.12.09/18.14.34_train_flow_match_vib_unet_image_adr
 # train
 n_envs: 20
 
+success_threshold: 50
+
 # eval
 env_runner:
   _target_: diffusion_policy.env_runner.adroit_runner.AdroitRunner

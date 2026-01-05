@@ -1,6 +1,6 @@
-name: peg-insert-side
+name: push-wall
 
-task_name: peg-insert-side
+task_name: push-wall
 
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
@@ -14,6 +14,13 @@ shape_meta: &shape_meta
   action:
     shape: [4]
 
+base_ckpt: "data/outputs/2025.12.17/17.15.53_train_flow_match_vib_unet_image_push-wall/checkpoints/latest.ckpt"
+
+# train
+n_envs: 20
+
+success_threshold: 0.5
+
 env_runner:
   _target_: diffusion_policy.env_runner.metaworld_runner.MetaworldRunner
   eval_episodes: 100
@@ -25,14 +32,3 @@ env_runner:
   tqdm_interval_sec: 1.0
   n_envs: 25
   render_device_id: ${eval:'int("${training.device}".split(":")[-1])'}
-
-dataset:
-  _target_: diffusion_policy.dataset.metaworld_image_dataset.MetaworldImageDataset
-  zarr_path: /media/datahub-2/ydj/metaworld/metaworld_peg-insert-side_expert.zarr
-  n_obs_steps: ${n_obs_steps}
-  horizon: ${horizon}
-  pad_before: ${eval:'${n_obs_steps}-1'}
-  pad_after: ${eval:'${n_action_steps}-1'}
-  seed: 42
-  val_ratio: 0.02
-  max_train_episodes: 50

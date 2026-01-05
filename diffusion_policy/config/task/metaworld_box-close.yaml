@@ -1,6 +1,6 @@
 name: box-close
 
-task_name: ${name}
+task_name: box-close
 
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
@@ -24,7 +24,7 @@ env_runner:
   task_name: ${task_name}
   tqdm_interval_sec: 1.0
   n_envs: 25
-  device: ${training.device}
+  render_device_id: ${eval:'int("${training.device}".split(":")[-1])'}
 
 dataset:
   _target_: diffusion_policy.dataset.metaworld_image_dataset.MetaworldImageDataset

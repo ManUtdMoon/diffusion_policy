@@ -36,10 +36,11 @@ from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy.env.adroit.adroit import AdroitEnv, AdroitEarlyStopWrapper
+from diffusion_policy.env.metaworld.metaworld_image_wrapper import MetaWorldEnv, MetaworldEarlyStopWrapper
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainOnlineAdroitWorkspace(BaseWorkspace):
+class TrainOnlineWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'global_update', 'base_ckpt']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -107,31 +108,41 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
             cfg.online_task.env_runner,
             output_dir=self.output_dir)
         ## train
-        max_steps = cfg.online_task.env_runner.max_steps // 2 # do not modify, repeat = 2 in adroit
+        env_type = "adroit" if "adroit" in cfg.task_name.lower() else "metaworld"
+        max_steps = cfg.online_task.env_runner.max_steps
+        if env_type == 'adroit':
+            max_steps //= 2 # repeat = 2 in adroit
+
         task_name = cfg.online_task.task_name
         render_device_id = cfg.online_task.env_runner.render_device_id
-        def env_fn():
-            return MultiStepWrapper(
-                AdroitEarlyStopWrapper(AdroitEnv(
-                    env_name=task_name,
-                    render_device_id=render_device_id,
-                )),
-                n_obs_steps=To,
-                n_action_steps=Ta,
-                max_episode_steps=max_steps,
-                reward_agg_method='discounted_sum',
-            )
-        def dummy_env_fn():
-            return MultiStepWrapper(
-                AdroitEarlyStopWrapper(AdroitEnv(
-                    env_name=task_name,
-                    render_device_id=render_device_id,
-                )),
-                n_obs_steps=To,
-                n_action_steps=Ta,
-                max_episode_steps=max_steps,
-                reward_agg_method='discounted_sum',
-            )
+
+        def make_env_fn(env_type, task_name, render_device_id, n_obs_steps, n_action_steps, max_steps):
+            def env_fn():
+                if env_type == 'adroit':
+                    env = AdroitEarlyStopWrapper(AdroitEnv(
+                        env_name=task_name,
+                        render_device_id=render_device_id,
+                    ))
+                elif env_type == 'metaworld':
+                    env = MetaworldEarlyStopWrapper(MetaWorldEnv(
+                        task_name=task_name,
+                        device_id=render_device_id,
+                    ))
+                else:
+                    raise ValueError(f"Unsupported env_type: {env_type}")
+                
+                return MultiStepWrapper(
+                    env,
+                    n_obs_steps=n_obs_steps,
+                    n_action_steps=n_action_steps,
+                    max_episode_steps=max_steps,
+                    reward_agg_method='discounted_sum',
+                )
+            return env_fn
+
+        env_fn = make_env_fn(env_type, task_name, render_device_id, To, Ta, max_steps)
+        dummy_env_fn = make_env_fn(env_type, task_name, render_device_id, To, Ta, max_steps)
+        
         env_fns = [env_fn for _ in range(cfg.training.n_envs)]
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
 
@@ -213,7 +224,8 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
             return count, rate
-        SUCCESS_TRHES = 40 if 'pen' in task_name else 50
+
+        SUCCESS_TRHES = cfg.online_task.success_threshold
 
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
@@ -272,9 +284,14 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
                     next_obs_seq, rewards, dones, infos = envs.step(action.copy())
                     for reward, done, info in zip(rewards, dones, infos):
                         if done:
-                            recent_done_successes.append(
-                                info["accumulated_goal_achieved"] >= SUCCESS_TRHES
-                            )
+                            if env_type == 'adroit':
+                                recent_done_successes.append(
+                                    info["accumulated_goal_achieved"] >= SUCCESS_TRHES
+                                )
+                            elif env_type == 'metaworld':
+                                recent_done_successes.append(
+                                    reward >= SUCCESS_TRHES
+                                )
 
                     ## reward preprocess
                     # rewards *= cfg.training.reward_scale
@@ -443,7 +460,7 @@ class TrainOnlineAdroitWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainOnlineAdroitWorkspace(cfg)
+    workspace = TrainOnlineWorkspace(cfg)
     workspace.run()
 
 if __name__ == "__main__":
