@@ -36,6 +36,7 @@ class AdroitRunner(BaseImageRunner):
             self.success_threshold = 25
 
         steps_per_render = max(10 // fps, 1)
+        max_steps = max_steps // 2  # default num_repeats is 2 in adroit
 
         assert eval_episodes % n_envs == 0, "eval_episodes must be divisible by n_envs"
 
@@ -75,7 +76,7 @@ class AdroitRunner(BaseImageRunner):
         self.crf = crf
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
-        self.max_steps = max_steps // 2 # default num_repeats is 2 in adroit
+        self.max_steps = max_steps
         self.tqdm_interval_sec = tqdm_interval_sec
 
 
