@@ -186,9 +186,7 @@ class AdroitEarlyStopWrapper(gym.Wrapper):
 
         if 'door_pos' in info:
             done = True if info['door_pos'] < -0.1 else done
-        
-        if 'nail_pos_error' in info:
-            done = True if info['nail_pos_error'] < 0.010 else done
+
 
         return obs, reward, done, info
 

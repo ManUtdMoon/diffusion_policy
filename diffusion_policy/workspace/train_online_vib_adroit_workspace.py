@@ -34,7 +34,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
-from diffusion_policy.env.adroit.adroit import AdroitEnv
+from diffusion_policy.env.adroit.adroit import AdroitEnv, AdroitEarlyStopWrapper
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -110,10 +110,10 @@ class TrainOnlineVibAdroitWorkspace(BaseWorkspace):
         render_device_id = cfg.online_task.env_runner.render_device_id
         def env_fn():
             return MultiStepWrapper(
-                AdroitEnv(
+                AdroitEarlyStopWrapper(AdroitEnv(
                     env_name=task_name,
                     render_device_id=render_device_id,
-                ),
+                )),
                 n_obs_steps=To,
                 n_action_steps=Ta,
                 max_episode_steps=max_steps,
@@ -121,10 +121,10 @@ class TrainOnlineVibAdroitWorkspace(BaseWorkspace):
             )
         def dummy_env_fn():
             return MultiStepWrapper(
-                AdroitEnv(
+                AdroitEarlyStopWrapper(AdroitEnv(
                     env_name=task_name,
                     render_device_id=render_device_id,
-                ),
+                )),
                 n_obs_steps=To,
                 n_action_steps=Ta,
                 max_episode_steps=max_steps,
@@ -210,7 +210,7 @@ class TrainOnlineVibAdroitWorkspace(BaseWorkspace):
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
             return count, rate
-        SUCCESS_TRHES = 20 if 'pen' in task_name else 25
+        SUCCESS_TRHES = 40 if 'pen' in task_name else 50
 
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
@@ -260,21 +260,54 @@ class TrainOnlineVibAdroitWorkspace(BaseWorkspace):
                             )
 
                     ## prepare transitions for rb
-                    assert cfg.training.bootstrap_at_done == 'never'
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
-                    with torch.no_grad():
-                        next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
-                        _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
-                        next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
+                    next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
+                    _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
+                    next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
+
+                    if cfg.training.bootstrap_at_done == 'never':
+                        next_obs_z_store = next_obs_z.detach().cpu().numpy()
+                        stop_bootstrap = dones
+                    else:
+                        assert cfg.training.bootstrap_at_done == 'truncated'
+                        terminations = dones
+                        truncations = np.array(
+                            [d.get('TimeLimit.truncated', [False])[0] for d in infos], dtype=bool
+                        )
+
+                        stop_bootstrap = np.logical_and(terminations, np.logical_not(truncations))
+
+                        real_next_obs = {
+                            k: v.copy() for k, v in next_obs_seq.items()
+                        }
+                        for i, need in enumerate(truncations):
+                            if need:
+                                for k in next_obs_seq.keys():
+                                    real_next_obs[k][i] = infos[i]['final_observation'][k]
+                        
+                        # for real obs to be stored in buffer
+                        with torch.no_grad():
+                            real_next_obs_tensor = dict_apply(
+                                real_next_obs,
+                                lambda x: torch.from_numpy(x).to(device=device))
+                            real_next_obs_emb = self.base_policy.encode_obs(real_next_obs_tensor)
+                            _, r_next_z_mean, r_next_z_logvar, r_next_z = self.base_policy.vib_forward(real_next_obs_emb)
+                            next_obs_z_store = torch.cat([
+                                real_next_obs_emb,
+                                r_next_z_mean,
+                                r_next_z_logvar,
+                                r_next_z
+                                ], dim=-1
+                            ).detach().cpu().numpy()
 
                     rb.add(
                         obs=obs_z.detach().cpu().numpy(),
-                        next_obs=next_obs_z.detach().cpu().numpy(),
+                        next_obs=next_obs_z_store,
                         action=res_z.cpu().numpy(),
                         reward=rewards,
-                        done=dones,
-                        infos=infos
+                        done=stop_bootstrap,
+                        infos=[{}]
                     )
 
                     ## switch to next step
@@ -338,6 +371,8 @@ class TrainOnlineVibAdroitWorkspace(BaseWorkspace):
                     'info/q_predicted_max': critic_info['q_predicted_max'],
                     'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
+                    'info/reward_max': critic_info['reward_max'],
+                    'info/reward_min': critic_info['reward_min'],
                     'info/dones': critic_info['dones'],
                     'info/res_naction_norm': actor_info['res_z_norm'],
                     'info/base_norm': actor_info['z_mean_norm'],

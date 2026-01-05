@@ -178,6 +178,8 @@ class ResiduePolicy(ModuleAttrMixin):
             'q_predicted_min': all_q_preds.mean(dim=0).min().item(),
             'q_predicted_max': all_q_preds.mean(dim=0).max().item(),
             "rewards": batch.rewards.mean().item(),
+            "reward_max": batch.rewards.max().item(),
+            "reward_min": batch.rewards.min().item(),
             "dones": batch.dones.float().mean().item(),
         }
 
