@@ -1,9 +1,9 @@
 defaults:
   - _self_
-  - online_task: adroit_door
+  - online_task: metaworld_box-close
 
-name: train_online_vib_adroit_workspace
-_target_: diffusion_policy.workspace.train_online_vib_adroit_workspace.TrainOnlineVibAdroitWorkspace
+name: train_online_vib_workspace
+_target_: diffusion_policy.workspace.train_online_vib_workspace.TrainOnlineVibWorkspace
 
 task_name: ${online_task.name}
 shape_meta: ${online_task.shape_meta}
@@ -49,7 +49,7 @@ training:
   utd: 1.0
   n_envs: ${online_task.n_envs}
   # residue progress
-  res_scale: 0.75
+  res_scale: 0.25
   bootstrap_at_done: truncated  # never, always, truncated
   # training loop control in steps
   num_steps: 500000
@@ -61,7 +61,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: adroit_online_debug
+  project: metaworld_online_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}

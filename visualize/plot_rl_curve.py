@@ -179,12 +179,15 @@ def main(task, mode):
         ax.set_xlim(right=1)
     elif task == 'pen':
         ax.set_xlim(right=2)
+    elif task.startswith('metaworld'):
+        ax.set_xlim(right=1)
     ax.set_ylim(bottom=-0.05, top=1.05)
 
     # Customize the legend
     handles, labels = ax.get_legend_handles_labels()
     legend = ax.legend(handles=handles, labels=labels, fontsize=10, title='Algorithm')
     legend.set_title('')
+    ax.get_legend().remove()  # remove legend
     plt.tight_layout()
 
     output_filename = base_dir / f'{task}_{mode}.pdf'

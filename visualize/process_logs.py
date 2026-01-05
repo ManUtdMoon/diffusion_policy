@@ -98,6 +98,32 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.17/02.16.25_train_online_vib_adroit_workspace_adroit_pen',
         ]
     },
+    'metaworld_push-wall': {
+        'Po-dec': [
+            '2025.12.18/18.52.53_train_online_workspace_push-wall',
+            '2025.12.18/19.57.15_train_online_workspace_push-wall',
+            '2025.12.18/21.01.37_train_online_workspace_push-wall',
+        ],
+        'ZPRL': [
+            '2025.12.19/11.16.42_train_online_vib_workspace_push-wall',
+            '2025.12.19/14.19.56_train_online_vib_workspace_push-wall',
+            '2025.12.19/16.23.35_train_online_vib_workspace_push-wall',
+        ],
+    },
+    'metaworld_box-close': {
+        'Po-dec': [
+            '2025.12.18/17.14.18_train_online_workspace_box-close',
+            '2025.12.18/22.09.03_train_online_workspace_box-close',
+            '2025.12.18/23.14.37_train_online_workspace_box-close',
+        ],
+        'ZPRL': [
+            '2025.12.19/11.20.08_train_online_vib_workspace_box-close',
+            '2025.12.19/22.10.47_train_online_vib_workspace_box-close',
+            '2025.12.19/23.15.12_train_online_vib_workspace_box-close',
+        ],
+    },
+    'metaworld_': {
+    },
 }
 
 # =============================================================================
