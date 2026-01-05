@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: adroit_door
+  - task: metaworld_peg-insert-side
 
 name: train_flow_match_vib_unet_image
 _target_: diffusion_policy.workspace.train_flow_match_vib_unet_image_workspace.TrainFlowMatchVibUnetImageWorkspace
@@ -121,7 +121,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: adroit_offline_debug
+  project: metaworld_offline_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
