@@ -379,7 +379,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
 
         # --- VIB Forward Pass ---
         # Decouple il and vib training
-        modified_global_cond, z_mean, z_logvar, _ = self.vib_forward(global_cond.detach(), deterministic=False)
+        modified_global_cond, z_mean, z_logvar, z = self.vib_forward(global_cond.detach(), deterministic=False)
 
         # --- IL Flow Loss (still conditioned on original obs_emb) ---
         pred_il = self.model(noisy_trajectory, timesteps, global_cond=global_cond)
@@ -396,15 +396,27 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         
         # Total loss
         loss = il_loss
-        vib_loss = vib_il_loss + self.vib_beta * vib_kl_loss # + self.vib_recon * vib_recon_loss
+        vib_loss = (
+            vib_il_loss
+            + self.vib_beta * vib_kl_loss
+            # + self.vib_recon * vib_recon_loss
+        )
 
-        # logging
-        info = {
-            # 'il_loss': il_loss.item(),
-            'vib_loss': vib_loss.item(),
-            'vib_il_loss': vib_il_loss.item(),
-            'vib_kl_loss': vib_kl_loss.item(),
-            # 'vib_recon_loss': vib_recon_loss.item(),
-        }
+        with torch.no_grad():
+            delta_rms = (modified_global_cond - global_cond).pow(2).mean().sqrt()
+            base_rms = global_cond.pow(2).mean().sqrt()
+            # logging
+            info = {
+                # 'il_loss': il_loss.item(),
+                'vib_loss': vib_loss.item(),
+                'vib_il_loss': vib_il_loss.item(),
+                'vib_kl_loss': vib_kl_loss.item(),
+                'cond_base_rms': base_rms.item(),
+                'cond_delta_rms': delta_rms.item(),
+                'z_mean_rms': z_mean.pow(2).mean().sqrt().item(),
+                'z_std_rms': (z_logvar * 0.5).exp().pow(2).mean().sqrt().item(),
+                'z_rms': z.pow(2).mean().sqrt().item(),
+                # 'vib_recon_loss': vib_recon_loss.item(),
+            }
 
         return loss, vib_loss, info

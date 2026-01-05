@@ -40,7 +40,7 @@ training:
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 3e-4
-  learning_start: 1000  # 4k for transport, 2k for others
+  learning_start: 2000  # 4k for transport, 2k for others
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0

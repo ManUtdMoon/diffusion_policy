@@ -85,8 +85,8 @@ class ResiduePolicy(ModuleAttrMixin):
 
     # training
     def get_optimizer(self, policy_lr, q_lr):
-        actor_optimizer = torch.optim.AdamW(self.actor.parameters(), lr=policy_lr, weight_decay=1e-4)
-        q_optimizer = torch.optim.AdamW(self.qs.parameters(), lr=q_lr, weight_decay=1e-4)
+        actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=policy_lr)
+        q_optimizer = torch.optim.Adam(self.qs.parameters(), lr=q_lr)
         alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=q_lr)
         return {
             'actor_optimizer': actor_optimizer,

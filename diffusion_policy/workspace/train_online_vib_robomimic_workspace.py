@@ -430,6 +430,10 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                     'info/dones': critic_info['dones'],
                     'info/res_naction_norm': actor_info['res_z_norm'],
                     'info/z_mean_norm': actor_info['z_mean_norm'],
+                    'info/z_norm': actor_info['z_norm'],
+                    'info/z_mean_rms': actor_info['z_mean_rms'],
+                    'info/z_rms': actor_info['z_rms'],
+                    'info/res_z_rms': actor_info['res_z_rms'],
                     'info/recent_done_sr': recent_done_sr,
                     'info/recent_done_count': recent_done_count,
 

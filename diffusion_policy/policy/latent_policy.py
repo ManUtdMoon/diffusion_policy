@@ -210,6 +210,10 @@ class ResiduePolicy(ModuleAttrMixin):
             'actor_entropy': -log_prob.mean().item(),
             'res_z_norm': torch.norm(res_z, dim=-1).mean().item(),
             'z_mean_norm': torch.norm(z_mean, dim=-1).mean().item(),
+            'z_norm': torch.norm(z, dim=-1).mean().item(),
+            'z_mean_rms': z_mean.pow(2).mean().sqrt().item(),
+            'z_rms': z.pow(2).mean().sqrt().item(),
+            'res_z_rms': res_z.pow(2).mean().sqrt().item(),
         }
 
         return actor_loss, info
