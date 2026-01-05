@@ -91,6 +91,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=n_action_steps+1))
+        self.accumulated_goal_achieved = 0
     
     def reset(self):
         """Resets the environment using kwargs."""
@@ -100,6 +101,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=self.n_action_steps+1))
+        self.accumulated_goal_achieved = 0
 
         obs = self._get_obs(self.n_obs_steps)
         return obs
@@ -137,6 +139,10 @@ class MultiStepWrapper(gym.Wrapper):
             # Get all goal_achieved values from the current action chunk execution
             all_goal_achieved = list(self.info['goal_achieved'])[-len(chunk_rewards):]
             info['goal_achieved'] = sum(all_goal_achieved)
+
+            self.accumulated_goal_achieved += sum(all_goal_achieved)
+            info['accumulated_goal_achieved'] = self.accumulated_goal_achieved
+
         return observation, reward, done, info
 
     def _get_obs(self, n_steps=1):

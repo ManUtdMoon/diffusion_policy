@@ -2,8 +2,8 @@ defaults:
   - _self_
   - online_task: adroit_door
 
-name: train_online_vib_adroit_workspace
-_target_: diffusion_policy.workspace.train_online_vib_adroit_workspace.TrainOnlineVibAdroitWorkspace
+name: train_online_adroit_workspace
+_target_: diffusion_policy.workspace.train_online_adroit_workspace.TrainOnlineAdroitWorkspace
 
 task_name: ${online_task.name}
 shape_meta: ${online_task.shape_meta}
@@ -15,11 +15,10 @@ n_action_steps: 1
 n_latency_steps: 0
 
 res_policy:
-  _target_: diffusion_policy.policy.latent_policy.ResiduePolicy
+  _target_: diffusion_policy.policy.residue_policy.ResiduePolicy
   obs_dim: ???
-  z_dim: ???
   action_dim: ???
-  actor_input_type: obs_sample
+  actor_input: obs_action
   hidden_dim: 256
   log_std_min: -10.0
   log_std_max: 2.0
@@ -49,7 +48,8 @@ training:
   utd: 1.0
   n_envs: ${online_task.n_envs}
   # residue progress
-  res_scale: 0.25
+  res_scale: 0.1
+  prog_explore: 50000
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
   num_steps: 500000
