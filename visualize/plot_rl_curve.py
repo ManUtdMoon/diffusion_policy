@@ -174,11 +174,11 @@ def main(task, mode):
     elif task == 'transport':
         ax.set_xlim(right=10)
     elif task == 'door':
-        ax.set_xlim(right=8)
-    elif task == 'hammer':
         ax.set_xlim(right=2)
+    elif task == 'hammer':
+        ax.set_xlim(right=1)
     elif task == 'pen':
-        ax.set_xlim(right=4)
+        ax.set_xlim(right=2)
     ax.set_ylim(bottom=-0.05, top=1.05)
 
     # Customize the legend
