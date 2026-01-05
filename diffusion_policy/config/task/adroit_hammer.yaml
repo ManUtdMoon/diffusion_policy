@@ -1,0 +1,38 @@
+name: adroit_hammer
+
+task_name: hammer
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    image:
+      shape: [3, 84, 84]
+      type: rgb
+    agent_pos:
+      shape: [24]
+      type: low_dim
+  action:
+    shape: [26]
+
+env_runner:
+  _target_: diffusion_policy.env_runner.adroit_runner.AdroitRunner
+  eval_episodes: 50
+  max_steps: 200
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 10
+  task_name: hammer
+  tqdm_interval_sec: 2.0
+  n_envs: 25
+  test_start_seed: 10000
+  render_device_id: ${eval:'int("${training.device}"[-1])'}
+
+dataset:
+  _target_: diffusion_policy.dataset.adroit_image_dataset.AdroitImageDataset
+  zarr_path: /media/datahub-2/ydj/adroit/adroit_hammer_medium.zarr
+  n_obs_steps: ${n_obs_steps}
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  seed: 42
+  val_ratio: 0.02
