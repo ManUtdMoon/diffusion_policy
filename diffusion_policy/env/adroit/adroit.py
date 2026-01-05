@@ -98,6 +98,7 @@ class AdroitEnv:
                 dtype=np.float32
             ),
         })
+        self.render_cache = None
 
     def reset(self):
         # pixels and sensor values
@@ -110,6 +111,7 @@ class AdroitEnv:
             'image': obs_pixels.astype(np.float32) / 255.0,
             'agent_pos': obs_sensor
         }
+        self.render_cache = np.moveaxis(obs_pixels, 0, -1)  # C,H,W -> H,W,C
         return obs_dict
 
     def get_pixels_with_width_height(self, w, h):
@@ -139,7 +141,7 @@ class AdroitEnv:
             'image': obs_pixels.astype(np.float32) / 255.0,  # (3, 84, 84), [0,1], flaot32
             'agent_pos': obs_sensor  # (24,)
         }
-
+        self.render_cache = np.moveaxis(obs_pixels, 0, -1)  # C,H,W -> H,W,C
         return obs_dict, reward, done, env_info
 
     def observation_spec(self):
@@ -165,11 +167,7 @@ class AdroitEnv:
 
     def render(self, mode):
         assert mode == 'rgb_array'
-        img = self.get_pixels_with_width_height(84, 84)
-        # make it channel last
-        img = np.transpose(img, (1, 2, 0))  # it has been 0-255
-        # (84, 84, 3), uint8, 0-255
-        return img
+        return self.render_cache.copy()
 
     def get_mujoco_sim(self):
         """

@@ -71,5 +71,7 @@ def main(checkpoint, output_dir, device, n_action_steps):
     out_path = os.path.join(output_dir, 'eval_log.json')
     json.dump(json_log, open(out_path, 'w'), indent=2, sort_keys=True)
 
+    env_runner.close()
+
 if __name__ == '__main__':
     main()

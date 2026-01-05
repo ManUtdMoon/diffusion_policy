@@ -4,10 +4,13 @@ import torch
 import tqdm
 from termcolor import cprint
 import time
+import pathlib
+import dill
 
 from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
 from diffusion_policy.env.adroit.adroit import AdroitEnv
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
+from diffusion_policy.gym_util.video_recording_wrapper import VideoRecordingWrapper, VideoRecorder
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
@@ -25,6 +28,7 @@ class AdroitRunner(BaseImageRunner):
             tqdm_interval_sec=5.0,
             task_name="door",
             n_envs=25,
+            n_epi_vis=5,
             test_start_seed=10000,
             render_device_id=0,
         ):
@@ -42,9 +46,21 @@ class AdroitRunner(BaseImageRunner):
 
         def env_fn():
             return MultiStepWrapper(
-                AdroitEnv(
-                    env_name=task_name,
-                    render_device_id=render_device_id,
+                VideoRecordingWrapper(
+                    AdroitEnv(
+                        env_name=task_name,
+                        render_device_id=render_device_id,
+                    ),
+                    video_recoder=VideoRecorder.create_h264(
+                        fps=fps,
+                        codec='h264',
+                        input_pix_fmt='rgb24',
+                        crf=crf,
+                        thread_type='FRAME',
+                        thread_count=1
+                    ),
+                    file_path=None,
+                    steps_per_render=steps_per_render,
                 ),
                 n_obs_steps=n_obs_steps,
                 n_action_steps=n_action_steps,
@@ -53,9 +69,21 @@ class AdroitRunner(BaseImageRunner):
             )
         def dummy_env_fn():
             return MultiStepWrapper(
-                AdroitEnv(
-                    env_name=task_name,
-                    render_device_id=render_device_id,
+                VideoRecordingWrapper(
+                    AdroitEnv(
+                        env_name=task_name,
+                        render_device_id=render_device_id,
+                    ),
+                    video_recoder=VideoRecorder.create_h264(
+                        fps=fps,
+                        codec='h264',
+                        input_pix_fmt='rgb24',
+                        crf=crf,
+                        thread_type='FRAME',
+                        thread_count=1
+                    ),
+                    file_path=None,
+                    steps_per_render=steps_per_render,
                 ),
                 n_obs_steps=n_obs_steps,
                 n_action_steps=n_action_steps,
@@ -63,12 +91,33 @@ class AdroitRunner(BaseImageRunner):
                 reward_agg_method='sum',
             )
         env_fns = [env_fn for _ in range(n_envs)]
-        env_seeds = [test_start_seed + i for i in range(eval_episodes)]
+        env_seeds = list()
+        env_init_fn_dills = list()
+
+        for i in range(eval_episodes):
+            seed = test_start_seed + i
+            render = i < n_epi_vis
+
+            def init_fn(env, seed=seed, render=render):
+                assert isinstance(env.env, VideoRecordingWrapper)
+                env.env.video_recoder.stop()
+                env.env.file_path = None
+                if render:
+                    filename = pathlib.Path(output_dir).joinpath(
+                        'media', f"test_{seed}" + ".mp4")
+                    filename.parent.mkdir(parents=False, exist_ok=True)
+                    filename = str(filename)
+                    env.env.file_path = filename
+                env.seed(seed)
+
+            env_seeds.append(seed)
+            env_init_fn_dills.append(dill.dumps(init_fn))
 
         env = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
 
         self.env = env
         self.env_seeds = env_seeds
+        self.env_init_fn_dills = env_init_fn_dills
         self.eval_episodes = eval_episodes
         self.n_envs = n_envs
 
@@ -92,12 +141,17 @@ class AdroitRunner(BaseImageRunner):
 
         all_goal_achieved = [[] for _ in range(n_epis)]
         all_rewards = [[] for _ in range(n_epis)]
+        all_video_paths = [None for _ in range(n_epis)]
 
         for i in range(n_chunks):
             start = i * n_envs
             end = (i + 1) * n_envs
             global_slice = slice(start, end)
-            env.seed(self.env_seeds[global_slice])
+            local_slice = slice(0, end - start)
+            
+            this_init_fns = self.env_init_fn_dills[global_slice]
+            env.call_each('run_dill_function',
+                args_list=[(x,) for x in this_init_fns])
 
             # start rollout
             obs = env.reset()
@@ -139,7 +193,10 @@ class AdroitRunner(BaseImageRunner):
                 done = np.all(done)
 
                 pbar.update(action.shape[1])
-            pbar.close()        
+            pbar.close()
+
+            # collect videos
+            all_video_paths[global_slice] = env.render()[local_slice]
 
         # log
         log_data = dict()
@@ -156,7 +213,18 @@ class AdroitRunner(BaseImageRunner):
         cprint(f"test/mean_score: {all_success_rates}", 'green')
         cprint(f"test/mean_return: {np.mean(all_returns)}", 'green')
 
+        for i in range(n_epis):
+            video_path = all_video_paths[i]
+            if video_path is not None:
+                video = wandb.Video(video_path)
+                log_data[f'test/video_seed_{self.env_seeds[i]}'] = video
+            
+            # success flag
+            log_data[f'test/n_goal_{self.env_seeds[i]}'] = int(all_n_goal_achieved[i])
         _ = env.reset()
         del env
 
         return log_data
+
+    def close(self):
+        self.env.close()
