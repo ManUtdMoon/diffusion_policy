@@ -184,9 +184,11 @@ class AdroitEarlyStopWrapper(gym.Wrapper):
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
 
-        if 'door_pos' in info:
+        if 'door_pos' in info:  # for door
             done = True if info['door_pos'] < -0.1 else done
-
+        
+        if 'drop' in info:  # for pen
+            done = True if info['drop'] else done
 
         return obs, reward, done, info
 

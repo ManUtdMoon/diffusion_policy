@@ -62,6 +62,42 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.10/15.20.59_train_online_noise_robomimic_workspace_transport_image',
         ],
     },
+    'door': { # adroit_door
+        'Po-dec': [
+            '2025.12.15/15.59.05_train_online_adroit_workspace_adroit_door',
+            '2025.12.16/09.52.06_train_online_adroit_workspace_adroit_door',
+            '2025.12.16/10.59.43_train_online_adroit_workspace_adroit_door',
+        ],
+        'ZPRL': [
+            '2025.12.15/20.06.12_train_online_vib_adroit_workspace_adroit_door',
+            '2025.12.16/09.53.32_train_online_vib_adroit_workspace_adroit_door',
+            '2025.12.16/10.58.17_train_online_vib_adroit_workspace_adroit_door',
+        ],
+    },
+    'hammer' : { # adroit_hammer
+        'Po-dec': [
+            '2025.12.16/11.28.21_train_online_adroit_workspace_adroit_hammer',
+            '2025.12.16/12.25.32_train_online_adroit_workspace_adroit_hammer',
+            '2025.12.16/13.01.21_train_online_adroit_workspace_adroit_hammer',
+        ],
+        'ZPRL': [
+            '2025.12.15/20.57.19_train_online_vib_adroit_workspace_adroit_hammer',
+            '2025.12.16/14.57.18_train_online_vib_adroit_workspace_adroit_hammer',
+            '2025.12.16/16.00.19_train_online_vib_adroit_workspace_adroit_hammer',
+        ]
+    },
+    'pen' : { # adroit_pen
+        'Po-dec': [
+            '2025.12.16/23.16.10_train_online_adroit_workspace_adroit_pen',
+            '2025.12.17/00.17.15_train_online_adroit_workspace_adroit_pen',
+            '2025.12.17/01.23.29_train_online_adroit_workspace_adroit_pen',
+        ],
+        'ZPRL': [
+            '2025.12.16/21.35.44_train_online_vib_adroit_workspace_adroit_pen',
+            '2025.12.17/01.12.35_train_online_vib_adroit_workspace_adroit_pen',
+            '2025.12.17/02.16.25_train_online_vib_adroit_workspace_adroit_pen',
+        ]
+    },
 }
 
 # =============================================================================
@@ -137,6 +173,8 @@ def process_algo_mode(task, mode, algo, algo_exp_map):
             interval = config["training"].get('eval_every')
             start = 0
         Ta = config.get('n_action_steps', 4)
+        if task in ['door', 'hammer', 'pen']:
+            Ta *= 2  # action repeat
 
         if interval is None:
             print(f"    Warning: Could not determine interval for mode '{mode}' in {config_path}")

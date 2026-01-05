@@ -14,6 +14,7 @@ PALETTE = {
     'DSRL': '#59D171',
     'ReinFlow': '#F6AA4A',
     'Offline': '#9A4DFF',
+    'DPPO': '#A0522D',
 }
 
 DS = 10  # Downsample factor
@@ -23,6 +24,7 @@ LINEWIDTHS = {
     'Po-dec': 1.5,
     'DSRL': 1.5,
     'ReinFlow': 1.5,
+    'DPPO': 1.5,
     'Offline': 1.5,
 }
 
@@ -76,7 +78,7 @@ def main(task, mode):
             start_path = mode_dir / "start.txt"
             ta_path = mode_dir / "Ta.txt"  # New Ta.txt for x-axis scaling
 
-            if not all(p.exists() for p in [sr_path, interval_path, start_path]):
+            if not all(p.exists() for p in [sr_path, interval_path]):
                 print(f"Warning: Missing data files in {mode_dir}. Skipping.")
                 continue
 
@@ -84,7 +86,7 @@ def main(task, mode):
             try:
                 y_values = pd.read_csv(sr_path, header=None)[0].values
                 interval = int(interval_path.read_text())
-                start = int(start_path.read_text())
+                start = int(start_path.read_text()) if start_path.exists() else 0
                 # Default Ta to 1.0 if Ta.txt is not present
                 ta_multiplier = float(ta_path.read_text()) if ta_path.exists() else 1.0
             except (ValueError, pd.errors.EmptyDataError) as e:
@@ -95,7 +97,13 @@ def main(task, mode):
                 continue
 
             # Smooth y-values
-            if algo_name == 'ReinFlow' and task == 'can':
+            non_smooth_tasks = ['door', 'hammer', 'pen']
+            if (
+                (algo_name == 'ReinFlow' and task == 'can')
+                # (algo_name == 'DPPO' and task in non_smooth_tasks) or
+                # (algo_name == 'ReinFlow' and task in non_smooth_tasks) or
+                # (algo_name == 'DSRL' and task in non_smooth_tasks)
+            ):
                 smooth_factor = 1
             elif mode == 'train':
                 smooth_factor = 5
@@ -165,8 +173,12 @@ def main(task, mode):
         ax.set_xlim(right=8)
     elif task == 'transport':
         ax.set_xlim(right=10)
-    else:
-        raise ValueError(f"Unknown task: {task}")
+    elif task == 'door':
+        ax.set_xlim(right=8)
+    elif task == 'hammer':
+        ax.set_xlim(right=2)
+    elif task == 'pen':
+        ax.set_xlim(right=4)
     ax.set_ylim(bottom=-0.05, top=1.05)
 
     # Customize the legend
