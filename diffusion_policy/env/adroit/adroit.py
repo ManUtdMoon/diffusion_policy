@@ -107,7 +107,7 @@ class AdroitEnv:
         action = np.zeros(action_spec.shape, dtype=action_spec.dtype)
 
         obs_dict = {
-            'image': obs_pixels,
+            'image': obs_pixels.astype(np.float32) / 255.0,
             'agent_pos': obs_sensor
         }
         return obs_dict
@@ -136,7 +136,7 @@ class AdroitEnv:
         reward = reward * self.reward_rescale_factor
 
         obs_dict = {
-            'image': obs_pixels,  # (3, 84, 84), [0,255], uint8
+            'image': obs_pixels.astype(np.float32) / 255.0,  # (3, 84, 84), [0,1], flaot32
             'agent_pos': obs_sensor  # (24,)
         }
 
