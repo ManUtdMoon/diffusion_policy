@@ -17,7 +17,12 @@ from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.common.normalize_util import get_image_range_normalizer
+from diffusion_policy.common.normalize_util import (
+    get_image_range_normalizer,
+    get_range_normalizer_from_stat,
+    get_identity_normalizer_from_stat,
+    array_to_stats
+)
 
 
 class AdroitImageDataset(BaseImageDataset):
@@ -66,13 +71,17 @@ class AdroitImageDataset(BaseImageDataset):
         return val_set
 
     def get_normalizer(self, mode='limits', **kwargs):
-        data = {
-            'action': self.replay_buffer['action'],
-            'agent_pos': self.replay_buffer['state'][...,:],
-        }
         normalizer = LinearNormalizer()
-        normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
+        
+        # state
+        stat = array_to_stats(self.replay_buffer['state'])
+        normalizer['agent_pos'] = get_range_normalizer_from_stat(stat)
 
+        # action: no norm
+        stat = array_to_stats(self.replay_buffer['action'])
+        normalizer['action'] = get_identity_normalizer_from_stat(stat)
+
+        # image
         normalizer['image'] = get_image_range_normalizer()
         return normalizer
 
