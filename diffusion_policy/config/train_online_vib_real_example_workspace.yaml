@@ -36,7 +36,7 @@ training:
   device: "cuda:0"
   seed: 42
   debug: False
-  resume_from: null
+  resume_from: data/outputs/2026.01.07/10.29.09_train_online_vib_real_example_workspace_square_image
   # optimization
   batch_size: 256
   policy_lr: 1e-4
@@ -56,10 +56,10 @@ training:
   # training loop control in steps
   q_pretrain_steps: 0
   num_steps: 1000000
-  buffer_size: 1000000  # 500k for transport, 1M for others
+  buffer_size: 250000  # 500k for transport, 1M for others
   log_every: 1000
   eval_every: 50000
-  checkpoint_every: 100000
+  checkpoint_every: 1000
   # misc
   tqdm_interval_sec: 1.0
 

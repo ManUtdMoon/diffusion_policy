@@ -10,6 +10,7 @@ if __name__ == "__main__":
 import os
 import hydra
 import torch
+import threading
 from omegaconf import OmegaConf
 import pathlib
 import copy
@@ -21,10 +22,10 @@ import h5py
 import numpy as np
 import gym
 import gymnasium
-import collections
+from collections import deque
 from stable_baselines3.common.buffers import ReplayBuffer
 
-from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from diffusion_policy.workspace.base_workspace import BaseWorkspace, _copy_to_cpu
 from diffusion_policy.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 from diffusion_policy.policy.latent_policy import ResiduePolicy, SumPolicy
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
@@ -57,6 +58,31 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
         # configure training state
         self.global_step = 0
         self.global_update = 0
+        self.checkpoint_thread = None
+
+    def _save_checkpoint(self, path, payload):
+        step = payload["global_step"]
+        if self.checkpoint_thread is not None and self.checkpoint_thread.is_alive():
+            print(f"Skipping checkpoint at step {step} because previous save is still running.")
+            return
+
+        self.checkpoint_thread = threading.Thread(
+            target=self._save_worker,
+            args=(path, payload, step)
+        )
+        self.checkpoint_thread.start()
+
+    def _save_worker(self, path, payload, step):
+        # ensure directory exists
+        path.parent.mkdir(parents=False, exist_ok=True)
+        
+        # save checkpoint
+        torch.save(payload, path.open('wb'), pickle_module=dill)
+        
+        # save global_step.txt
+        step_path = path.parent / 'global_step.txt'
+        with step_path.open('w') as f:
+            f.write(str(step))
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
@@ -236,11 +262,32 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
             return uaction
 
         # training loop
-        recent_done_successes = collections.deque(maxlen=100)
+        recent_done_successes = deque(maxlen=100)
         def get_recent_success_stats():
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
             return count, rate
+
+        # resume training
+        if cfg.training.resume_from is not None:
+            resume_path = pathlib.Path(cfg.training.resume_from)
+            latest_ckpt = resume_path / 'checkpoints' / 'latest.ckpt'
+            assert latest_ckpt.exists(), f"{latest_ckpt} does not exist."
+
+            print(f"Resuming from {latest_ckpt}")
+            payload = torch.load(open(latest_ckpt, 'rb'), pickle_module=dill)
+
+            # load state
+            self.res_policy.load_state_dict(payload['res_policy'])
+            q_opt.load_state_dict(payload['q_optimizer'])
+            actor_opt.load_state_dict(payload['actor_optimizer'])
+            alpha_opt.load_state_dict(payload['alpha_optimizer'])
+            self.global_step = payload['global_step']
+            self.global_update = payload['global_update']
+            recent_done_successes = deque(payload['recent_done_successes'], maxlen=100)
+            rb = payload.get('replay_buffer', rb)  # in case of no buffer saved
+
+            print(f"Resumed at global_step={self.global_step}")
 
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
@@ -259,156 +306,195 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
             logger.log(eval_log)
             wandb_run.log(eval_log, step=self.global_step)
 
-            while self.global_step < n_steps:
-                step_log = dict()
-                # collect samples
-                for _ in tqdm.tqdm(
-                        range(training_freq // n_envs), 
-                        desc=f"{self.global_step} / {n_steps} samples collected",
-                        leave=False):
-                    self.global_step += n_envs
+            try:
+                while self.global_step < n_steps:
+                    step_log = dict()
+                    # collect samples
+                    for _ in tqdm.tqdm(
+                            range(training_freq // n_envs), 
+                            desc=f"{self.global_step} / {n_steps} samples collected",
+                            leave=False):
+                        self.global_step += n_envs
 
-                    ## prepare masks for progressive exploration
-                    if self.global_step < learning_start:
-                        perturb = False
-                    else:
-                        perturb = True
+                        ## prepare masks for progressive exploration
+                        if self.global_step < learning_start:
+                            perturb = False
+                        else:
+                            perturb = True
 
-                    ## forward sum policy
-                    sum_dict = sum_policy.predict_train_action(obs_z, perturb)
-                    sum_dict = dict_apply(
-                        sum_dict, lambda x: x.detach())
-                    res_z = sum_dict['res_z']
-                    action = sum_dict['action'].cpu().numpy()
+                        ## forward sum policy
+                        sum_dict = sum_policy.predict_train_action(obs_z, perturb)
+                        sum_dict = dict_apply(
+                            sum_dict, lambda x: x.detach())
+                        res_z = sum_dict['res_z']
+                        action = sum_dict['action'].cpu().numpy()
 
-                    ## env_action and step
-                    env_action = undo_transform_action(action)
-                    next_obs_seq, rewards, dones, infos = envs.step(env_action)
-                    for reward, done in zip(rewards, dones):
-                        if done:
-                            recent_done_successes.append(float(reward) > 0.9)
+                        ## env_action and step
+                        env_action = undo_transform_action(action)
+                        next_obs_seq, rewards, dones, infos = envs.step(env_action)
+                        for reward, done in zip(rewards, dones):
+                            if done:
+                                recent_done_successes.append(float(reward) > 0.9)
 
-                    ## prepare transitions for rb
-                    assert cfg.training.bootstrap_at_done == 'never'
-                    next_obs_seq_tensor = dict_apply(
-                        next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
-                    with torch.no_grad():
-                        next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
-                        _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
-                        next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
+                        ## prepare transitions for rb
+                        assert cfg.training.bootstrap_at_done == 'never'
+                        next_obs_seq_tensor = dict_apply(
+                            next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
+                        with torch.no_grad():
+                            next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
+                            _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
+                            next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
 
-                    rb.add(
-                        obs=obs_z.detach().cpu().numpy(),
-                        next_obs=next_obs_z.detach().cpu().numpy(),
-                        action=res_z.cpu().numpy(),
-                        reward=rewards,
-                        done=dones,
-                        infos=infos
-                    )
-
-                    ## switch to next step
-                    obs_z = next_obs_z
-
-                if self.global_step < learning_start:
-                    # Warmup phase: skip training, only collect data
-                    continue
-
-                # training
-                for _ in tqdm.tqdm(
-                        range(n_updates_per_training),
-                        desc=f"Update {n_updates_per_training} times",
-                        leave=False):
-                    self.global_update += 1
-
-                    ## fetch data
-                    batch = rb.sample(cfg.training.batch_size)
-
-                    ## update critics
-                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch)
-                    q_opt.zero_grad()
-                    critic_loss.backward()
-                    q1_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
-                    q_opt.step()
-
-                    ## update target
-                    if self.global_update % cfg.training.target_freq == 0:
-                        self.res_policy.target_update()
-                    
-                    ## update policy
-                    if self.global_update % cfg.training.policy_freq == 0:
-                        actor_loss, actor_info = self.res_policy.compute_actor_loss(batch)
-                        actor_opt.zero_grad()
-                        actor_loss.backward()
-                        actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                            self.res_policy.actor.parameters(),
-                            cfg.training.max_grad_norm
+                        rb.add(
+                            obs=obs_z.detach().cpu().numpy(),
+                            next_obs=next_obs_z.detach().cpu().numpy(),
+                            action=res_z.cpu().numpy(),
+                            reward=rewards,
+                            done=dones,
+                            infos=infos
                         )
-                        actor_opt.step()
 
-                        alpha = self.res_policy.init_alpha
-                        if cfg.res_policy.auto_alpha:
-                            alpha_loss = self.res_policy.compute_alpha_loss(batch)
-                            alpha_opt.zero_grad()
-                            alpha_loss.backward()
-                            alpha_opt.step()
-                            alpha = self.res_policy.log_alpha.exp().item()
+                        ## switch to next step
+                        obs_z = next_obs_z
 
-                ## training metrics
-                recent_done_count, recent_done_sr = get_recent_success_stats()
+                        # ensure the global_step aligns with training_freq
+                        if self.global_step % training_freq == 0:
+                            break
 
-                step_log = {
-                    'info/global_step': self.global_step,
-                    'info/global_update': self.global_update,
+                    if self.global_step < learning_start:
+                        # Warmup phase: skip training, only collect data
+                        continue
 
-                    'info/q_target': critic_info['q_target'],
-                    'info/q_predicted': critic_info['q_predicted'],
-                    'info/q_predicted_min': critic_info['q_predicted_min'],
-                    'info/q_predicted_max': critic_info['q_predicted_max'],
-                    'info/actor_entropy': actor_info['actor_entropy'],
-                    'info/rewards': critic_info['rewards'],
-                    'info/dones': critic_info['dones'],
-                    'info/res_naction_norm': actor_info['res_z_norm'],
-                    'info/z_mean_norm': actor_info['z_mean_norm'],
-                    'info/z_norm': actor_info['z_norm'],
-                    'info/z_mean_rms': actor_info['z_mean_rms'],
-                    'info/z_rms': actor_info['z_rms'],
-                    'info/res_z_rms': actor_info['res_z_rms'],
-                    'info/recent_done_sr': recent_done_sr,
-                    'info/recent_done_count': recent_done_count,
+                    # training
+                    for _ in tqdm.tqdm(
+                            range(n_updates_per_training),
+                            desc=f"Update {n_updates_per_training} times",
+                            leave=False):
+                        self.global_update += 1
 
-                    'loss/critic_loss': critic_loss.item() / 2.0,
-                    'loss/actor_loss': actor_loss.item(),
-                    'loss/q1_grad_norm': q1_grad_norm.item(),
-                    'loss/actor_grad_norm': actor_grad_norm.item(),
-                    'loss/alpha': alpha,
-                }
-                if cfg.res_policy.auto_alpha:
-                    step_log['loss/alpha_loss'] = alpha_loss.item()
+                        ## fetch data
+                        batch = rb.sample(cfg.training.batch_size)
 
-                # evaluation
-                sum_policy.eval()
-                if self.global_step > 0 and self.global_step % eval_every == 0:
-                    set_rand_crop(False)
-                    eval_log = eval_env_runner.run(sum_policy)
-                    step_log.update(eval_log)
-                    set_rand_crop(True)
-                sum_policy.train()
+                        ## update critics
+                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch)
+                        q_opt.zero_grad()
+                        critic_loss.backward()
+                        q1_grad_norm = torch.nn.utils.clip_grad_norm_(
+                            self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
+                        q_opt.step()
 
-                # logging
-                logger.log(step_log)
-                if self.global_step % log_every == 0:
-                    wandb_run.log(step_log, step=self.global_step)
+                        ## update target
+                        if self.global_update % cfg.training.target_freq == 0:
+                            self.res_policy.target_update()
+                        
+                        ## update policy
+                        if self.global_update % cfg.training.policy_freq == 0:
+                            actor_loss, actor_info = self.res_policy.compute_actor_loss(batch)
+                            actor_opt.zero_grad()
+                            actor_loss.backward()
+                            actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                                self.res_policy.actor.parameters(),
+                                cfg.training.max_grad_norm
+                            )
+                            actor_opt.step()
 
-                # checkpointing
-                if self.global_step % checkpoint_every == 0:
-                    path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step={self.global_step}.ckpt'
-                    path.parent.mkdir(parents=False, exist_ok=True)
-                    payload = {
-                        'cfg': self.cfg,
-                        'res_policy': self.res_policy.state_dict(),
+                            alpha = self.res_policy.init_alpha
+                            if cfg.res_policy.auto_alpha:
+                                alpha_loss = self.res_policy.compute_alpha_loss(batch)
+                                alpha_opt.zero_grad()
+                                alpha_loss.backward()
+                                alpha_opt.step()
+                                alpha = self.res_policy.log_alpha.exp().item()
+
+                    ## training metrics
+                    recent_done_count, recent_done_sr = get_recent_success_stats()
+
+                    step_log = {
+                        'info/global_step': self.global_step,
+                        'info/global_update': self.global_update,
+
+                        'info/q_target': critic_info['q_target'],
+                        'info/q_predicted': critic_info['q_predicted'],
+                        'info/q_predicted_min': critic_info['q_predicted_min'],
+                        'info/q_predicted_max': critic_info['q_predicted_max'],
+                        'info/actor_entropy': actor_info['actor_entropy'],
+                        'info/rewards': critic_info['rewards'],
+                        'info/dones': critic_info['dones'],
+                        'info/res_naction_norm': actor_info['res_z_norm'],
+                        'info/z_mean_norm': actor_info['z_mean_norm'],
+                        'info/z_norm': actor_info['z_norm'],
+                        'info/z_mean_rms': actor_info['z_mean_rms'],
+                        'info/z_rms': actor_info['z_rms'],
+                        'info/res_z_rms': actor_info['res_z_rms'],
+                        'info/recent_done_sr': recent_done_sr,
+                        'info/recent_done_count': recent_done_count,
+
+                        'loss/critic_loss': critic_loss.item() / 2.0,
+                        'loss/actor_loss': actor_loss.item(),
+                        'loss/q1_grad_norm': q1_grad_norm.item(),
+                        'loss/actor_grad_norm': actor_grad_norm.item(),
+                        'loss/alpha': alpha,
                     }
-                    torch.save(payload, path.open('wb'), pickle_module=dill)
+                    if cfg.res_policy.auto_alpha:
+                        step_log['loss/alpha_loss'] = alpha_loss.item()
+
+                    # evaluation
+                    sum_policy.eval()
+                    if self.global_step > 0 and self.global_step % eval_every == 0:
+                        set_rand_crop(False)
+                        eval_log = eval_env_runner.run(sum_policy)
+                        step_log.update(eval_log)
+                        set_rand_crop(True)
+                    sum_policy.train()
+
+                    # logging
+                    logger.log(step_log)
+                    if self.global_step % log_every == 0:
+                        wandb_run.log(step_log, step=self.global_step)
+
+                    # checkpointing
+                    if self.global_step % checkpoint_every == 0:
+                        path = pathlib.Path(self.output_dir) / 'checkpoints' / 'latest.ckpt'
+                        
+                        # prepare payload in main thread to avoid race conditions on model/optimizers
+                        # ReplayBuffer is NOT saved in periodic checkpoints to save time
+                        payload = {
+                            'cfg': self.cfg,
+                            'res_policy': _copy_to_cpu(self.res_policy.state_dict()),
+                            'q_optimizer': _copy_to_cpu(q_opt.state_dict()),
+                            'actor_optimizer': _copy_to_cpu(actor_opt.state_dict()),
+                            'alpha_optimizer': _copy_to_cpu(alpha_opt.state_dict()),
+                            'global_step': self.global_step,
+                            'global_update': self.global_update,
+                            'recent_done_successes': list(recent_done_successes),
+                            'replay_buffer': None # SKIP buffer
+                        }
+                        self._save_checkpoint(path, payload)
+
+            except KeyboardInterrupt:
+                print("\nKeyboard Interrupt! Saving full checkpoint with ReplayBuffer...")
+                # wait for any background save to finish to avoid corruption
+                if self.checkpoint_thread is not None and self.checkpoint_thread.is_alive():
+                    print("Waiting for background save to finish...")
+                    self.checkpoint_thread.join()
+                
+                path = pathlib.Path(self.output_dir) / 'checkpoints' / 'latest.ckpt'
+                payload = {
+                    'cfg': self.cfg,
+                    'res_policy': _copy_to_cpu(self.res_policy.state_dict()),
+                    'q_optimizer': _copy_to_cpu(q_opt.state_dict()),
+                    'actor_optimizer': _copy_to_cpu(actor_opt.state_dict()),
+                    'alpha_optimizer': _copy_to_cpu(alpha_opt.state_dict()),
+                    'global_step': self.global_step,
+                    'global_update': self.global_update,
+                    'recent_done_successes': list(recent_done_successes),
+                    'replay_buffer': rb # INCLUDE buffer
+                }
+                self._save_worker(path, payload, self.global_step)
+                # re-raise to exit
+                raise
+
+        envs.close()
 
 
 @hydra.main(
