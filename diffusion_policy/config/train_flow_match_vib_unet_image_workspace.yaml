@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: can_image_abs
+  - task: juicing_s1
 
 name: train_flow_match_vib_unet_image
 _target_: diffusion_policy.workspace.train_flow_match_vib_unet_image_workspace.TrainFlowMatchVibUnetImageWorkspace
@@ -11,7 +11,7 @@ exp_name: "default"
 
 horizon: 16
 n_obs_steps: 1
-n_action_steps: 4
+n_action_steps: 10
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -20,9 +20,9 @@ obs_as_global_cond: True
 
 policy:
   _target_: diffusion_policy.policy.flow_match_vib_unet_image_policy.FlowMatchVibUnetImagePolicy
-  vib_latent_dim: 16
+  vib_latent_dim: 32
   vib_alpha: 1.0
-  vib_beta: 2.0e-4
+  vib_beta: 1.0e-4
   vib_recon: 0.0
   vib_hidden_dim: 256
 
@@ -37,14 +37,14 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.ResNet18Pooling
-      input_shape: [3, 76, 76] # should match crop_shape
+      input_shape: [3, 124, 124] # should match crop_shape
       weights: null
       # pooling_kwargs
       pooling_type: "spatial_learned_embeddings"
       num_spatial_blocks: 8
       bottleneck_dim: 256
     resize_shape: null
-    crop_shape: [76, 76]
+    crop_shape: [124, 124]
     # constant center crop
     random_crop: True
     use_group_norm: True
@@ -57,7 +57,7 @@ policy:
   num_inference_steps: 2
   obs_as_global_cond: ${obs_as_global_cond}
   diffusion_step_embed_dim: 128
-  down_dims: [128,256,512]
+  down_dims: [256,384,512]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
@@ -75,10 +75,10 @@ ema:
 
 dataloader:
   batch_size: 256
-  num_workers: 12
+  num_workers: 16
   shuffle: True
   pin_memory: True
-  persistent_workers: False
+  persistent_workers: True
 
 val_dataloader:
   batch_size: 64
@@ -121,7 +121,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: offline_debug
+  project: real_offline_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
@@ -131,10 +131,10 @@ logging:
 
 checkpoint:
   topk:
-    monitor_key: test_mean_score
-    mode: max
+    monitor_key: train_action_mse_error
+    mode: min
     k: 2
-    format_str: 'epoch={epoch:04d}-score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch_{epoch:04d}-train_mse-{train_action_mse_error:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 
