@@ -44,6 +44,56 @@ def get_identity_normalizer_from_stat(stat):
         input_stats_dict=stat
     )
 
+
+def xarm_normalizer_from_stat(stat):
+    result = dict_apply_split(
+        stat, lambda x: {
+            'pose': x[...,:6],  # pos (m) + euler (rad)
+            'others': x[...,6:]  # e.g. gripper, done
+    })
+
+    def get_pose_param_info(stat, output_max=1, output_min=-1, range_eps=1e-7):
+        # -1, 1 normalization
+        input_max = stat['max']
+        input_min = stat['min']
+        input_range = input_max - input_min
+        ignore_dim = input_range < range_eps
+        input_range[ignore_dim] = output_max - output_min
+        scale = (output_max - output_min) / input_range
+        offset = output_min - scale * input_min
+        offset[ignore_dim] = (output_max + output_min) / 2 - input_min[ignore_dim]
+
+        return {'scale': scale, 'offset': offset}, stat
+
+    def get_others_param_info(stat):
+        example = stat['max']
+        scale = np.ones_like(example)
+        offset = np.zeros_like(example)
+        info = {
+            'max': np.ones_like(example),
+            'min': np.full_like(example, -1),
+            'mean': np.zeros_like(example),
+            'std': np.ones_like(example)
+        }
+        return {'scale': scale, 'offset': offset}, info
+
+    pose_param, pose_info = get_pose_param_info(result['pose'])
+    others_param, others_info = get_others_param_info(result['others'])
+
+    param = dict_apply_reduce(
+        [pose_param, others_param], 
+        lambda x: np.concatenate(x,axis=-1))
+    info = dict_apply_reduce(
+        [pose_info, others_info], 
+        lambda x: np.concatenate(x,axis=-1))
+
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=param['scale'],
+        offset=param['offset'],
+        input_stats_dict=info
+    )
+
+
 def robomimic_abs_action_normalizer_from_stat(stat, rotation_transformer):
     result = dict_apply_split(
         stat, lambda x: {
