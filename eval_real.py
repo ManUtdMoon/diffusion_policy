@@ -37,7 +37,6 @@ def main(checkpoint, output_dir, device, n_action_steps):
 
     cfg.n_action_steps = n_action_steps
     cfg.policy.n_action_steps = n_action_steps
-    cfg.task.env_runner.n_action_steps = n_action_steps
     cfg.task.dataset.pad_after = n_action_steps - 1
 
     cls = hydra.utils.get_class(cfg._target_)
