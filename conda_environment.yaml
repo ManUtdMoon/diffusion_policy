@@ -1,65 +1,61 @@
-name: robodiff
+name: il
 channels:
   - pytorch
   - pytorch3d
   - nvidia
   - conda-forge
 dependencies:
-  - python=3.9
-  - pip=22.2.2
-  - cudatoolkit=11.6
-  - pytorch=1.12.1
-  - torchvision=0.13.1
-  - pytorch3d=0.7.0
+  - python=3.10
+  - pip=24.3.1
+  - pytorch-cuda=12.1
+  - pytorch=2.3.1
+  - torchvision=0.18.1
+  - pytorch3d=0.7.8
   - numpy=1.23.3
-  - numba==0.56.4
-  - scipy==1.9.1
+  - numba=0.60.0
+  - scipy=1.13.1
   - py-opencv=4.6.0
-  - cffi=1.15.1
-  - ipykernel=6.16
-  - matplotlib=3.6.1
-  - zarr=2.12.0
-  - numcodecs=0.10.2
-  - h5py=3.7.0
-  - hydra-core=1.2.0
-  - einops=0.4.1
-  - tqdm=4.64.1
-  - dill=0.3.5.1
+  - cffi=1.17.1
+  - ipykernel=6.29.5
+  - matplotlib=3.9.1
+  - zarr=2.18.2
+  - numcodecs=0.13.1
+  - h5py=3.8.0
+  - hydra-core=1.3.2
+  - einops=0.8.0
+  - tqdm=4.67.0
+  - dill=0.3.9
   - scikit-video=1.1.11
-  - scikit-image=0.19.3
+  - scikit-image=0.24.0
   - gym=0.21.0
-  - pymunk=6.2.1
-  - wandb=0.13.3
-  - threadpoolctl=3.1.0
-  - shapely=1.8.4
-  - cython=0.29.32
-  - imageio=2.22.0
-  - imageio-ffmpeg=0.4.7
-  - termcolor=2.0.1
-  - tensorboard=2.10.1
-  - tensorboardx=2.5.1
-  - psutil=5.9.2
-  - click=8.0.4
-  - boto3=1.24.96
-  - accelerate=0.13.2
-  - datasets=2.6.1
-  - diffusers=0.11.1
+  - pymunk=6.9.0
+  - wandb=0.18.7
+  - threadpoolctl=3.5.0
+  - shapely=2.0.6
+  - cython=0.29.37
+  - imageio=2.36.0
+  - imageio-ffmpeg=0.5.1
+  - termcolor=2.5.0
+  - psutil=6.1.0
+  - click=8.1.7
+  - boto3=1.35.63
+  - accelerate=1.1.1
+  - datasets=2.2.1
+  - diffusers=0.30.3
   - av=10.0.0
-  - cmake=3.24.3
+  - cmake=3.26.4
   # trick to avoid cpu affinity issue described in https://github.com/pytorch/pytorch/issues/99625
-  - llvm-openmp=14
+  - llvm-openmp<16
   # trick to force reinstall imagecodecs via pip
   - imagecodecs==2022.8.8
   - pip:
-    - ray[default,tune]==2.2.0
     # requires mujoco py dependencies libosmesa6-dev libgl1-mesa-glx libglfw3 patchelf
     - free-mujoco-py==2.1.6
+    - mujoco==2.3.5
     - pygame==2.1.2
     - pybullet-svl==3.1.6.4
-    - robosuite @ https://github.com/cheng-chi/robosuite/archive/277ab9588ad7a4f4b55cf75508b44aa67ec171f0.tar.gz
-    - robomimic==0.2.0
     - pytorchvideo==0.1.5
     # pip package required for jpeg-xl
     - imagecodecs==2022.9.26
-    - r3m @ https://github.com/facebookresearch/r3m/archive/b2334e726887fa0206962d7984c69c5fb09cceab.tar.gz
     - dm-control==1.0.9
+    - pynput==1.7.6
