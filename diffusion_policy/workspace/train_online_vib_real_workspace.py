@@ -37,7 +37,7 @@ from diffusion_policy.env.juicing.juicing_env import JuicingEnv
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
+class TrainOnlineVibRealWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'global_update', 'base_ckpt']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -220,6 +220,7 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
             assert latest_ckpt.exists(), f"{latest_ckpt} does not exist."
 
             print(f"Resuming from {latest_ckpt}")
+            input("Do you specify the correct resume_from path? Press Enter to continue...")
             payload = torch.load(open(latest_ckpt, 'rb'), pickle_module=dill)
 
             # load state
@@ -229,7 +230,7 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
             alpha_opt.load_state_dict(payload['alpha_optimizer'])
             self.global_step = payload['global_step']
             self.global_update = payload['global_update']
-            recent_done_successes = deque(payload['recent_done_successes'], maxlen=100)
+            recent_done_successes = deque(payload['recent_done_successes'], maxlen=30)
             rb = payload.get('replay_buffer', rb)  # in case of no buffer saved
 
             print(f"Resumed at global_step={self.global_step}")
@@ -270,11 +271,16 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
                         action = sum_dict['action'].cpu().numpy()
 
                         ## env_action and step
-                        next_obs_seq, reward, done, infos = envs.step(action)
+                        assert action.shape == (1, Ta, da), \
+                            f"Action shape {action.shape} does not match expected {(1, Ta, da)}"
+                        next_obs_seq, reward, done, infos = envs.step(action.squeeze(0))
                         if done:
                             if reward > 0.5:
                                 assert np.any(infos["is_success"]), "Done with reward but is_success not marked."
                             recent_done_successes.append(np.any(infos["is_success"]))
+                            # Run post-processing before resetting the episode.
+                            envs.reset_end()
+                            next_obs_seq = envs.reset()
 
                         ## prepare transitions for rb
                         assert cfg.training.bootstrap_at_done == 'never'
@@ -291,9 +297,9 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
                             obs=obs_z.detach().cpu().numpy(),
                             next_obs=next_obs_z.detach().cpu().numpy(),
                             action=res_z.cpu().numpy(),
-                            reward=rewards,
-                            done=dones,
-                            infos=infos
+                            reward=[reward],
+                            done=[done],
+                            infos={}
                         )
 
                         ## switch to next step

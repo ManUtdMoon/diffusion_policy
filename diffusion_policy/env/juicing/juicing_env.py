@@ -263,7 +263,7 @@ class JuicingEnv:
         }
         if action.shape[-1] == 8:
             self.done, timeout = self.terminate(is_done, action[7] > 0.5)
-            print("Predict done value:", action[7], "Predicted done:", action[7] > 0.5)
+            # print("Predict done value:", action[7], "Predicted done:", action[7] > 0.5)
         else:
             self.done, timeout = self.terminate(is_done)
 
