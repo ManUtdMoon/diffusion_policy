@@ -58,6 +58,7 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
         # configure training state
         self.global_step = 0
         self.global_update = 0
+        self.n_episode = 0
         self.checkpoint_thread = None
 
     def _save_checkpoint(self, path, payload):
@@ -211,7 +212,7 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
 
         if cfg.training.debug:
             cfg.training.num_steps = 5000
-            cfg.training.learning_start = 1000
+            cfg.training.learning_start = 500
             cfg.training.checkpoint_every = 1000
             cfg.training.eval_every = 5000
             cfg.training.log_every = 1000
@@ -262,11 +263,19 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
             return uaction
 
         # training loop
-        recent_done_successes = deque(maxlen=100)
+        MAXLEN = 100
+        recent_done_successes = deque(maxlen=MAXLEN)
+        recent_done_epi_len = deque(maxlen=MAXLEN)
         def get_recent_success_stats():
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
-            return count, rate
+            lens = float(np.mean(recent_done_epi_len)) if count > 0 else 0.0
+            stats = {
+                'count': count,
+                'rate': rate,
+                'len': lens,
+            }
+            return stats
 
         # resume training
         if cfg.training.resume_from is not None:
@@ -284,7 +293,9 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
             alpha_opt.load_state_dict(payload['alpha_optimizer'])
             self.global_step = payload['global_step']
             self.global_update = payload['global_update']
-            recent_done_successes = deque(payload['recent_done_successes'], maxlen=100)
+            self.n_episode = payload['n_episode']
+            recent_done_successes = deque(payload['recent_done_successes'], maxlen=MAXLEN)
+            recent_done_epi_len = deque(payload['recent_done_epi_len'], maxlen=MAXLEN)
             rb = payload.get('replay_buffer', rb)  # in case of no buffer saved
 
             print(f"Resumed at global_step={self.global_step}")
@@ -332,9 +343,11 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
                         ## env_action and step
                         env_action = undo_transform_action(action)
                         next_obs_seq, rewards, dones, infos = envs.step(env_action)
-                        for reward, done in zip(rewards, dones):
+                        for reward, done, info in zip(rewards, dones, infos):
                             if done:
                                 recent_done_successes.append(float(reward) > 0.9)
+                                recent_done_epi_len.append(info['episode_length'])
+                                self.n_episode += 1
 
                         ## prepare transitions for rb
                         assert cfg.training.bootstrap_at_done == 'never'
@@ -407,11 +420,15 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
                                 alpha = self.res_policy.log_alpha.exp().item()
 
                     ## training metrics
-                    recent_done_count, recent_done_sr = get_recent_success_stats()
+                    stats = get_recent_success_stats()
+                    recent_done_count = stats['count']
+                    recent_done_sr = stats['rate']
+                    recent_done_avg_len = stats['len']
 
                     step_log = {
                         'info/global_step': self.global_step,
                         'info/global_update': self.global_update,
+                        'info/n_episode': self.n_episode,
 
                         'info/q_target': critic_info['q_target'],
                         'info/q_predicted': critic_info['q_predicted'],
@@ -428,6 +445,7 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
                         'info/res_z_rms': actor_info['res_z_rms'],
                         'info/recent_done_sr': recent_done_sr,
                         'info/recent_done_count': recent_done_count,
+                        'info/recent_done_avg_len': recent_done_avg_len,
 
                         'loss/critic_loss': critic_loss.item() / 2.0,
                         'loss/actor_loss': actor_loss.item(),
@@ -466,7 +484,9 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
                             'alpha_optimizer': _copy_to_cpu(alpha_opt.state_dict()),
                             'global_step': self.global_step,
                             'global_update': self.global_update,
+                            'n_episode': self.n_episode,
                             'recent_done_successes': list(recent_done_successes),
+                            'recent_done_epi_len': list(recent_done_epi_len),
                             'replay_buffer': None # SKIP buffer
                         }
                         self._save_checkpoint(path, payload)
@@ -487,7 +507,9 @@ class TrainOnlineVibRealExampleWorkspace(BaseWorkspace):
                     'alpha_optimizer': _copy_to_cpu(alpha_opt.state_dict()),
                     'global_step': self.global_step,
                     'global_update': self.global_update,
+                    'n_episode': self.n_episode,
                     'recent_done_successes': list(recent_done_successes),
+                    'recent_done_epi_len': list(recent_done_epi_len),
                     'replay_buffer': rb # INCLUDE buffer
                 }
                 self._save_worker(path, payload, self.global_step)

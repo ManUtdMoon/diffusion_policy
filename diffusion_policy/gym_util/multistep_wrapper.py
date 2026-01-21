@@ -135,6 +135,8 @@ class MultiStepWrapper(gym.Wrapper):
         # print(chunk_rewards)
         done = aggregate(chunk_dones, 'max')
         info = dict_take_last_n(self.info, self.n_obs_steps)
+        if done:
+            info['episode_length'] = len(self.reward)
         return observation, reward, done, info
 
     def _get_obs(self, n_steps=1):
