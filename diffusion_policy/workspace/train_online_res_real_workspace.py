@@ -27,7 +27,8 @@ from stable_baselines3.common.buffers import ReplayBuffer
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace, _copy_to_cpu
 from diffusion_policy.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
-from diffusion_policy.policy.latent_policy import ResiduePolicy, SumPolicy
+from diffusion_policy.policy.residue_policy import ResiduePolicy
+from diffusion_policy.policy.sum_policy import SumPolicy
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
@@ -37,7 +38,7 @@ from diffusion_policy.env.juicing.juicing_env import JuicingEnv
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainOnlineVibRealWorkspace(BaseWorkspace):
+class TrainOnlineResRealWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'global_update', 'base_ckpt']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -116,12 +117,15 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         Da = Ta * da  # action chunk dim
 
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=Do, z_dim=dz, action_dim=Da)
-        print(f"Residue policy with Do={Do}, Dz={dz}, Da={Da}, gamma={self.res_policy.gamma}")
+            cfg.res_policy, obs_dim=do, action_dim=Da)
+        print(f"Residue policy with do={do}, Da={Da}, gamma={self.res_policy.gamma}")
 
         ## sum policy
         sum_policy = SumPolicy(
             res_scale=cfg.training.res_scale,
+            obs_emb_dim=do,
+            action_dim=da,
+            n_action_steps=Ta,
             base_policy=self.base_policy,
             res_policy=self.res_policy
         )
@@ -169,12 +173,12 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(Do + 3 * dz,), dtype=np.float32
-        )  # obs_emb + z_mean + z_logvar + z
+            shape=(do,), dtype=np.float32
+        )
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(dz,), dtype=np.float32
-        )  # res z
+            shape=(Da * 3,), dtype=np.float32
+        )
         rb = ReplayBuffer(
             cfg.training.buffer_size,
             dummy_obs_space,
@@ -186,6 +190,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
         if cfg.training.debug:
             cfg.training.num_steps = 2000
+            cfg.training.prog_explore = 500
             cfg.training.learning_start = 500
             cfg.training.checkpoint_every = 1000
             cfg.training.log_every = 100
@@ -251,10 +256,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
             obs_seq,
             lambda x: torch.from_numpy(x).to(device=device).unsqueeze(0)
         )
-        with torch.no_grad():
-            obs_emb_tensor = self.base_policy.encode_obs(obs_seq_tensor)
-            _, z_mean, z_logvar, z = self.base_policy.vib_forward(obs_emb_tensor)
-            obs_z = torch.cat([obs_emb_tensor, z_mean, z_logvar, z], dim=-1)
+        base_dict = self.base_policy.predict_action(obs_seq_tensor)
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
 
         with JsonLogger(log_path) as logger:
@@ -268,18 +270,35 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                             leave=False):
                         self.global_step += n_envs
 
+                        ## retrieve from base cache
+                        obs_emb_tensor = base_dict['obs_emb'][:, -do:].detach()
+                        base_naction_tensor = base_dict['naction'].detach()
+                        base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
+
+                        ## pi-dec progressive exploration
+                        res_ratio = min(
+                            max(self.global_step, 0) / cfg.training.prog_explore, 1)
+                        ## uncomment to disable progressive exploration
+                        res_ratio = 1.0
+
                         ## prepare masks for progressive exploration
                         if self.global_step < learning_start:
-                            perturb = False
+                            # Mask all residues during warmup phase: base only
+                            res_masks = torch.ones(n_envs, device=device, dtype=torch.bool)
                         else:
-                            perturb = True
+                            # Progressive exploration: pi-dec style
+                            res_masks = torch.rand(n_envs, device=device) >= res_ratio
 
-                        ## forward sum policy
-                        sum_dict = sum_policy.predict_train_action(obs_z, perturb)
+                        ## forward sum policy with cached base info
+                        sum_dict = sum_policy.predict_train_action(
+                            base_naction_tensor,
+                            obs_emb_tensor,
+                            res_mask=res_masks
+                        )
                         sum_dict = dict_apply(
-                            sum_dict, lambda x: x.detach())
-                        res_z = sum_dict['res_z']
-                        action = sum_dict['action'].cpu().numpy()
+                            sum_dict, lambda x: x.detach().cpu().numpy())
+                        res_naction_flat = sum_dict['res_naction_flat']
+                        action = sum_dict['action']
 
                         ## env_action and step
                         assert action.shape == (1, Ta, da), \
@@ -301,22 +320,29 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                             next_obs_seq,
                             lambda x: torch.from_numpy(x).to(device=device).unsqueeze(0)
                         )
-                        with torch.no_grad():
-                            next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
-                            _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
-                            next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
+                        next_base_dict = self.base_policy.predict_action(next_obs_seq_tensor)
+                        next_obs_emb_tensor = next_base_dict['obs_emb'][:, -do:].detach()
+                        next_base_naction_tensor = next_base_dict['naction'].detach()
+                        actions_to_save = np.concatenate(
+                            [
+                                res_naction_flat,
+                                base_naction_flat,
+                                next_base_naction_tensor.flatten(start_dim=1).cpu().numpy()
+                            ],
+                            axis=-1
+                        )
 
                         rb.add(
-                            obs=obs_z.detach().cpu().numpy(),
-                            next_obs=next_obs_z.detach().cpu().numpy(),
-                            action=res_z.cpu().numpy(),
+                            obs=obs_emb_tensor.cpu().numpy(),
+                            next_obs=next_obs_emb_tensor.cpu().numpy(),
+                            action=actions_to_save,
                             reward=np.array([reward]),
                             done=np.array([done]),
                             infos=[{}]
                         )
 
                         ## switch to next step
-                        obs_z = next_obs_z
+                        base_dict = next_base_dict
 
                         # ensure the global_step aligns with training_freq
                         if self.global_step % training_freq == 0:
@@ -337,7 +363,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                         batch = rb.sample(cfg.training.batch_size)
 
                         ## update critics
-                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch)
+                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
                         q_opt.zero_grad()
                         critic_loss.backward()
                         q1_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -378,6 +404,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                         'info/global_update': self.global_update,
                         'info/n_episode': self.n_episode,
 
+                        'info/res_ratio': res_ratio,
                         'info/q_target': critic_info['q_target'],
                         'info/q_predicted': critic_info['q_predicted'],
                         'info/q_predicted_min': critic_info['q_predicted_min'],
@@ -385,12 +412,8 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                         'info/actor_entropy': actor_info['actor_entropy'],
                         'info/rewards': critic_info['rewards'],
                         'info/dones': critic_info['dones'],
-                        'info/res_naction_norm': actor_info['res_z_norm'],
-                        'info/z_mean_norm': actor_info['z_mean_norm'],
-                        'info/z_norm': actor_info['z_norm'],
-                        'info/z_mean_rms': actor_info['z_mean_rms'],
-                        'info/z_rms': actor_info['z_rms'],
-                        'info/res_z_rms': actor_info['res_z_rms'],
+                        'info/res_naction_norm': actor_info['res_naction_norm'],
+                        'info/base_naction_norm': actor_info['base_naction_norm'],
                         'info/recent_done_sr': recent_done_sr,
                         'info/recent_done_count': recent_done_count,
                         'info/recent_done_avg_len': recent_done_avg_len,
@@ -463,7 +486,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainOnlineVibRealWorkspace(cfg)
+    workspace = TrainOnlineResRealWorkspace(cfg)
     workspace.run()
 
 if __name__ == "__main__":
