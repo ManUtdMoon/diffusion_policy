@@ -239,9 +239,9 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
             alpha_opt.load_state_dict(payload['alpha_optimizer'])
             self.global_step = payload['global_step']
             self.global_update = payload['global_update']
-            self.n_episode = payload['n_episode']
-            recent_done_successes = deque(payload['recent_done_successes'], maxlen=MAXLEN)
-            recent_done_epi_len = deque(payload['recent_done_epi_len'], maxlen=MAXLEN)
+            self.n_episode = payload.get('n_episode', 0)
+            recent_done_successes = deque(payload.get('recent_done_successes', []), maxlen=MAXLEN)
+            recent_done_epi_len = deque(payload.get('recent_done_epi_len', []), maxlen=MAXLEN)
             rb = payload.get('replay_buffer', rb)  # in case of no buffer saved
 
             print(f"Resumed at global_step={self.global_step}")

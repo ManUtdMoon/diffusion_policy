@@ -102,3 +102,16 @@ class RealSense(object):
             tag_poses[detection.tag_id] = X_root_tag
         
         return tag_poses
+
+
+if __name__ == "__main__":
+    rs = RealSense(1920, 1080)
+    rs.start()
+
+    frame = rs.get_frame()
+    color = frame['color']
+    cv2.imwrite("color.png", color)
+
+    print(rs.color_intrinsics)
+
+    rs.stop()

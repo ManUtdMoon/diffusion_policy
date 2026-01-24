@@ -270,7 +270,7 @@ class JuicingEnv:
         reward = 0.
         return_success = False
         if self.done:
-            self.gripper.open()
+            self.gripper.set_position(0)
             time.sleep(0.5)
 
             print("\nEpisode ended. Was it successful?")
