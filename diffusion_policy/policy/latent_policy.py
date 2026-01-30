@@ -129,7 +129,7 @@ class ResiduePolicy(ModuleAttrMixin):
         assert_shape(res['sample'], (bs, self.z_dim))
         assert_shape(res['log_prob'], (bs, 1))
 
-        return res['sample'], res['log_prob']
+        return res['sample'], res['log_prob'], res['mean']
 
     def compute_critic_loss(self, batch: ReplayBufferSamples):
         bs = batch.rewards.shape[0]
@@ -149,7 +149,7 @@ class ResiduePolicy(ModuleAttrMixin):
         # compute targets
         with torch.no_grad():
             obs_agg_next = _agg_obs(self.actor_input_type, obs_z_next, Do, dz)
-            res_z_next, _ = self._sample_log_prob(obs_agg_next)
+            res_z_next, _, _ = self._sample_log_prob(obs_agg_next)
             perturbed_z_next = res_z_next * self.res_scale + z_next
 
             target_q_all = self.q_targets(obs_agg_next, perturbed_z_next)
@@ -197,7 +197,7 @@ class ResiduePolicy(ModuleAttrMixin):
             alpha = self.init_alpha
 
         obs_agg = _agg_obs(self.actor_input_type, obs_z, Do, dz)
-        res_z, log_prob = self._sample_log_prob(obs_agg)
+        res_z, log_prob, mu = self._sample_log_prob(obs_agg)
 
         z_curr = res_z * self.res_scale + z
         all_q_preds = self.qs(obs_agg, z_curr)  # (num_qs, B, 1)
@@ -214,6 +214,8 @@ class ResiduePolicy(ModuleAttrMixin):
             'z_mean_rms': z_mean.pow(2).mean().sqrt().item(),
             'z_rms': z.pow(2).mean().sqrt().item(),
             'res_z_rms': res_z.pow(2).mean().sqrt().item(),
+            'res_mu_rms': mu.pow(2).mean().sqrt().item(),
+            'res_std': (res_z - mu).pow(2).mean().sqrt().item(),
         }
 
         return actor_loss, info
@@ -223,7 +225,7 @@ class ResiduePolicy(ModuleAttrMixin):
         obs_agg = _agg_obs(self.actor_input_type, obs_z, self.obs_dim, self.z_dim)
 
         with torch.no_grad():
-            _, log_prob = self._sample_log_prob(obs_agg)
+            _, log_prob, _ = self._sample_log_prob(obs_agg)
 
         alpha_loss = (-self.log_alpha.exp() * (log_prob + self.target_entropy)).mean()
 
