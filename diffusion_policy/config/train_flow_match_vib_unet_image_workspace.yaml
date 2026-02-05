@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: juicing_s1
+  - task: flip
 
 name: train_flow_match_vib_unet_image
 _target_: diffusion_policy.workspace.train_flow_match_vib_unet_image_workspace.TrainFlowMatchVibUnetImageWorkspace
@@ -20,9 +20,9 @@ obs_as_global_cond: True
 
 policy:
   _target_: diffusion_policy.policy.flow_match_vib_unet_image_policy.FlowMatchVibUnetImagePolicy
-  vib_latent_dim: 32
+  vib_latent_dim: 16
   vib_alpha: 1.0
-  vib_beta: 1.0e-4
+  vib_beta: 2.0e-4
   vib_recon: 0.0
   vib_hidden_dim: 256
 
@@ -74,7 +74,7 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 256
+  batch_size: 128
   num_workers: 16
   shuffle: True
   pin_memory: True
@@ -96,7 +96,7 @@ optimizer:
 
 training:
   device: "cuda:0"
-  seed: 42
+  seed: 0
   debug: False
   resume: True
   # optimization
@@ -133,7 +133,7 @@ checkpoint:
   topk:
     monitor_key: train_action_mse_error
     mode: min
-    k: 2
+    k: 5
     format_str: 'epoch_{epoch:04d}-train_mse-{train_action_mse_error:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False

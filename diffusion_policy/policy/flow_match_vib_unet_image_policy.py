@@ -190,7 +190,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
 
-        return trajectory
+        return torch.clamp(trajectory, -1.0, 1.0)
     
     def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         nobs = self.normalizer.normalize(obs_dict)
@@ -339,6 +339,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
+        nactions = torch.clamp(nactions, -1.0, 1.0)
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
 

@@ -263,6 +263,52 @@ def robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat):
     )
 
 
+def flip_action_normalizer_from_stat(stat, coeff=None):
+    result = dict_apply_split(
+        stat, lambda x: {
+            'pos': x[...,:3],
+            'rot': x[...,3:6],
+    })
+
+    def get_pos_param_info(stat, output_max=1, output_min=-1, range_eps=1e-7):
+        # -1, 1 normalization
+        input_max = stat['max']
+        input_min = stat['min']
+        input_range = input_max - input_min
+        ignore_dim = input_range < range_eps
+        input_range[ignore_dim] = output_max - output_min
+        scale = (output_max - output_min) / input_range
+        offset = output_min - scale * input_min
+        offset[ignore_dim] = (output_max + output_min) / 2 - input_min[ignore_dim]
+
+        return {'scale': scale, 'offset': offset}, stat
+
+    def get_rot_param_info(stat, coeff):
+        if coeff is None:
+            coeff = np.ones(3, dtype=stat['max'].dtype)
+        coeff = np.asarray(coeff, dtype=stat['max'].dtype)
+        assert coeff.shape == (3,)
+        scale = 1.0 / coeff
+        offset = np.zeros_like(coeff)
+        return {'scale': scale, 'offset': offset}, stat
+
+    pos_param, pos_info = get_pos_param_info(result['pos'])
+    rot_param, rot_info = get_rot_param_info(result['rot'], coeff)
+
+    param = dict_apply_reduce(
+        [pos_param, rot_param], 
+        lambda x: np.concatenate(x,axis=-1))
+    info = dict_apply_reduce(
+        [pos_info, rot_info], 
+        lambda x: np.concatenate(x,axis=-1))
+
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=param['scale'],
+        offset=param['offset'],
+        input_stats_dict=info
+    )
+
+
 def array_to_stats(arr: np.ndarray):
     stat = {
         'min': np.min(arr, axis=0),
