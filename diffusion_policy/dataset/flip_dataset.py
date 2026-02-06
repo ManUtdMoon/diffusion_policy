@@ -71,6 +71,7 @@ class FlipDataset(BaseImageDataset):
         replay_buffer = None
         if use_cache:
             cache_zarr_path = dataset_path + f'-n_{num_demo}-{mode}' + '.zarr'
+            print(f'Using cache at {cache_zarr_path}')
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
             with FileLock(cache_lock_path):

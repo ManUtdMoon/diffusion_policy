@@ -13,9 +13,9 @@ shape_meta: &shape_meta
     shape: [6]
 
 task_name: &task_name flip
-dataset_path: &dataset_path /data/hdd2/dongjie/data/flip.h5
+dataset_path: &dataset_path /data/hdd2/dongjie/flip/flip.h5
 
-mode: &mode rel  # "rel", "abs"
+mode: rel  # "rel", "abs"
 
 dataset:
   _target_: diffusion_policy.dataset.flip_dataset.FlipDataset
@@ -29,5 +29,5 @@ dataset:
   seed: 0
   val_ratio: 0.02
   num_demo: 50
-  mode: *mode
+  mode: ${task.mode}
   quantile: '0.999'

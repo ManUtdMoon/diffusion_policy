@@ -19,13 +19,14 @@ import json
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.env_runner.juicing_runner import JuicingRunner
+from diffusion_policy.env_runner.flip_runner import FlipRunner
 
 
 @click.command()
 @click.option('-c', '--checkpoint', required=True)
 @click.option('-o', '--output_dir', required=True)
 @click.option('-d', '--device', default='cuda:0')
-@click.option('-t', '--n_action_steps', default=4, type=int, required=True)
+@click.option('-t', '--n_action_steps', default=16, type=int, required=True)
 def main(checkpoint, output_dir, device, n_action_steps):
     if os.path.exists(output_dir):
         click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
@@ -53,13 +54,16 @@ def main(checkpoint, output_dir, device, n_action_steps):
     policy.to(device)
     policy.eval()
 
+    policy.num_inference_steps = 5
+
     # run eval
-    env_runner = JuicingRunner(
+    env_runner = FlipRunner(
         output_dir=output_dir,
         eval_episodes=30,
-        max_steps=500,
+        max_steps=250,
         n_obs_steps=cfg.n_obs_steps,
         n_action_steps=cfg.n_action_steps,
+        mode=cfg.task.mode,
     )
     runner_log = env_runner.run(policy)
 
