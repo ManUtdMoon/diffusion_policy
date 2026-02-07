@@ -119,6 +119,7 @@ class FlipRunner(BaseImageRunner):
 
             env.reset_end()
             pbar.update(1)
+            time.sleep(2.0)
 
         pbar.close()
 

@@ -44,6 +44,8 @@ class FlipEnv:
     ):
         self.franka = FrankaWrapper(
             joints_init=START_JOINTS,
+            lookahead_steps=lookahead_steps,
+            smoothing_weight=smoothing_weight,
         )
 
         self.dt = dt
@@ -107,7 +109,7 @@ class FlipEnv:
 
         # reser robot
         self.franka.franka.reset_home()
-        time.sleep(2.0)
+        time.sleep(3.0)
         input("Press Enter to continue...")
 
         # get current observation

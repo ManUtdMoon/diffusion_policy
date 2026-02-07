@@ -5,7 +5,7 @@ from .franka_interpolation_controller import FrankaInterpolationController
 
 
 class FrankaWrapper:
-    def __init__(self, joints_init):
+    def __init__(self, joints_init, lookahead_steps=3, smoothing_weight=0.7):
         self.shm_manager = SharedMemoryManager()
         self.shm_manager.start()
         self.franka = FrankaInterpolationController(
@@ -16,6 +16,8 @@ class FrankaWrapper:
             Kxd_scale=2.0,
             joints_init=joints_init,
             verbose=False,
+            lookahead_steps=lookahead_steps,
+            smoothing_weight=smoothing_weight,
         )
         self.franka.start()
         

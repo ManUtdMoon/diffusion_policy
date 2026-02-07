@@ -27,7 +27,7 @@ dataset:
   n_obs_steps: ${dataset_obs_steps}
   use_cache: True
   seed: 0
-  val_ratio: 0.02
-  num_demo: 50
+  val_ratio: 0.01
+  num_demo: 100
   mode: ${task.mode}
   quantile: '0.999'

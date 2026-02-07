@@ -44,11 +44,11 @@ register_codecs()
 MODE_QUANTILE_COEFF = {
     'rel': {
         "0.999": np.array([0.13910295, 0.19246496, 0.0712848], dtype=np.float32) * 1.1,
-        "max": np.array([0.17437649, 0.2355631, 0.09018218], dtype=np.float32)
+        "max": np.array([0.17749146, 0.36098883, 0.09018218], dtype=np.float32)
     },
     'abs': {
         "0.999": np.array([1.67582953, 1.23138679, 1.40080211], dtype=np.float32) * 1.05,
-        "max": np.array([1.7486889, 1.3119076, 1.4292871], dtype=np.float32)
+        "max": np.array([1.7623351, 1.4431236, 1.4437656], dtype=np.float32)
     }
 }
 
@@ -348,7 +348,7 @@ def _convert_h5_to_replay(
 
 def main():
     task = 'flip'
-    dataset_path = f"/data/hdd2/dongjie/data/{task}.h5"
+    dataset_path = f"/data/hdd2/dongjie/flip/{task}.h5"
     shape_meta = {
         "obs": {
             "image": {
@@ -368,15 +368,15 @@ def main():
     dataset = FlipDataset(
         shape_meta,
         dataset_path=dataset_path,
-        horizon=16,
+        horizon=20,
         pad_before=0,
-        pad_after=9,
+        pad_after=19,
         n_obs_steps=1,
         use_cache=True,
         val_ratio=0.02,
-        num_demo=50,
-        mode='rel',
-        quantile='0.999'
+        num_demo=100,
+        mode='abs',
+        quantile='max'
     )
 
     val_set = dataset.get_validation_dataset()

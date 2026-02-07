@@ -5,7 +5,8 @@ import numpy as np
 import multiprocessing as mp
 import zerorpc
 from multiprocessing.managers import SharedMemoryManager
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R, Slerp
+from collections import deque
 
 from .shared_memory.shared_memory_queue import SharedMemoryQueue, Empty
 from .shared_memory.shared_memory_ring_buffer import SharedMemoryRingBuffer
@@ -103,7 +104,9 @@ class FrankaInterpolationController(mp.Process):
         soft_real_time=False,
         verbose=False,
         get_max_k=None,
-        receive_latency=0.0
+        receive_latency=0.0,
+        lookahead_steps=3,
+        smoothing_weight=0.7
         ):
         """
         robot_ip: the ip of the middle-layer controller (NUC)
@@ -112,6 +115,8 @@ class FrankaInterpolationController(mp.Process):
         Kxd: the scale of velocity gains
         soft_real_time: enables round-robin scheduling and real-time priority
             requires running scripts/rtprio_setup.sh before hand.
+        lookahead_steps: number of future poses to consider for smoothing
+        smoothing_weight: weight for exponential smoothing (0.0-1.0, higher = smoother)
         """
 
         if joints_init is not None:
@@ -130,6 +135,9 @@ class FrankaInterpolationController(mp.Process):
         self.soft_real_time = soft_real_time
         self.receive_latency = receive_latency
         self.verbose = verbose
+        self.lookahead_steps = lookahead_steps
+        self.smoothing_weight = smoothing_weight
+        self.pose_buffer = deque(maxlen=lookahead_steps)
 
         if get_max_k is None:
             get_max_k = int(frequency * 5)
@@ -220,12 +228,68 @@ class FrankaInterpolationController(mp.Process):
         pose = np.array(pose)
         assert pose.shape == (6,)
 
+        # Add new pose to buffer for look-ahead smoothing
+        self.pose_buffer.append({'pose': pose, 'duration': duration})
+        
+        # Compute smoothed pose if we have enough poses in buffer
+        if len(self.pose_buffer) >= 2:
+            smoothed_pose = self._compute_smoothed_pose()
+        else:
+            smoothed_pose = pose
+
         message = {
             'cmd': Command.SERVOL.value,
-            'target_pose': pose,
+            'target_pose': smoothed_pose,
             'duration': duration
         }
         self.input_queue.put(message)
+    
+    def _compute_smoothed_pose(self):
+        """
+        Compute smoothed pose using weighted average of poses in buffer
+        """
+        if len(self.pose_buffer) < 2:
+            return self.pose_buffer[-1]['pose']
+        
+        # Get current and look-ahead poses
+        poses = [item['pose'] for item in self.pose_buffer]
+        
+        # Separate position and rotation
+        positions = np.array([p[:3] for p in poses])
+        rotations = [R.from_rotvec(p[3:]) for p in poses]
+        
+        # Apply exponential weighting for positions
+        weights = np.array([self.smoothing_weight ** i for i in range(len(poses))])
+        weights = weights / weights.sum()
+        
+        # Smooth positions
+        smoothed_pos = np.average(positions, axis=0, weights=weights)
+        
+        # Smooth rotations using weighted SLERP
+        if len(rotations) >= 2:
+            # Start with the most recent rotation
+            smoothed_rot = rotations[0]
+            
+            # Sequentially blend with each subsequent rotation using SLERP
+            for i in range(1, len(rotations)):
+                # Create a Slerp interpolator between current smoothed rotation and next rotation
+                times = np.array([0.0, 1.0])
+                # Stack rotations into a single Rotation object
+                rots = R.from_matrix(np.stack([smoothed_rot.as_matrix(), rotations[i].as_matrix()]))
+                slerp = Slerp(times, rots)
+                
+                # Interpolate based on the relative weight
+                weight = weights[i] / weights[:i+1].sum()
+                smoothed_rot = slerp(weight)
+        else:
+            smoothed_rot = rotations[0]
+        
+        # Combine smoothed position and rotation
+        smoothed_pose = np.zeros(6)
+        smoothed_pose[:3] = smoothed_pos
+        smoothed_pose[3:] = smoothed_rot.as_rotvec()
+        
+        return smoothed_pose
     
     def schedule_waypoint(self, pose, target_time):
         pose = np.array(pose)
@@ -239,6 +303,8 @@ class FrankaInterpolationController(mp.Process):
         self.input_queue.put(message)
 
     def reset_home(self):
+        # Clear pose buffer when resetting
+        self.pose_buffer.clear()
         msg = {
             'cmd': Command.RESET_HOME.value
         }
