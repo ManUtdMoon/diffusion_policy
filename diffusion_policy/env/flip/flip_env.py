@@ -3,15 +3,20 @@ import numpy as np
 import cv2
 import threading
 import queue
-from copy import deepcopy
 from pynput import keyboard
 from gym import spaces
 from scipy.spatial.transform import Rotation as R
+from pyrobotiqgripper import RobotiqGripper
 
 from diffusion_policy.env.flip.franka.franka_wrapper import FrankaWrapper
 from diffusion_policy.env.flip.realsense_flip import RealSense
 from diffusion_policy.env.flip.franka.common.precise_sleep import precise_wait
-from diffusion_policy.env.flip.joints import START_JOINTS
+from diffusion_policy.env.flip.joints import (
+    START_JOINTS,
+    PRE_GRASP_JOINTS,
+    GRASP_JOINTS,
+    LIFT_JOINTS,
+)
     
 
 is_done = False
@@ -19,12 +24,11 @@ need_regrasp = False
 def on_press(key):
     global is_done
     try:
-        if (
-            (hasattr(key, 'vk') and key.vk == 65437) or
-            (key.char >= '0' and key.char <= '9')
-        ):
-            is_done = True
-        elif hasattr(key, 'vk') and key.char >= 'a' and key.char <= 'z':
+        if hasattr(key, 'char') and key.char:
+            ch = key.char
+            if ch.isdigit() or ch.isalpha() or ch in ['+', '-']:
+                is_done = True
+        elif hasattr(key, 'vk') and key.vk == 65437:
             is_done = True
     except AttributeError:
         # Ignore special keys that don't carry a `char` attribute.
@@ -47,13 +51,14 @@ class FlipEnv:
             lookahead_steps=lookahead_steps,
             smoothing_weight=smoothing_weight,
         )
+        self.gripper = None
 
         self.dt = dt
         self.camera = RealSense(color_width=320, color_height=240)
         self.camera.start()
+        self.camera_queue = queue.Queue(maxsize=1)
         self.camera_thread = threading.Thread(target=self._get_camera_frame)
         self.camera_thread.start()
-        self.camera_queue = queue.Queue(maxsize=1)
 
         self.mode = mode
         self.prev_target = None
@@ -85,6 +90,11 @@ class FlipEnv:
 
         print("Franka Env Init Done")
 
+    def _ensure_gripper(self):
+        if self.gripper is None:
+            self.gripper = RobotiqGripper(portname='/dev/ttyUSB0')
+        return self.gripper
+
     def _get_camera_frame(self):
         while True:
             frame = self.camera.get_frame()
@@ -107,9 +117,9 @@ class FlipEnv:
         self.done = False
         is_done = False
 
-        # reser robot
+        # reset robot
         self.franka.franka.reset_home()
-        time.sleep(3.0)
+        time.sleep(2.0)
         input("Press Enter to continue...")
 
         # get current observation
@@ -129,14 +139,35 @@ class FlipEnv:
         return obs.copy()
 
     def regrasp(self):
-        pass
+        print("<REGRASP>")
+        gripper = self._ensure_gripper()
+        gripper.goTo(100)
+        time.sleep(0.5)
+
+        print("Moving to pre_grasp...")
+        self.franka.franka.servoJ(np.array(PRE_GRASP_JOINTS), from_cartesian=True)
+
+        print("Moving to grasp...")
+        self.franka.franka.servoJ(np.array(GRASP_JOINTS), from_cartesian=False)
+        time.sleep(1.0)
+        input("Place the spatula and press Enter to continue...")    
+
+        print("Closing gripper...")
+        gripper.close(speed=128)
+        time.sleep(0.5)
+
+        print("Lifting...")
+        self.franka.franka.servoJ(np.array(LIFT_JOINTS), from_cartesian=False)
 
     def reset_end(self):
-        self.regrasp()
+        global need_regrasp
+        if need_regrasp:
+            need_regrasp = False
+            self.regrasp()
 
     def step(self, action):
         print(action)
-        global is_done
+        global is_done, need_regrasp
         self.env_step += 1
         t_cycle_end = self.t_start + self.env_step * self.dt
 
@@ -166,21 +197,35 @@ class FlipEnv:
         reward = 0.0
         is_success = False
         if self.done:
-            user_input = input("\nEpisode ended. Type number for success, letter for failure:").strip()
-            # Use the last character to avoid interference from stop key
+            user_input = input(
+                "\nEpisode ended. [0-9]=success, [a-z]=failure, [+]=s+regrasp, [-]=f+regrasp: "
+            ).strip()
             if user_input:
-                user_input = user_input[-1]
-            if user_input and user_input[0].isdigit():
-                is_success = True
-                reward = 1.
-                print(f"Success recorded!")
+                label = user_input[-1]
+
+            is_success, need_regrasp = self._parse_episode_label(label)
+            reward = 1.0 if is_success else 0.0
+
+            if is_success:
+                print(f"Success recorded! need_regrasp={need_regrasp}")
             else:
-                # Record as failure  
-                print(f"Failure recorded!")
-                is_success = False
-                reward = 0.
+                print(f"Failure recorded! need_regrasp={need_regrasp}")
 
         return obs, reward, self.done, {'is_success': is_success, 'timeout': timeout,}
+
+    def _parse_episode_label(self, label):
+        if label is None:
+            return False, False
+
+        if label == '+':
+            return True, True
+        if label == '-':
+            return False, True
+        if label.isdigit():
+            return True, False
+        if label.isalpha():
+            return False, False
+        return False, False
 
     def terminate(self, is_done):
         '''

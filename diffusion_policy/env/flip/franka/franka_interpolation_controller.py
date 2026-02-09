@@ -19,7 +19,8 @@ class Command(enum.Enum):
     STOP = 0
     SERVOL = 1
     SCHEDULE_WAYPOINT = 2
-    RESET_HOME = 3  
+    RESET_HOME = 3
+    SERVOJ = 4
 
 
 tx_flangerot90_tip = np.identity(4)
@@ -70,7 +71,7 @@ class FrankaInterface:
             v_now = (pose[:3] - self.prev_pose[:3]) / dt
             a_now = np.linalg.norm((v_now - v_prev) / dt)
             # print(f"[FrankaInterface] Current acceleration: {a_now:.2f} m/s^2")
-            if a_now >= 8:
+            if a_now >= 20.0:
                 print(f"[FrankaInterface] ERROR: high acceleration {a_now:.2f} m/s^2")
                 self.server.terminate_current_policy()
                 self.server.close()
@@ -146,8 +147,10 @@ class FrankaInterpolationController(mp.Process):
         example = {
             'cmd': Command.SERVOL.value,
             'target_pose': np.zeros((6,), dtype=np.float64),
+            'target_joints': np.zeros((7,), dtype=np.float64),
             'duration': 0.0,
-            'target_time': 0.0
+            'target_time': 0.0,
+            'from_cartesian': False
         }
         input_queue = SharedMemoryQueue.create_from_examples(
             shm_manager=shm_manager,
@@ -228,18 +231,9 @@ class FrankaInterpolationController(mp.Process):
         pose = np.array(pose)
         assert pose.shape == (6,)
 
-        # Add new pose to buffer for look-ahead smoothing
-        self.pose_buffer.append({'pose': pose, 'duration': duration})
-        
-        # Compute smoothed pose if we have enough poses in buffer
-        if len(self.pose_buffer) >= 2:
-            smoothed_pose = self._compute_smoothed_pose()
-        else:
-            smoothed_pose = pose
-
         message = {
             'cmd': Command.SERVOL.value,
-            'target_pose': smoothed_pose,
+            'target_pose': pose,
             'duration': duration
         }
         self.input_queue.put(message)
@@ -309,6 +303,23 @@ class FrankaInterpolationController(mp.Process):
             'cmd': Command.RESET_HOME.value
         }
         self.input_queue.put(msg)
+
+    def servoJ(self, joints, from_cartesian=True):
+        """
+        Move robot in joint space.
+        If from_cartesian=True, terminate cartesian impedance before moving.
+        """
+        assert self.is_alive()
+        joints = np.array(joints)
+        assert joints.shape == (7,)
+
+        self.pose_buffer.clear()
+        msg = {
+            'cmd': Command.SERVOJ.value,
+            'target_joints': joints,
+            'from_cartesian': bool(from_cartesian),
+        }
+        self.input_queue.put(msg)
     
     # ========= receive APIs =============
     def get_state(self, k=None, out=None):
@@ -359,6 +370,7 @@ class FrankaInterpolationController(mp.Process):
                 Kx=self.Kx,
                 Kxd=self.Kxd
             )
+            cartesian_policy_active = True
 
             t_start = time.monotonic()
             iter_idx = 0
@@ -373,7 +385,8 @@ class FrankaInterpolationController(mp.Process):
                 flange_pose = mat_to_pose(pose_to_mat(tip_pose) @ tx_tip_flange)
 
                 # send command to robot
-                robot.update_desired_ee_pose(flange_pose)
+                if cartesian_policy_active:
+                    robot.update_desired_ee_pose(flange_pose)
 
                 # update robot state
                 state = dict()
@@ -438,13 +451,16 @@ class FrankaInterpolationController(mp.Process):
                         )
                         last_waypoint_time = target_time
                     elif cmd == Command.RESET_HOME.value:
-                        robot.terminate_current_policy()
+                        if cartesian_policy_active:
+                            robot.terminate_current_policy()
+                            cartesian_policy_active = False
                         robot.move_to_joint_positions(
                             positions=np.asarray(self.joints_init),
                             time_to_go=self.joints_init_duration
                         )
 
                         robot.start_cartesian_impedance(self.Kx, self.Kxd)
+                        cartesian_policy_active = True
 
                         curr_pose = robot.get_ee_pose()
                         t_now_reset = time.monotonic()
@@ -455,6 +471,23 @@ class FrankaInterpolationController(mp.Process):
                         last_waypoint_time = t_now_reset
                         if self.verbose:
                             print("[FrankaPositionalController] Already reset to home")
+                    elif cmd == Command.SERVOJ.value:
+                        target_joints = np.asarray(command['target_joints'])
+                        from_cartesian = bool(command['from_cartesian'])
+
+                        if from_cartesian and cartesian_policy_active:
+                            robot.terminate_current_policy()
+                            cartesian_policy_active = False
+                        robot.move_to_joint_positions(
+                            positions=target_joints,
+                            time_to_go=None
+                        )
+                        if self.verbose:
+                            print(
+                                "[FrankaPositionalController] SERVOJ done: joints={} from_cartesian={}".format(
+                                    target_joints, from_cartesian
+                                )
+                            )
                     else:
                         keep_running = False
                         break
