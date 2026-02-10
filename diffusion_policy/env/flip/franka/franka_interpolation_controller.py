@@ -231,9 +231,18 @@ class FrankaInterpolationController(mp.Process):
         pose = np.array(pose)
         assert pose.shape == (6,)
 
+        # # Add new pose to buffer for look-ahead smoothing
+        # self.pose_buffer.append({'pose': pose, 'duration': duration})
+        
+        # # Compute smoothed pose if we have enough poses in buffer
+        # if len(self.pose_buffer) >= 2:
+        #     smoothed_pose = self._compute_smoothed_pose()
+        # else:
+        #     smoothed_pose = pose
+
         message = {
             'cmd': Command.SERVOL.value,
-            'target_pose': pose,
+            'target_pose': pose, # smoothed_pose, pose
             'duration': duration
         }
         self.input_queue.put(message)

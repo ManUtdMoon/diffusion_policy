@@ -166,7 +166,6 @@ class FlipEnv:
             self.regrasp()
 
     def step(self, action):
-        print(action)
         global is_done, need_regrasp
         self.env_step += 1
         t_cycle_end = self.t_start + self.env_step * self.dt

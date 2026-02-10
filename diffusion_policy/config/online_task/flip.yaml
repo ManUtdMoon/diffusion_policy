@@ -1,0 +1,19 @@
+name: flip
+
+task_name: &task_name flip
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    image:
+      shape: [3, 128, 128]
+      type: rgb
+    state:
+      shape: [7]
+      type: low_dim
+  action: 
+    shape: [6]
+
+base_ckpt: ???
+
+max_steps: 250

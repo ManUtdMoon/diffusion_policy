@@ -33,6 +33,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy.env.juicing.juicing_env import JuicingEnv
+from diffusion_policy.env.flip.flip_env import FlipEnv
 
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -110,7 +111,6 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         Ta = cfg.n_action_steps
         do = self.base_policy.obs_feature_dim
         Do = To * do  # obs chunk dim
-        assert Do == do, f"Only support To == 1 for now, got To={To}"
         dz = self.base_policy.vib_latent_dim
         da = cfg.shape_meta.action.shape[0]
         Da = Ta * da  # action chunk dim
@@ -129,7 +129,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
         # configure env
         def env_fn():
-            env = JuicingEnv()
+            env = FlipEnv(dt=1./12, mode=base_cfg.task.mode)
             return MultiStepWrapper(
                 env,
                 n_obs_steps=To,
@@ -245,6 +245,8 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
             rb = payload.get('replay_buffer', rb)  # in case of no buffer saved
 
             print(f"Resumed at global_step={self.global_step}")
+        else:
+            input("No resume_from specified. Start training from scratch? Press Enter to continue...")
 
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
@@ -270,7 +272,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
                         ## prepare masks for progressive exploration
                         if self.global_step < learning_start:
-                            perturb = False
+                            perturb = True  # T, F
                         else:
                             perturb = True
 
@@ -288,7 +290,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                         if done:
                             if reward > 0.5:
                                 assert np.any(infos['is_success']), "Done with reward but is_success not marked."
-                            recent_done_successes.append(int(infos['is_success']))
+                            recent_done_successes.append(float(reward) > 0.5)
                             recent_done_epi_len.append(infos['episode_length'])
                             self.n_episode += 1
                             # Run post-processing before resetting the episode.
@@ -327,10 +329,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                         continue
 
                     # training
-                    for _ in tqdm.tqdm(
-                            range(n_updates_per_training),
-                            desc=f"Update {n_updates_per_training} times",
-                            leave=False):
+                    for _ in range(n_updates_per_training):
                         self.global_update += 1
 
                         ## fetch data
@@ -426,12 +425,12 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                             'n_episode': self.n_episode,
                             'recent_done_successes': list(recent_done_successes),
                             'recent_done_epi_len': list(recent_done_epi_len),
-                            'replay_buffer': None # SKIP buffer
+                            'replay_buffer': rb
                         }
                         self._save_checkpoint(path, payload)
-
-            except KeyboardInterrupt:
-                print("\nKeyboard Interrupt! Saving full checkpoint with ReplayBuffer...")
+            # catch all kinds of interrupts to ensure we save a final checkpoint with replay buffer
+            except (KeyboardInterrupt, Exception) as e:
+                print(f"\nException {type(e).__name__} occurred: {e}. Saving full checkpoint with ReplayBuffer...")
                 # wait for any background save to finish to avoid corruption
                 if self.checkpoint_thread is not None and self.checkpoint_thread.is_alive():
                     print("Waiting for background save to finish...")
