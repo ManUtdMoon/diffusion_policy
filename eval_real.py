@@ -64,6 +64,7 @@ def main(checkpoint, output_dir, device, n_action_steps):
         n_obs_steps=cfg.n_obs_steps,
         n_action_steps=cfg.n_action_steps,
         mode=cfg.task.mode,
+        key_epi_init=cfg.task.dataset.get('key_epi_init', None),
     )
     runner_log = env_runner.run(policy)
 

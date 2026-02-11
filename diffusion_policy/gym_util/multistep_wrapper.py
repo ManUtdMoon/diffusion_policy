@@ -75,7 +75,8 @@ class MultiStepWrapper(gym.Wrapper):
             n_action_steps, 
             max_episode_steps=None,
             reward_agg_method='max',
-            gamma=0.99
+            gamma=0.99,
+            key_epi_init=None
         ):
         super().__init__(env)
         self._action_space = repeated_space(env.action_space, n_action_steps)
@@ -86,11 +87,13 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward_agg_method = reward_agg_method
         self.gamma = gamma
         self.n_obs_steps = n_obs_steps
+        self.key_epi_init = set(key_epi_init or [])
 
         self.obs = deque(maxlen=n_obs_steps+1)
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=n_action_steps+1))
+        self.epi_init_obs = None
     
     def reset(self):
         """Resets the environment using kwargs."""
@@ -100,6 +103,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=self.n_action_steps+1))
+        self.epi_init_obs = obs
 
         obs = self._get_obs(self.n_obs_steps)
         return obs
@@ -145,7 +149,10 @@ class MultiStepWrapper(gym.Wrapper):
         """
         assert(len(self.obs) > 0)
         if isinstance(self.observation_space, spaces.Box):
-            return stack_last_n_obs(self.obs, n_steps)
+            result = stack_last_n_obs(self.obs, n_steps)
+            if (len(self.key_epi_init) > 0) and (self.epi_init_obs is not None):
+                result[0] = self.epi_init_obs
+            return result
         elif isinstance(self.observation_space, spaces.Dict):
             result = dict()
             for key in self.observation_space.keys():
@@ -153,6 +160,8 @@ class MultiStepWrapper(gym.Wrapper):
                     [obs[key] for obs in self.obs],
                     n_steps
                 )
+                if (key in self.key_epi_init) and (self.epi_init_obs is not None) and (key in self.epi_init_obs):
+                    result[key][0] = self.epi_init_obs[key]
             return result
         else:
             raise RuntimeError('Unsupported space type')

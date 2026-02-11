@@ -24,7 +24,8 @@ class FlipRunner(BaseImageRunner):
         n_obs_steps=1,
         n_action_steps=10,
         tqdm_interval_sec=5.0,
-        mode='rel'
+        mode='rel',
+        key_epi_init=None
     ):
         super().__init__(output_dir)
 
@@ -34,6 +35,7 @@ class FlipRunner(BaseImageRunner):
             n_action_steps=n_action_steps,
             max_episode_steps=max_steps,
             reward_agg_method='sum',
+            key_epi_init=key_epi_init,
         )
 
         self.eval_episodes = eval_episodes

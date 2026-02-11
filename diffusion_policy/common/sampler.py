@@ -42,7 +42,8 @@ def create_indices(
                 assert (sample_end_idx - sample_start_idx) == (buffer_end_idx - buffer_start_idx)
             indices.append([
                 buffer_start_idx, buffer_end_idx, 
-                sample_start_idx, sample_end_idx])
+                sample_start_idx, sample_end_idx,
+                start_idx])
     indices = np.array(indices)
     return indices
 
@@ -82,11 +83,14 @@ class SequenceSampler:
         pad_after:int=0,
         keys=None,
         key_first_k=dict(),
+        key_epi_init=None,
         episode_mask: Optional[np.ndarray]=None,
         ):
         """
         key_first_k: dict str: int
             Only take first k data from these keys (to improve perf)
+        key_epi_init: list[str]
+            Save episode start frame for selected keys, named as <key>_init.
         """
 
         super().__init__()
@@ -106,20 +110,21 @@ class SequenceSampler:
                 episode_mask=episode_mask
                 )
         else:
-            indices = np.zeros((0,4), dtype=np.int64)
+            indices = np.zeros((0,5), dtype=np.int64)
 
-        # (buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx)
+        # (buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx, start_idx)
         self.indices = indices 
         self.keys = list(keys) # prevent OmegaConf list performance problem
         self.sequence_length = sequence_length
         self.replay_buffer = replay_buffer
         self.key_first_k = key_first_k
+        self.key_epi_init = set(key_epi_init) if key_epi_init is not None else set()
     
     def __len__(self):
         return len(self.indices)
         
     def sample_sequence(self, idx):
-        buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx \
+        buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx, start_idx \
             = self.indices[idx]
         result = dict()
         for key in self.keys:
@@ -149,5 +154,8 @@ class SequenceSampler:
                 if sample_end_idx < self.sequence_length:
                     data[sample_end_idx:] = sample[-1]
                 data[sample_start_idx:sample_end_idx] = sample
+            if key in self.key_epi_init:
+                init_frame = input_arr[start_idx]
+                result[f'{key}_init'] = init_frame
             result[key] = data
         return result

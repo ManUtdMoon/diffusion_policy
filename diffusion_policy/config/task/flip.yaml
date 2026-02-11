@@ -13,14 +13,14 @@ shape_meta: &shape_meta
     shape: [6]
 
 task_name: &task_name flip
-dataset_path: &dataset_path /data/hdd2/dongjie/flip/flip.h5
+dataset_path: /data/hdd2/dongjie/flip/flip.h5
 
 mode: rel  # "rel", "abs"
 
 dataset:
   _target_: diffusion_policy.dataset.flip_dataset.FlipDataset
   shape_meta: *shape_meta
-  dataset_path: *dataset_path
+  dataset_path: ${task.dataset_path}
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
   pad_after: ${eval:'${n_action_steps}-1'}
@@ -31,3 +31,4 @@ dataset:
   num_demo: 100
   mode: ${task.mode}
   quantile: '0.999'
+  key_epi_init: ['image']

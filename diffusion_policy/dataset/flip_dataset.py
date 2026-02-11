@@ -48,7 +48,7 @@ MODE_QUANTILE_COEFF = {
     },
     'abs': {
         "0.999": np.array([1.67582953, 1.23138679, 1.40080211], dtype=np.float32) * 1.05,
-        "max": np.array([1.7623351, 1.4431236, 1.4437656], dtype=np.float32)
+        "max": np.array([1.8500885, 1.566997, 1.4437656], dtype=np.float32)
     }
 }
 
@@ -66,7 +66,8 @@ class FlipDataset(BaseImageDataset):
             val_ratio=0.0,
             num_demo=None,
             mode='rel',
-            quantile: str = 'max'
+            quantile: str = 'max',
+            key_epi_init: List[str]=None
         ):
         replay_buffer = None
         if use_cache:
@@ -126,6 +127,8 @@ class FlipDataset(BaseImageDataset):
             # only take first k obs from images
             for key in rgb_keys + lowdim_keys:
                 key_first_k[key] = n_obs_steps
+        for key in key_epi_init:
+            assert key in rgb_keys + lowdim_keys, f'key_epi_init {key} not in dataset keys!'
 
         val_mask = get_val_mask(
             n_episodes=replay_buffer.n_episodes, 
@@ -138,7 +141,8 @@ class FlipDataset(BaseImageDataset):
             pad_before=pad_before, 
             pad_after=pad_after,
             episode_mask=train_mask,
-            key_first_k=key_first_k)
+            key_first_k=key_first_k,
+            key_epi_init=key_epi_init)
         
         self.replay_buffer = replay_buffer
         self.sampler = sampler
@@ -152,6 +156,7 @@ class FlipDataset(BaseImageDataset):
         self.pad_after = pad_after
         self.mode = mode
         self.quantile = str(quantile)
+        self.key_epi_init = set(key_epi_init)
 
     def get_validation_dataset(self):
         val_set = copy.copy(self)
@@ -160,7 +165,8 @@ class FlipDataset(BaseImageDataset):
             sequence_length=self.horizon,
             pad_before=self.pad_before, 
             pad_after=self.pad_after,
-            episode_mask=~self.train_mask
+            episode_mask=~self.train_mask,
+            key_epi_init=list(self.key_epi_init)
         )
         val_set.train_mask = ~self.train_mask
         return val_set
@@ -203,6 +209,10 @@ class FlipDataset(BaseImageDataset):
 
         obs_dict = dict()
         for key in self.rgb_keys:
+            if key in self.key_epi_init:
+                init_key = f'{key}_init'
+                if init_key in data:
+                    data[key][0] = data[init_key]
             # T,H,W,C(rgb)
             # move channel last to channel first
             # convert uint8 image to float32
@@ -212,6 +222,10 @@ class FlipDataset(BaseImageDataset):
             # T,C(rgb),H,W
             del data[key]
         for key in self.lowdim_keys:
+            if key in self.key_epi_init:
+                init_key = f'{key}_init'
+                if init_key in data:
+                    data[key][0] = data[init_key]
             obs_dict[key] = data[key][T_slice].astype(np.float32)
             del data[key]
 
