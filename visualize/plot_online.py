@@ -2,8 +2,14 @@
 import argparse
 from pathlib import Path
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pandas as pd
+
+mpl.rcParams["font.family"] = "Arial"
+mpl.rcParams["font.sans-serif"] = ["Arial"]
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
 
 
 # Edit this section to choose which metrics to visualize.

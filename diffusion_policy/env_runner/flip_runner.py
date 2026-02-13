@@ -30,7 +30,7 @@ class FlipRunner(BaseImageRunner):
         super().__init__(output_dir)
 
         self.env = MultiStepWrapper(
-            FlipEnv(dt=1./12, mode=mode),
+            FlipEnv(dt=1./11, mode=mode),
             n_obs_steps=n_obs_steps,
             n_action_steps=n_action_steps,
             max_episode_steps=max_steps,
@@ -52,6 +52,7 @@ class FlipRunner(BaseImageRunner):
         completed_episodes = 0
         all_success = []
         all_returns = []
+        all_epi_len = []
 
         pbar = tqdm.tqdm(
             total=self.eval_episodes,
@@ -111,6 +112,7 @@ class FlipRunner(BaseImageRunner):
             # cross check
             if is_success:
                 assert reward > 0.5, "Success but low reward!"
+                all_epi_len.append(info['episode_length'])
 
             all_success.append(is_success)
             all_returns.append(episode_return)
@@ -118,6 +120,8 @@ class FlipRunner(BaseImageRunner):
             print("Is success: ", is_success)
             print("SR till now: ", sum(all_success) / completed_episodes)
             print(f"Success till now: {sum(all_success)} / {completed_episodes}")
+            if len(all_epi_len) > 0:
+                print(f"Epi length till now: {sum(all_epi_len) / len(all_epi_len)}")
 
             env.reset_end()
             pbar.update(1)
@@ -131,6 +135,7 @@ class FlipRunner(BaseImageRunner):
         all_success_rate = sum(all_success) / self.eval_episodes
         log_data['mean_sr'] = all_success_rate
         log_data['mean_return'] = np.mean(all_returns)
+        log_data['mean_epi_length'] = np.mean(all_epi_len) if len(all_epi_len) > 0 else None
         cprint(f"test_mean_score: {all_success_rate}", 'green')
         cprint(f"mean_returns: {np.mean(all_returns)}", 'green')
 

@@ -4,7 +4,7 @@ export MKL_NUM_THREADS=1
 
 
 python eval_real.py \
-    -c data/outputs/2026.02.06/20.19.44_train_flow_match_vib_unet_image_flip/checkpoints/latest.ckpt \
+    -c data/outputs/2026.02.10/20.32.27_train_flow_match_vib_unet_image_flip/checkpoints/latest.ckpt \
     -o data/eval/flip/abs-H20_To3\
     -d cuda:0 \
     -t 16
