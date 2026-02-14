@@ -34,6 +34,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy.env.juicing.juicing_env import JuicingEnv
+from diffusion_policy.env.flip.flip_env import FlipEnv
 
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -111,19 +112,18 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
         Ta = cfg.n_action_steps
         do = self.base_policy.obs_feature_dim
         Do = To * do  # obs chunk dim
-        assert Do == do, f"Only support To == 1 for now, got To={To}"
         dz = self.base_policy.vib_latent_dim
         da = cfg.shape_meta.action.shape[0]
         Da = Ta * da  # action chunk dim
 
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=do, action_dim=Da)
-        print(f"Residue policy with do={do}, Da={Da}, gamma={self.res_policy.gamma}")
+            cfg.res_policy, obs_dim=Do, action_dim=Da)
+        print(f"Residue policy with do={Do}, Da={Da}, gamma={self.res_policy.gamma}")
 
         ## sum policy
         sum_policy = SumPolicy(
             res_scale=cfg.training.res_scale,
-            obs_emb_dim=do,
+            obs_emb_dim=Do,
             action_dim=da,
             n_action_steps=Ta,
             base_policy=self.base_policy,
@@ -133,13 +133,14 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
 
         # configure env
         def env_fn():
-            env = JuicingEnv()
+            env = FlipEnv(dt=1./11, mode=base_cfg.task.mode, smoothing_weight=1.0)
             return MultiStepWrapper(
                 env,
                 n_obs_steps=To,
                 n_action_steps=Ta,
                 max_episode_steps=cfg.online_task.max_steps,
-                reward_agg_method='discounted_sum'
+                reward_agg_method='discounted_sum',
+                key_epi_init=base_cfg.task.dataset.get('key_epi_init', None),
             )
 
         assert cfg.training.n_envs == 1, "Only support n_envs=1 for real training."
@@ -173,7 +174,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(do,), dtype=np.float32
+            shape=(Do,), dtype=np.float32
         )
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
@@ -244,12 +245,14 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
             alpha_opt.load_state_dict(payload['alpha_optimizer'])
             self.global_step = payload['global_step']
             self.global_update = payload['global_update']
-            self.n_episode = payload['n_episode']
-            recent_done_successes = deque(payload['recent_done_successes'], maxlen=MAXLEN)
-            recent_done_epi_len = deque(payload['recent_done_epi_len'], maxlen=MAXLEN)
+            self.n_episode = payload.get('n_episode', 0)
+            recent_done_successes = deque(payload.get('recent_done_successes', []), maxlen=MAXLEN)
+            recent_done_epi_len = deque(payload.get('recent_done_epi_len', []), maxlen=MAXLEN)
             rb = payload.get('replay_buffer', rb)  # in case of no buffer saved
 
             print(f"Resumed at global_step={self.global_step}")
+        else:
+            input("No resume_from specified. Start training from scratch? Press Enter to continue...")
 
         obs_seq = envs.reset()
         obs_seq_tensor = dict_apply(
@@ -271,7 +274,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
                         self.global_step += n_envs
 
                         ## retrieve from base cache
-                        obs_emb_tensor = base_dict['obs_emb'][:, -do:].detach()
+                        obs_emb_tensor = base_dict['obs_emb'][:, -Do:].detach()
                         base_naction_tensor = base_dict['naction'].detach()
                         base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
 
@@ -279,7 +282,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
                         res_ratio = min(
                             max(self.global_step, 0) / cfg.training.prog_explore, 1)
                         ## uncomment to disable progressive exploration
-                        res_ratio = 1.0
+                        # res_ratio = 1.0
 
                         ## prepare masks for progressive exploration
                         if self.global_step < learning_start:
@@ -307,7 +310,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
                         if done:
                             if reward > 0.5:
                                 assert np.any(infos['is_success']), "Done with reward but is_success not marked."
-                            recent_done_successes.append(int(infos['is_success']))
+                            recent_done_successes.append(float(reward) > 0.5)
                             recent_done_epi_len.append(infos['episode_length'])
                             self.n_episode += 1
                             # Run post-processing before resetting the episode.
@@ -321,7 +324,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
                             lambda x: torch.from_numpy(x).to(device=device).unsqueeze(0)
                         )
                         next_base_dict = self.base_policy.predict_action(next_obs_seq_tensor)
-                        next_obs_emb_tensor = next_base_dict['obs_emb'][:, -do:].detach()
+                        next_obs_emb_tensor = next_base_dict['obs_emb'][:, -Do:].detach()
                         next_base_naction_tensor = next_base_dict['naction'].detach()
                         actions_to_save = np.concatenate(
                             [
@@ -353,10 +356,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
                         continue
 
                     # training
-                    for _ in tqdm.tqdm(
-                            range(n_updates_per_training),
-                            desc=f"Update {n_updates_per_training} times",
-                            leave=False):
+                    for _ in range(n_updates_per_training):
                         self.global_update += 1
 
                         ## fetch data
@@ -449,12 +449,12 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
                             'n_episode': self.n_episode,
                             'recent_done_successes': list(recent_done_successes),
                             'recent_done_epi_len': list(recent_done_epi_len),
-                            'replay_buffer': None # SKIP buffer
+                            'replay_buffer': rb
                         }
                         self._save_checkpoint(path, payload)
-
-            except KeyboardInterrupt:
-                print("\nKeyboard Interrupt! Saving full checkpoint with ReplayBuffer...")
+            # catch all kinds of interrupts to ensure we save a final checkpoint with replay buffer
+            except (KeyboardInterrupt, Exception) as e:
+                print(f"\nException {type(e).__name__} occurred: {e}. Saving full checkpoint with ReplayBuffer...")
                 # wait for any background save to finish to avoid corruption
                 if self.checkpoint_thread is not None and self.checkpoint_thread.is_alive():
                     print("Waiting for background save to finish...")

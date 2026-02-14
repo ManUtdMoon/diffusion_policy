@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - online_task: juicing_s1
+  - online_task: flip
 
 name: train_online_res_real_workspace
 _target_: diffusion_policy.workspace.train_online_res_real_workspace.TrainOnlineResRealWorkspace
@@ -9,9 +9,9 @@ task_name: ${online_task.name}
 shape_meta: ${online_task.shape_meta}
 exp_name: "default"
 
-horizon: 16
-n_obs_steps: 1
-n_action_steps: 10
+horizon: 20
+n_obs_steps: 3
+n_action_steps: 16
 n_latency_steps: 0
 
 res_policy:
@@ -20,7 +20,7 @@ res_policy:
   action_dim: ???
   actor_input: obs_action
   hidden_dim: 256
-  log_std_min: -5.0
+  log_std_min: -8.0
   log_std_max: 2.0
   gamma: ${eval:"round(0.99**${n_action_steps}, 4)"}
   tau: 0.005
@@ -32,14 +32,14 @@ res_policy:
 
 training:
   device: "cuda:0"
-  seed: 42
+  seed: 0
   debug: False
   resume_from: null
   # optimization
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 3e-4
-  learning_start: 500
+  learning_start: 300
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
@@ -54,17 +54,17 @@ training:
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
   q_pretrain_steps: 0
-  num_steps: 100000
-  buffer_size: 100000
+  num_steps: 50000
+  buffer_size: 50000
   log_every: 100
-  checkpoint_every: 1000
+  checkpoint_every: 200
   # misc
   tqdm_interval_sec: 1.0
 
 logging:
   project: real_online_debug
   resume: True
-  mode: online
+  mode: offline
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
   tags: ["${name}", "${task_name}", "${exp_name}"]
   id: null
