@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 from pathlib import Path
+from typing import Dict
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -11,22 +12,31 @@ mpl.rcParams["font.sans-serif"] = ["Arial"]
 mpl.rcParams["pdf.fonttype"] = 42
 mpl.rcParams["ps.fonttype"] = 42
 
+METHOD_COLORS = {
+    "ZPRL": "#E63983",
+    "Po-dec": "#56B4E9",
+}
+METHOD_MARKERS = {
+    "ZPRL": "o",
+    "Po-dec": "s",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot eval.txt (chunk_step, success_rate, episode_length) for online runs."
+        description="Plot comparison curves from eval-*.txt under one directory."
     )
     parser.add_argument(
-        "--eval-path",
+        "--eval-dir",
         type=Path,
         required=True,
-        help="Path to eval.txt.",
+        help="Directory containing eval-*.txt files.",
     )
     parser.add_argument(
-        "--output",
+        "--output-dir",
         type=Path,
         default=None,
-        help="Output figure path. Default: <eval dir>/online_eval.png",
+        help="Output directory. Default: --eval-dir",
     )
     parser.add_argument(
         "--chunk-ratio",
@@ -37,26 +47,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smooth-window",
         type=int,
-        default=3,
+        default=1,
         help="Moving-average window for filtering (set 1 to disable).",
     )
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
+def canonical_method_name(raw_name: str) -> str:
+    name = raw_name.strip().lower()
+    if name == "zprl":
+        return "ZPRL"
+    if name in {"po-dec", "podec"}:
+        return "Po-dec"
+    return raw_name
 
-    eval_path = args.eval_path.expanduser().resolve()
-    if not eval_path.is_file():
-        raise FileNotFoundError(f"eval.txt not found: {eval_path}")
 
-    output_path = (
-        args.output.expanduser().resolve()
-        if args.output is not None
-        else eval_path.parent / f"online_eval_sm{args.smooth_window}.pdf"
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
+def load_eval_file(eval_path: Path, chunk_ratio: float, smooth_window: int) -> pd.DataFrame:
     # File format: chunk_step success_rate episode_length
     df = pd.read_csv(
         eval_path,
@@ -73,72 +79,96 @@ def main() -> None:
     if df.empty:
         raise ValueError(f"No valid numeric rows found in {eval_path}")
 
-    df["env_steps_k"] = df["chunk_step"] * float(args.chunk_ratio) / 1000.0
+    df = df.sort_values("chunk_step").reset_index(drop=True)
+    df["env_steps_k"] = df["chunk_step"] * float(chunk_ratio) / 1000.0
+
+    df["success_rate"] = df["success_rate"].rolling(
+        window=smooth_window, min_periods=1, center=True
+    ).mean()
+    df["episode_length"] = df["episode_length"].rolling(
+        window=smooth_window, min_periods=1, center=True
+    ).mean()
+    return df
+
+
+def main() -> None:
+    args = parse_args()
     if args.smooth_window <= 0:
         raise ValueError("--smooth-window must be a positive integer.")
 
-    success_smooth = df["success_rate"].rolling(
-        window=args.smooth_window, min_periods=1, center=True
-    ).mean()
-    episode_len_smooth = df["episode_length"].rolling(
-        window=args.smooth_window, min_periods=1, center=True
-    ).mean()
+    eval_dir = args.eval_dir.expanduser().resolve()
+    if not eval_dir.is_dir():
+        raise NotADirectoryError(f"Directory not found: {eval_dir}")
 
-    fig, ax1 = plt.subplots(figsize=(5, 4))
-    ax2 = ax1.twinx()
-
-    # ax1.plot(
-    #     df["env_steps_k"],
-    #     df["success_rate"],
-    #     color="#1f77b4",
-    #     linewidth=1.0,
-    #     alpha=0.25,
-    #     marker="o",
-    #     label="success_rate_raw",
-    # )
-    ax1.plot(
-        df["env_steps_k"],
-        success_smooth,
-        color="#1f77b4",
-        linewidth=1.8,
-        marker="o",
-        label=f"SR",
+    output_dir = (
+        args.output_dir.expanduser().resolve()
+        if args.output_dir is not None
+        else eval_dir
     )
-    # ax2.plot(
-    #     df["env_steps_k"],
-    #     df["episode_length"],
-    #     color="#d62728",
-    #     linewidth=1.0,
-    #     alpha=0.25,
-    #     marker="o",
-    #     label="episode_length_raw",
-    # )
-    ax2.plot(
-        df["env_steps_k"],
-        episode_len_smooth,
-        color="#d62728",
-        linewidth=1.8,
-        marker="o",
-        label=f"Epi. Len.",
-    )
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    ax1.set_ylim(0.5, 1.0)
-    ax1.set_xlabel(r"Env steps ($\times 10^3$)")
-    ax1.set_ylabel("Success Rate", color="#1f77b4")
-    ax2.set_ylim(100, 125)
-    ax2.set_ylabel("Episode Length", color="#d62728")
-    ax1.set_title(f"FlipEgg")
-    ax1.grid(True, alpha=0.3)
+    eval_files = sorted(eval_dir.glob("eval-*.txt"))
+    if not eval_files:
+        raise FileNotFoundError(f"No eval-*.txt found under: {eval_dir}")
 
-    lines_1, labels_1 = ax1.get_legend_handles_labels()
-    lines_2, labels_2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc="lower left")
+    method_to_df: Dict[str, pd.DataFrame] = {}
+    for eval_file in eval_files:
+        raw_method = eval_file.stem[len("eval-") :]
+        method = canonical_method_name(raw_method)
+        method_to_df[method] = load_eval_file(
+            eval_file,
+            chunk_ratio=args.chunk_ratio,
+            smooth_window=args.smooth_window,
+        )
 
+    # 1) SR figure
+    fig, ax = plt.subplots(figsize=(5, 4))
+    for method, df in method_to_df.items():
+        color = METHOD_COLORS.get(method, None)
+        marker = METHOD_MARKERS.get(method, "o")
+        ax.plot(
+            df["env_steps_k"],
+            df["success_rate"],
+            linewidth=2.0,
+            marker=marker,
+            label=method,
+            color=color,
+        )
+    ax.set_xlabel(r"Env steps ($\times 10^3$)")
+    ax.set_ylabel("Success Rate")
+    ax.set_ylim(top=1.0)
+    ax.set_title("Flip Egg")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    sr_out = output_dir / f"online_eval_sr_sm{args.smooth_window}.pdf"
+    fig.savefig(sr_out, dpi=200)
     plt.close(fig)
+    print(f"Saved: {sr_out}")
 
-    print(f"Saved: {output_path}")
+    # 2) Episode length figure
+    fig, ax = plt.subplots(figsize=(5, 4))
+    for method, df in method_to_df.items():
+        color = METHOD_COLORS.get(method, None)
+        marker = METHOD_MARKERS.get(method, "o")
+        ax.plot(
+            df["env_steps_k"],
+            df["episode_length"],
+            linewidth=2.0,
+            marker=marker,
+            label=method,
+            color=color,
+        )
+    ax.set_xlabel(r"Env steps ($\times 10^3$)")
+    ax.set_ylabel("Episode Length")
+    ax.set_title("Flip Egg")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    epi_out = output_dir / f"online_eval_epi_len_sm{args.smooth_window}.pdf"
+    fig.savefig(epi_out, dpi=200)
+    plt.close(fig)
+    print(f"Saved: {epi_out}")
 
 
 if __name__ == "__main__":
