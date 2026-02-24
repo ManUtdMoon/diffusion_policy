@@ -133,7 +133,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
 
         # configure env
         def env_fn():
-            env = FlipEnv(dt=1./11, mode=base_cfg.task.mode, smoothing_weight=1.0)
+            env = FlipEnv(dt=1./13, mode=base_cfg.task.mode, smoothing_weight=1.0)
             return MultiStepWrapper(
                 env,
                 n_obs_steps=To,
