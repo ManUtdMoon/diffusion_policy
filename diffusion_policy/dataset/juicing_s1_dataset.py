@@ -55,6 +55,7 @@ class JuicingDataset(BaseImageDataset):
         replay_buffer = None
         if use_cache:
             cache_zarr_path = dataset_path + f'-n_{num_demo}' + '.zarr'
+            print(f'Using cache at {cache_zarr_path}')
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
             with FileLock(cache_lock_path):
@@ -182,12 +183,11 @@ class JuicingDataset(BaseImageDataset):
         obs_dict = dict()
         for key in self.rgb_keys:
             # move channel last to channel first
-            # T,H,W,C(bgr)
+            # T,H,W,C(rgb)
             # convert uint8 image to float32
             imgs = np.moveaxis(data[key][T_slice],-1,1
                 ).astype(np.float32) / 255.
-            # revert channel from bgr to rgb
-            obs_dict[key] = imgs[:, [2,1,0], :, :]
+            obs_dict[key] = imgs
             # T,C(rgb),H,W
             del data[key]
         for key in self.lowdim_keys:
@@ -240,7 +240,7 @@ def _convert_h5_to_replay(
         print("Total number of demos:", n_demo)
         for i in range(n_demo):
             demo = demos[f'demo_{i}']
-            episode_length = demo['actions'].shape[0]
+            episode_length = demo['action'].shape[0]
             episode_end = prev_end + episode_length
             prev_end = episode_end
             episode_ends.append(episode_end)
@@ -251,9 +251,9 @@ def _convert_h5_to_replay(
 
         # save lowdim data
         for key in tqdm(lowdim_keys + ['action'], desc="Loading lowdim data"):
-            data_key = 'obs/' + key
+            data_key = key
             if key == 'action':
-                data_key = 'actions'
+                data_key = 'action'
             this_data = list()
             for i in range(n_demo):
                 demo = demos[f'demo_{i}']
@@ -286,7 +286,7 @@ def _convert_h5_to_replay(
             with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
                 futures = set()
                 for key in rgb_keys:
-                    data_key = 'obs/' + key
+                    data_key = key
                     shape = tuple(shape_meta['obs'][key]['shape'])
                     c,h,w = shape
                     this_compressor = Jpeg2k(level=50)
@@ -299,7 +299,7 @@ def _convert_h5_to_replay(
                     )
                     for episode_idx in range(n_demo):
                         demo = demos[f'demo_{episode_idx}']
-                        hdf5_arr = demo['obs'][key]
+                        hdf5_arr = demo[key]
                         for hdf5_idx in range(hdf5_arr.shape[0]):
                             if len(futures) >= max_inflight_tasks:
                                 # limit number of inflight tasks
@@ -324,28 +324,16 @@ def _convert_h5_to_replay(
     return replay_buffer
 
 
-def normalizer_from_stat(stat):
-    max_abs = np.maximum(stat['max'].max(), np.abs(stat['min']).max())
-    scale = np.full_like(stat['max'], fill_value=1/max_abs)
-    offset = np.zeros_like(stat['max'])
-    return SingleFieldLinearNormalizer.create_manual(
-        scale=scale,
-        offset=offset,
-        input_stats_dict=stat
-    )
-
-
-
 def main():
     task = 'juicing_s1'
-    dataset_path = f"/media/datahub-2/ydj/real/{task}/{task}.hdf5"
+    dataset_path = f"/data/hdd2/dongjie/juicing_s1/data/{task}.h5"
     shape_meta = {
         "obs": {
             "image": {
                 "shape": (3, 128, 128),
                 "type": "rgb",
             },
-            "state": {
+            "qpos": {
                 "shape": (7,),
                 "type": "low_dim",
             },
@@ -360,11 +348,11 @@ def main():
         dataset_path=dataset_path,
         horizon=16,
         pad_before=0,
-        pad_after=7,
+        pad_after=9,
         n_obs_steps=1,
         use_cache=True,
-        val_ratio=0.02,
-        num_demo=72
+        val_ratio=0.01,
+        num_demo=65
     )
 
     val_set = dataset.get_validation_dataset()
@@ -379,7 +367,7 @@ def main():
     import time
     np.set_printoptions(precision=3)
     num_epochs = 1
-    num_steps = 10
+    num_steps = 5
     for epoch in range(num_epochs):
         print(f"Epoch {epoch}:")
         train_time_per_batch = []
@@ -400,6 +388,8 @@ def main():
     actions = np.array(dataset.replay_buffer['action'].astype(np.float32))
     print("NAction mean:", action_normalizer.normalize(actions.mean(axis=0)))
     print("NAction median:", action_normalizer.normalize(np.median(actions, axis=0)))
+    print("NAction min:", action_normalizer.normalize(actions.min(axis=0)))
+    print("NAction max:", action_normalizer.normalize(actions.max(axis=0)))
 
     epi_ends = dataset.replay_buffer.episode_ends[:]
     epi_lens = np.diff(np.concatenate([[0], epi_ends]))

@@ -6,24 +6,24 @@ shape_meta: &shape_meta
     image:
       shape: [3, 128, 128]
       type: rgb
-    state:
+    qpos:
       shape: [7]
       type: low_dim
   action: 
     shape: [8]
 
 task_name: &task_name juicing_s1
-dataset_path: &dataset_path /media/datahub-2/ydj/real/juicing_s1/juicing_s1.hdf5
+dataset_path: &dataset_path /data/hdd2/dongjie/juicing_s1/data/juicing_s1.h5
 
 dataset:
   _target_: diffusion_policy.dataset.juicing_s1_dataset.JuicingDataset
   shape_meta: *shape_meta
-  dataset_path: *dataset_path
+  dataset_path: ${task.dataset_path}
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
   pad_after: ${eval:'${n_action_steps}-1'}
   n_obs_steps: ${dataset_obs_steps}
   use_cache: True
-  seed: 42
-  val_ratio: 0.02
-  num_demo: 72
+  seed: 0
+  val_ratio: 0.01
+  num_demo: 65

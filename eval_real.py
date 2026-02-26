@@ -54,17 +54,13 @@ def main(checkpoint, output_dir, device, n_action_steps):
     policy.to(device)
     policy.eval()
 
-    policy.num_inference_steps = 5
-
     # run eval
-    env_runner = FlipRunner(
+    env_runner = JuicingRunner(
         output_dir=output_dir,
-        eval_episodes=30,
-        max_steps=250,
+        eval_episodes=40,
+        max_steps=400,
         n_obs_steps=cfg.n_obs_steps,
         n_action_steps=cfg.n_action_steps,
-        mode=cfg.task.mode,
-        key_epi_init=cfg.task.dataset.get('key_epi_init', None),
     )
     runner_log = env_runner.run(policy)
 
