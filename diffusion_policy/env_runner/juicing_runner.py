@@ -49,6 +49,7 @@ class JuicingRunner(BaseImageRunner):
         completed_episodes = 0
         all_success = []
         all_returns = []
+        all_epi_len = []
 
         pbar = tqdm.tqdm(
             total=self.eval_episodes,
@@ -73,7 +74,7 @@ class JuicingRunner(BaseImageRunner):
                 obs_dict_input = {}
                 ## filter necessary obs (may be unnecessary due to MultiStepWrapper)
                 obs_dict_input['image'] = (obs['image']).astype(np.float32)
-                obs_dict_input['state'] = (obs['state']).astype(np.float32)
+                obs_dict_input['qpos'] = (obs['qpos']).astype(np.float32)
 
                 obs_dict = dict_apply(
                     obs_dict_input,
@@ -108,12 +109,16 @@ class JuicingRunner(BaseImageRunner):
             # cross check
             if is_success:
                 assert reward > 0.5, "Success but low reward!"
+                all_epi_len.append(info['episode_length'])
 
             all_success.append(is_success)
             all_returns.append(episode_return)
 
             print("Is success: ", is_success)
             print("SR till now: ", sum(all_success) / completed_episodes)
+            print(f"Success till now: {sum(all_success)} / {completed_episodes}")
+            if len(all_epi_len) > 0:
+                print(f"Epi length till now: {sum(all_epi_len) / len(all_epi_len)}")
 
             env.reset_end()
             pbar.update(1)
@@ -126,6 +131,7 @@ class JuicingRunner(BaseImageRunner):
         all_success_rate = sum(all_success) / self.eval_episodes
         log_data['mean_sr'] = all_success_rate
         log_data['mean_return'] = np.mean(all_returns)
+        log_data['mean_epi_length'] = np.mean(all_epi_len) if len(all_epi_len) > 0 else None
         cprint(f"test_mean_score: {all_success_rate}", 'green')
         cprint(f"mean_returns: {np.mean(all_returns)}", 'green')
 

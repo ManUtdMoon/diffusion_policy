@@ -133,14 +133,13 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
 
         # configure env
         def env_fn():
-            env = FlipEnv(dt=1./13, mode=base_cfg.task.mode, smoothing_weight=1.0)
+            env = JuicingEnv()
             return MultiStepWrapper(
                 env,
                 n_obs_steps=To,
                 n_action_steps=Ta,
                 max_episode_steps=cfg.online_task.max_steps,
-                reward_agg_method='discounted_sum',
-                key_epi_init=base_cfg.task.dataset.get('key_epi_init', None),
+                reward_agg_method='discounted_sum'
             )
 
         assert cfg.training.n_envs == 1, "Only support n_envs=1 for real training."

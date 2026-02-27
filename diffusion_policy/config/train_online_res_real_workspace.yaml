@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - online_task: flip
+  - online_task: juicing_s1
 
 name: train_online_res_real_workspace
 _target_: diffusion_policy.workspace.train_online_res_real_workspace.TrainOnlineResRealWorkspace
@@ -9,9 +9,9 @@ task_name: ${online_task.name}
 shape_meta: ${online_task.shape_meta}
 exp_name: "default"
 
-horizon: 20
-n_obs_steps: 3
-n_action_steps: 16
+horizon: 16
+n_obs_steps: 1
+n_action_steps: 10
 n_latency_steps: 0
 
 res_policy:
@@ -27,7 +27,7 @@ res_policy:
   init_alpha: 0.01
   auto_alpha: True
   res_scale: ${training.res_scale}
-  num_qs: 2
+  num_qs: 5
   num_subset: 2
 
 training:
@@ -39,14 +39,14 @@ training:
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 3e-4
-  learning_start: 300
+  learning_start: 500
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
   policy_freq: 2
   target_freq: 2
-  training_freq: 4
-  utd: 1.0
+  training_freq: 100
+  utd: 2.0
   n_envs: 1
   # residue progress
   res_scale: 0.05

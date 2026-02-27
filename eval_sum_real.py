@@ -25,6 +25,7 @@ import wandb
 import json
 
 from diffusion_policy.env_runner.flip_runner import FlipRunner
+from diffusion_policy.env_runner.juicing_runner import JuicingRunner
 from diffusion_policy.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 from diffusion_policy.policy.latent_policy import (
     ResiduePolicy as LatentResiduePolicy,
@@ -135,16 +136,16 @@ def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_step
     sum_policy.eval()
 
     # 3) run real-task eval (flip)
-    mode = base_cfg.task.mode
+    mode = base_cfg.task.dataset.get("mode", None)
     key_epi_init = base_cfg.task.dataset.get("key_epi_init", None)
-    env_runner = FlipRunner(
+    env_runner = JuicingRunner(
         output_dir=output_dir,
         eval_episodes=eval_episodes,
         max_steps=max_steps,
         n_obs_steps=To,
         n_action_steps=Ta,
-        mode=mode,
-        key_epi_init=key_epi_init,
+        # mode=mode,
+        # key_epi_init=key_epi_init,
     )
     runner_log = env_runner.run(sum_policy)
 

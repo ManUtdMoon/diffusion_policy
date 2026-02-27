@@ -38,7 +38,7 @@ class XArmWrapper:
         self.xarm.set_state(0)
         # Pad 6-DOF joints to 7-DOF for XArm API
         joints_7dof = np.append(self.joints_init, 0) if len(self.joints_init) == 6 else self.joints_init
-        self.xarm.set_servo_angle(angle=joints_7dof, speed=128, wait=True)
+        self.xarm.set_servo_angle(angle=joints_7dof, speed=72, wait=True)
         curr_pos = np.array(self.xarm.get_position()[1])
         self._target = curr_pos.copy()
         self._last_target = curr_pos.copy()

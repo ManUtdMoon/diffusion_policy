@@ -11,6 +11,88 @@ from diffusion_policy.env.juicing.xarm_wrapper import XArmWrapper
 from diffusion_policy.env.juicing.robotiq_wrapper import RobotiqWrapper
 from diffusion_policy.env.juicing.realsense import RealSense
 
+SMALL_SIZE = (320, 180)
+RESIZE_SIZE = 128
+
+
+def apply_mask(image: np.ndarray) -> np.ndarray:
+    """Apply mask to image: zero out all pixels above the line connecting (127,0) and (0,45).
+
+    The line equation: W = (-45/127) * H + 45
+    Pixels where W < line_W are masked (set to 0).
+
+    Args:
+        image: Input image with shape (H, W, C) or (N, H, W, C), in RGB format.
+
+    Returns:
+        Masked image with same shape as input.
+    """
+    H, W = image.shape[-3:-1]
+
+    # Create coordinate grids
+    h_coords = np.arange(H)
+    w_coords = np.arange(W)
+    hh, ww = np.meshgrid(h_coords, w_coords, indexing='ij')  # hh[H, W], ww[H, W]
+
+    # Line: passes through (H=127, W=0) and (H=0, W=45)
+    # Slope: (45 - 0) / (0 - 127) = -45/127
+    # W - 0 = (-45/127) * (H - 127)
+    # W = (-45/127) * H + 45
+    # Mask: W < (-45/127) * H + 45  -> above/left of the line
+    line_w = (-45 / 127) * hh + 45
+    mask = ww < line_w  # [H, W] boolean, True = mask out
+
+    if image.ndim == 3:
+        # H, W, C
+        result = image.copy()
+        result[mask, :] = 0
+        return result
+    elif image.ndim == 4:
+        # N, H, W, C
+        result = image.copy()
+        result[:, mask, :] = 0
+        return result
+    else:
+        raise ValueError(f"Unexpected image ndim: {image.ndim}")
+
+
+def transform_image(image: np.ndarray, resize_size: int = RESIZE_SIZE) -> np.ndarray:
+    """Transform raw camera image to processed observation image.
+
+    Processing pipeline:
+    1. Crop: [50:, 7:] on H, W dimensions
+    2. Convert BGR to RGB
+    3. Resize to resize_size x resize_size
+    4. Apply mask to zero out pixels above diagonal line
+
+    Args:
+        image: Input image with shape (H, W, C), BGR format from camera.
+        resize_size: Output image size (default: 128).
+
+    Returns:
+        Processed image with shape (C, H, W), RGB format, float32, range [0, 1].
+    """
+    # Crop: H from 50, W from 7
+    small = cv2.resize(image, SMALL_SIZE, interpolation=cv2.INTER_LINEAR)
+    cropped = small[50:, 7:]
+
+    # BGR to RGB
+    rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+
+    # Resize
+    resized = cv2.resize(rgb, (resize_size, resize_size), interpolation=cv2.INTER_LINEAR)
+
+    # Apply mask
+    masked = apply_mask(resized)
+
+    # cv2.imshow("Masked Image", masked[..., ::-1])  # Show in BGR format for OpenCV
+    # cv2.waitKey(1)
+
+    # Convert to CHW format and normalize to [0, 1]
+    result = np.moveaxis(masked.astype(np.float32) / 255., -1, 0)
+
+    return result
+
 
 is_done = False
 def on_press(key):
@@ -107,7 +189,7 @@ class JuicingEnv:
                 shape=(3, 128, 128),
                 dtype=np.uint8
             ),
-            'state': spaces.Box(
+            'qpos': spaces.Box(
                 low=-np.inf,
                 high=np.inf,
                 shape=(obs_sensor_dim,),
@@ -153,21 +235,16 @@ class JuicingEnv:
         xarm_q = self.xarm.get_joint()      # Joint angles in degrees
         gripper_state = self.gripper.get_state()
 
-        # Get camera frame
+        # Get camera frame and process image
         frame = self.get_frame()
-
-        # Process color image
-        color_img = frame['color']
-        color_img = cv2.resize(color_img, (128, 128))
-        color_img = np.moveaxis(color_img.astype(np.float32) / 255., -1, 0)
-        color_img = color_img[[2, 1, 0], :, :]  # (C, H, W) rgb
+        color_img = transform_image(frame['color'])
 
         # Agent position: [x, y, z, roll, pitch, yaw, gripper_state]
         q_pos = np.concatenate([xarm_q, [gripper_state]])
         ee_pose = np.concatenate([xarm_pose, [gripper_state]])
 
         obs = {
-            'state': np.array(q_pos),
+            'qpos': np.array(q_pos),
             'image': color_img,
             'ee_pose': np.array(ee_pose),
         }
@@ -251,13 +328,10 @@ class JuicingEnv:
         ee_pose = np.concatenate([xarm_pose, [xarm_gripper_state]])
         
         frame = self.get_frame()
-        color_img = frame['color']
-        color_img = cv2.resize(color_img, (128, 128))
-        color_img = np.moveaxis(color_img.astype(np.float32) / 255., -1, 0)
-        color_img = color_img[[2, 1, 0], :, :]  # (C, H, W) rgb
+        color_img = transform_image(frame['color'])
 
         obs = {
-            'state': np.array(q_pos),
+            'qpos': np.array(q_pos),
             'image': color_img,
             'ee_pose': np.array(ee_pose),
         }
