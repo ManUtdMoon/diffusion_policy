@@ -225,7 +225,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         # resume training
         if cfg.training.resume_from is not None:
             resume_path = pathlib.Path(cfg.training.resume_from)
-            latest_ckpt = resume_path / 'checkpoints' / 'latest.ckpt'
+            latest_ckpt = resume_path
             assert latest_ckpt.exists(), f"{latest_ckpt} does not exist."
 
             print(f"Resuming from {latest_ckpt}")
@@ -410,7 +410,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
                     # checkpointing
                     if self.global_step % checkpoint_every == 0:
-                        path = pathlib.Path(self.output_dir) / 'checkpoints' / 'latest.ckpt'
+                        path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step-{self.global_step}.ckpt'
 
                         # prepare payload in main thread to avoid race conditions on model/optimizers
                         # ReplayBuffer is NOT saved in periodic checkpoints to save time

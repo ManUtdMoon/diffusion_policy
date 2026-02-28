@@ -56,7 +56,7 @@ def apply_mask(image: np.ndarray) -> np.ndarray:
         raise ValueError(f"Unexpected image ndim: {image.ndim}")
 
 
-def transform_image(image: np.ndarray, resize_size: int = RESIZE_SIZE) -> np.ndarray:
+def transform_image(image: np.ndarray) -> np.ndarray:
     """Transform raw camera image to processed observation image.
 
     Processing pipeline:
@@ -73,23 +73,20 @@ def transform_image(image: np.ndarray, resize_size: int = RESIZE_SIZE) -> np.nda
         Processed image with shape (C, H, W), RGB format, float32, range [0, 1].
     """
     # Crop: H from 50, W from 7
-    small = cv2.resize(image, SMALL_SIZE, interpolation=cv2.INTER_LINEAR)
-    cropped = small[50:, 7:]
+    small = cv2.resize(image, SMALL_SIZE).astype(np.uint8)
+    cropped = small[70:, 10:290, ::-1] # bgr -> rgb
 
-    # BGR to RGB
-    rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+    # # Resize
+    # resized = cv2.resize(rgb, (resize_size, resize_size), interpolation=cv2.INTER_LINEAR)
 
-    # Resize
-    resized = cv2.resize(rgb, (resize_size, resize_size), interpolation=cv2.INTER_LINEAR)
-
-    # Apply mask
-    masked = apply_mask(resized)
+    # # Apply mask
+    # masked = apply_mask(resized)
 
     # cv2.imshow("Masked Image", masked[..., ::-1])  # Show in BGR format for OpenCV
     # cv2.waitKey(1)
 
     # Convert to CHW format and normalize to [0, 1]
-    result = np.moveaxis(masked.astype(np.float32) / 255., -1, 0)
+    result = np.moveaxis(cropped.astype(np.float32) / 255., -1, 0)
 
     return result
 
