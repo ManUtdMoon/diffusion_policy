@@ -1,0 +1,25 @@
+name: box
+
+task_name: &task_name box
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    global:
+      shape: [3, 128, 128]
+      type: rgb
+    wrist_0:
+      shape: [3, 128, 128]
+      type: rgb
+    wrist_1:
+      shape: [3, 128, 128]
+      type: rgb
+    qpos:
+      shape: [16]
+      type: low_dim
+  action: 
+    shape: [16]
+
+base_ckpt: ???
+
+max_steps: 400

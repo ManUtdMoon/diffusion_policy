@@ -37,14 +37,14 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.ResNet18Pooling
-      input_shape: [3, 110, 280] # should match crop_shape
+      input_shape: [3, 128, 128] # should match crop_shape
       weights: null
       # pooling_kwargs
       pooling_type: "spatial_learned_embeddings"
       num_spatial_blocks: 8
       bottleneck_dim: 256
     resize_shape: null
-    crop_shape: [106, 276]
+    crop_shape: [124, 124]
     # constant center crop
     random_crop: True
     use_group_norm: True
