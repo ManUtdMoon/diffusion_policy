@@ -20,6 +20,7 @@ import json
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.env_runner.juicing_runner import JuicingRunner
 from diffusion_policy.env_runner.flip_runner import FlipRunner
+from diffusion_policy.env_runner.box_runner import BoxRunner
 
 
 @click.command()
@@ -55,9 +56,9 @@ def main(checkpoint, output_dir, device, n_action_steps):
     policy.eval()
 
     # run eval
-    env_runner = JuicingRunner(
+    env_runner = BoxRunner(
         output_dir=output_dir,
-        eval_episodes=40,
+        eval_episodes=30,
         max_steps=400,
         n_obs_steps=cfg.n_obs_steps,
         n_action_steps=cfg.n_action_steps,
