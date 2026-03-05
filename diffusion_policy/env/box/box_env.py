@@ -55,6 +55,8 @@ class BoxEnv:
         self.xarm_gripper = RobotiqWrapper(robot="xarm")
         self.franka = FrankaWrapper(joints_init=(1.0173, -0.4755, 0.0787, -2.4569, 0.0160, 1.9935, 1.1648))
         self.franka_gripper = RobotiqWrapper(robot="franka")
+        self.xarm_gripper.open()
+        self.franka_gripper.open()
 
         self.camera = MultiViewRealSense(self.camera_cfg)
         self.camera.start()
@@ -122,11 +124,12 @@ class BoxEnv:
         is_done = False
 
         # reset robot
-        self.xarm.reset()
-        self.xarm_gripper.close()
         self.franka.franka.reset_home()
+        time.sleep(1.0)
+        self.xarm.reset()
+        time.sleep(1.0)
         self.franka_gripper.close()
-        time.sleep(2.0)
+        self.xarm_gripper.close()
         input("Press Enter to continue...")
 
         obs = self._get_obs()
@@ -135,7 +138,8 @@ class BoxEnv:
         return obs
 
     def reset_end(self):
-        pass
+        self.xarm_gripper.open()
+        self.franka_gripper.open()
 
     def step(self, action):
         global is_done
@@ -158,7 +162,7 @@ class BoxEnv:
         is_success = False
         if self.done:
             user_input = input(
-                "\nEpisode ended. [0-9]=success, [a-z]=failure, [+]=s+regrasp, [-]=f+regrasp: "
+                "\nEpisode ended. [0-9]=success, [a-z]=failure."
             ).strip()
             if user_input:
                 label = user_input[-1]

@@ -5,4 +5,4 @@ export MKL_NUM_THREADS=1
 python train.py \
     --config-name train_flow_match_vib_unet_image_workspace \
     task=box \
-    exp_name=round1
+    exp_name=box_round2_n82

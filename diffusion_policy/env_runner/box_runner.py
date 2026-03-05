@@ -135,6 +135,6 @@ class BoxRunner(BaseImageRunner):
         cprint(f"test_mean_score: {all_success_rate}", 'green')
         cprint(f"mean_returns: {np.mean(all_returns)}", 'green')
 
-        del env
+        env.close()
 
         return log_data

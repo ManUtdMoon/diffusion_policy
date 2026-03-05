@@ -4,7 +4,7 @@ import threading
 from multiprocessing.managers import SharedMemoryManager
 from scipy.spatial.transform import Rotation as R
 
-from franka.franka_interpolation_controller import FrankaInterpolationController
+from diffusion_policy.env.box.franka.franka_interpolation_controller import FrankaInterpolationController
 
 
 class FrankaWrapper:
@@ -28,7 +28,7 @@ class FrankaWrapper:
                 Kx_scale=2.5,
                 Kxd_scale=1.0,
                 joints_init=self.joints_init,
-                verbose=True,  # 启用详细日志
+                verbose=False,  # 启用详细日志
             )
             print("[FrankaWrapper] FrankaInterpolationController created successfully")
         except Exception as e:

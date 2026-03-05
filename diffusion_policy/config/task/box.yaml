@@ -19,7 +19,7 @@ shape_meta: &shape_meta
     shape: [16]
 
 task_name: &task_name box
-dataset_path: /data/hdd2/dongjie/box/box.h5
+dataset_path: /data/hdd2/dongjie/box/box_1.h5
 
 dataset:
   _target_: diffusion_policy.dataset.box_dataset.BoxDataset
@@ -32,4 +32,4 @@ dataset:
   use_cache: True
   seed: 0
   val_ratio: 0.01
-  num_demo: 51
+  num_demo: 82

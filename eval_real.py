@@ -58,7 +58,7 @@ def main(checkpoint, output_dir, device, n_action_steps):
     # run eval
     env_runner = BoxRunner(
         output_dir=output_dir,
-        eval_episodes=30,
+        eval_episodes=40,
         max_steps=400,
         n_obs_steps=cfg.n_obs_steps,
         n_action_steps=cfg.n_action_steps,

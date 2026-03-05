@@ -69,7 +69,7 @@ class FrankaInterface:
             v_now = (pose[:3] - self.prev_pose[:3]) / dt
             a_now = np.linalg.norm((v_now - v_prev) / dt)
             # print(f"[FrankaInterface] Current acceleration: {a_now:.2f} m/s^2")
-            if a_now >= 8:
+            if a_now >= 20.:
                 print(f"[FrankaInterface] ERROR: high acceleration {a_now:.2f} m/s^2")
                 # self.server.terminate_current_policy()
                 # self.server.close()

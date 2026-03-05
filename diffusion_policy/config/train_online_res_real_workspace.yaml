@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - online_task: juicing_s1
+  - online_task: box
 
 name: train_online_res_real_workspace
 _target_: diffusion_policy.workspace.train_online_res_real_workspace.TrainOnlineResRealWorkspace
@@ -39,13 +39,13 @@ training:
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 3e-4
-  learning_start: 300
+  learning_start: 500
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
   policy_freq: 2
   target_freq: 2
-  training_freq: 100
+  training_freq: 5
   utd: 2.0
   n_envs: 1
   # residue progress
@@ -56,7 +56,7 @@ training:
   q_pretrain_steps: 0
   num_steps: 50000
   buffer_size: 50000
-  log_every: 100
+  log_every: 50
   checkpoint_every: 200
   # misc
   tqdm_interval_sec: 1.0
