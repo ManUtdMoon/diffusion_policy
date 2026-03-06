@@ -9,7 +9,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Recursively collect logs.json.txt files under an input directory, "
-            "merge them into one JSONL file, and verify info/global_step is strictly increasing."
+            "merge them into one JSONL file, verify info/global_step is strictly increasing, "
+            "and export eval metrics at a fixed step interval."
         )
     )
     parser.add_argument(
@@ -19,10 +20,10 @@ def parse_args() -> argparse.Namespace:
         help="Root directory to search recursively (e.g. data/flip_online/).",
     )
     parser.add_argument(
-        "--output",
-        type=Path,
-        required=True,
-        help="Output merged JSONL file path (e.g. data/flip_online/all_logs.json.txt).",
+        "--eval-interval",
+        type=int,
+        default=500,
+        help="Step interval for exporting eval.txt (default: 500).",
     )
     return parser.parse_args()
 
@@ -93,18 +94,42 @@ def ensure_strictly_increasing(records: List[Tuple[int, Dict, str]]) -> None:
 def main() -> None:
     args = parse_args()
     input_dir = args.input_dir.expanduser().resolve()
-    output_path = args.output.expanduser().resolve()
+    output_path = input_dir / "all_logs.json.txt"
+    eval_output_path = input_dir / "eval.txt"
+    if args.eval_interval <= 0:
+        raise ValueError(f"--eval-interval must be > 0, got {args.eval_interval}")
 
     records = load_records(input_dir)
     records.sort(key=lambda x: x[0])
     ensure_strictly_increasing(records)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    input_dir.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         for _, obj, _ in records:
             f.write(json.dumps(obj, ensure_ascii=True) + "\n")
 
+    eval_count = 0
+    with eval_output_path.open("w", encoding="utf-8") as f:
+        for step, obj, source in records:
+            if step % args.eval_interval != 0:
+                continue
+            if "info/recent_done_sr" not in obj:
+                raise KeyError(
+                    f'Missing key "info/recent_done_sr" at {source}'
+                )
+            if "info/recent_done_avg_len" not in obj:
+                raise KeyError(
+                    f'Missing key "info/recent_done_avg_len" at {source}'
+                )
+            sr = float(obj["info/recent_done_sr"])
+            avg_len = float(obj["info/recent_done_avg_len"])
+            f.write(f"{step} {sr} {avg_len}\n")
+            eval_count += 1
+
     print(f"Merged {len(records)} lines from {input_dir} -> {output_path}")
+    print(
+        f"Wrote {eval_count} eval lines (interval={args.eval_interval}) -> {eval_output_path}"
+    )
 
 
 if __name__ == "__main__":

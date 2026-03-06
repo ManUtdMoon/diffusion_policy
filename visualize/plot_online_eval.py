@@ -107,6 +107,16 @@ def main() -> None:
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    TITLE = None
+    if "flip" in eval_dir.name.lower():
+        TITLE = "Flip Egg"
+    elif "juicing" in eval_dir.name.lower():
+        TITLE = "Place Orange"
+    elif "box" in eval_dir.name.lower():
+        TITLE = "Open Box"
+    else:
+        raise ValueError("Unrecognized task. Only accept 'flip', 'juicing', or 'box'.")
+
     eval_files = sorted(eval_dir.glob("eval-*.txt"))
     if not eval_files:
         raise FileNotFoundError(f"No eval-*.txt found under: {eval_dir}")
@@ -137,7 +147,7 @@ def main() -> None:
     ax.set_xlabel(r"Env steps ($\times 10^3$)")
     ax.set_ylabel("Success Rate")
     ax.set_ylim(top=1.0)
-    ax.set_title("Flip Egg")
+    ax.set_title(TITLE)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
     fig.tight_layout()
@@ -161,7 +171,7 @@ def main() -> None:
         )
     ax.set_xlabel(r"Env steps ($\times 10^3$)")
     ax.set_ylabel("Episode Length")
-    ax.set_title("Flip Egg")
+    ax.set_title(TITLE)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
     fig.tight_layout()

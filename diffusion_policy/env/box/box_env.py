@@ -3,7 +3,8 @@ import numpy as np
 import cv2
 from pynput import keyboard
 from gym import spaces
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R, Slerp
+from collections import deque
 
 from diffusion_policy.env.box.xarm_wrapper import XArmWrapper
 from diffusion_policy.env.box.franka_wrapper import FrankaWrapper
@@ -46,9 +47,21 @@ class BoxEnv:
         self,
         dt=1 / 20.,
         camera_cfg=None,
+        smooth=False,
+        smooth_weight=0.7,
+        smooth_steps=3,
     ):
         self.dt = dt
         self.camera_cfg = camera_cfg if camera_cfg is not None else DEFAULT_MULTI_CAMERAS
+        self.smooth = bool(smooth)
+        self.smooth_weight = float(smooth_weight)
+        self.smooth_steps = int(smooth_steps)
+        if self.smooth_steps < 1:
+            raise ValueError(f"smooth_steps must be >= 1, got {self.smooth_steps}")
+        if not (0.0 <= self.smooth_weight <= 1.0):
+            raise ValueError(f"smooth_weight must be in [0, 1], got {self.smooth_weight}")
+        self._xarm_pose_buffer = deque(maxlen=self.smooth_steps)
+        self._franka_pose_buffer = deque(maxlen=self.smooth_steps)
 
         # Match teleop defaults.
         self.xarm = XArmWrapper(joints_init=[-47.6, -9.7, -73.6, -3.1, 82.5, -43.0])
@@ -122,6 +135,8 @@ class BoxEnv:
         self.env_step = 0
         self.done = False
         is_done = False
+        self._xarm_pose_buffer.clear()
+        self._franka_pose_buffer.clear()
 
         # reset robot
         self.franka.franka.reset_home()
@@ -149,6 +164,8 @@ class BoxEnv:
         if not self.done:
             # control the robot
             action14 = self._transform_action(action)
+            if self.smooth:
+                action14 = self._smooth_action14(action14)
             self._apply_action(action14)
 
         precise_wait(t_cycle_end)
@@ -246,3 +263,58 @@ class BoxEnv:
             axis=0,
         ).astype(np.float32)
         return action_14
+
+    def _smooth_action14(self, action14):
+        action14 = np.asarray(action14, dtype=np.float64).copy()
+
+        self._xarm_pose_buffer.append(action14[:6].copy())
+        if len(self._xarm_pose_buffer) >= 2:
+            action14[:6] = self._compute_smoothed_pose(
+                self._xarm_pose_buffer,
+                rotation_repr="euler_xyz",
+            )
+
+        self._franka_pose_buffer.append(action14[7:13].copy())
+        if len(self._franka_pose_buffer) >= 2:
+            action14[7:13] = self._compute_smoothed_pose(
+                self._franka_pose_buffer,
+                rotation_repr="rotvec",
+            )
+
+        return action14.astype(np.float32)
+
+    def _compute_smoothed_pose(self, pose_buffer, rotation_repr):
+        """
+        Smooth pose in [pos(3), rot(3)] with exponential weighting + sequential SLERP.
+        rotation_repr: "euler_xyz" or "rotvec"
+        """
+        if len(pose_buffer) < 2:
+            return pose_buffer[-1].copy()
+
+        poses = list(pose_buffer)[::-1]
+        positions = np.array([p[:3] for p in poses], dtype=np.float64)
+
+        if rotation_repr == "euler_xyz":
+            rotations = [R.from_euler("xyz", p[3:], degrees=False) for p in poses]
+        elif rotation_repr == "rotvec":
+            rotations = [R.from_rotvec(p[3:]) for p in poses]
+        else:
+            raise ValueError(f"Unsupported rotation_repr: {rotation_repr}")
+
+        weights = np.array([self.smooth_weight ** i for i in range(len(poses))], dtype=np.float64)
+        weights = weights / max(weights.sum(), 1e-12)
+        smoothed_pos = np.average(positions, axis=0, weights=weights)
+
+        smoothed_rot = rotations[0]
+        for i in range(1, len(rotations)):
+            blend_weight = weights[i] / max(weights[: i + 1].sum(), 1e-12)
+            slerp = Slerp([0.0, 1.0], R.concatenate([smoothed_rot, rotations[i]]))
+            smoothed_rot = slerp([blend_weight])[0]
+
+        smoothed_pose = np.empty(6, dtype=np.float64)
+        smoothed_pose[:3] = smoothed_pos
+        if rotation_repr == "euler_xyz":
+            smoothed_pose[3:] = smoothed_rot.as_euler("xyz", degrees=False)
+        else:
+            smoothed_pose[3:] = smoothed_rot.as_rotvec()
+        return smoothed_pose

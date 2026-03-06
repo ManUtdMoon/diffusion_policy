@@ -134,7 +134,7 @@ class TrainOnlineResRealWorkspace(BaseWorkspace):
 
         # configure env
         def env_fn():
-            env = BoxEnv()
+            env = BoxEnv(smooth=True)
             return MultiStepWrapper(
                 env,
                 n_obs_steps=To,
