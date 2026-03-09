@@ -30,7 +30,7 @@ def _get_activation_fn(activation):
     if activation == "relu":
         return F.relu
     if activation == "gelu":
-        return nn.GELU(approximate="tanh")
+        return F.gelu
     if activation == "glu":
         return F.glu
     raise RuntimeError(f"activation should be relu/gelu/glu, not {activation}.")
@@ -208,7 +208,7 @@ class DiTNoiseNet(nn.Module):
         self.time_net = _TimeNetwork(time_dim, time_dim)
         self.ac_proj = nn.Sequential(
             nn.Linear(input_dim, input_dim),
-            nn.GELU(approximate="tanh"),
+            nn.GELU(),
             nn.Linear(input_dim, hidden_dim),
         )
 
