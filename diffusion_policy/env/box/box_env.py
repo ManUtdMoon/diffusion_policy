@@ -64,10 +64,11 @@ class BoxEnv:
         self._franka_pose_buffer = deque(maxlen=self.smooth_steps)
 
         # Match teleop defaults.
-        self.xarm = XArmWrapper(joints_init=[-47.6, -9.7, -73.6, -3.1, 82.5, -43.0])
-        self.xarm_gripper = RobotiqWrapper(robot="xarm")
         self.franka = FrankaWrapper(joints_init=(1.0173, -0.4755, 0.0787, -2.4569, 0.0160, 1.9935, 1.1648))
         self.franka_gripper = RobotiqWrapper(robot="franka")
+        time.sleep(1.0)
+        self.xarm = XArmWrapper(joints_init=[-47.6, -9.7, -73.6, -3.1, 82.5, -43.0])
+        self.xarm_gripper = RobotiqWrapper(robot="xarm")
         self.xarm_gripper.open()
         self.franka_gripper.open()
 
@@ -206,6 +207,11 @@ class BoxEnv:
         try:
             self.xarm_gripper.open()
             self.franka_gripper.open()
+        except Exception:
+            pass
+        try:
+            self.xarm_gripper.shutdown()
+            self.franka_gripper.shutdown()
         except Exception:
             pass
         try:
