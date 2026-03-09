@@ -34,6 +34,7 @@ from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy.env.juicing.juicing_env import JuicingEnv
 from diffusion_policy.env.flip.flip_env import FlipEnv
+from diffusion_policy.env.box.box_env import BoxEnv
 
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -129,7 +130,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
         # configure env
         def env_fn():
-            env = JuicingEnv()
+            env = BoxEnv(smooth=True)
             return MultiStepWrapper(
                 env,
                 n_obs_steps=To,

@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - online_task: juicing_s1
+  - online_task: box
 
 name: train_online_vib_real_workspace
 _target_: diffusion_policy.workspace.train_online_vib_real_workspace.TrainOnlineVibRealWorkspace
