@@ -117,12 +117,11 @@ class SequenceSampler:
     
     def __len__(self):
         return len(self.indices)
-        
-    def sample_sequence(self, idx):
-        buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx \
-            = self.indices[idx]
+
+    def _sample_sequence_from_index_row(self, index_row, keys):
+        buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx = index_row
         result = dict()
-        for key in self.keys:
+        for key in keys:
             input_arr = self.replay_buffer[key]
             # performance optimization, avoid small allocation if possible
             if key not in self.key_first_k:
@@ -150,4 +149,29 @@ class SequenceSampler:
                     data[sample_end_idx:] = sample[-1]
                 data[sample_start_idx:sample_end_idx] = sample
             result[key] = data
+        return result
+
+    def sample_sequence(self, idx):
+        return self._sample_sequence_from_index_row(
+            self.indices[idx],
+            self.keys)
+
+    def sample_sequence_batch(self, indices, keys=None):
+        if keys is None:
+            keys = self.keys
+        keys = list(keys)
+        indices = np.asarray(indices, dtype=np.int64)
+        batch_indices = self.indices[indices]
+        batch_size = len(batch_indices)
+        result = dict()
+        for key in keys:
+            input_arr = self.replay_buffer[key]
+            result[key] = np.empty(
+                (batch_size, self.sequence_length) + input_arr.shape[1:],
+                dtype=input_arr.dtype)
+
+        for batch_offset, index_row in enumerate(batch_indices):
+            sample = self._sample_sequence_from_index_row(index_row, keys)
+            for key in keys:
+                result[key][batch_offset] = sample[key]
         return result

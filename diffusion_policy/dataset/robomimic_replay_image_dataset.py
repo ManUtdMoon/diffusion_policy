@@ -30,6 +30,13 @@ from diffusion_policy.model.common.rotation_transformer import RotationTransform
 from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs, Jpeg2k
 from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
+from diffusion_policy.dataset.robomimic_image_util import (
+    convert_robomimic_to_replay,
+    create_image_sequence_sampler,
+    create_train_val_mask,
+    get_key_first_k,
+    get_shape_meta_obs_keys,
+)
 from diffusion_policy.common.normalize_util import (
     robomimic_abs_action_only_normalizer_from_stat,
     robomimic_abs_action_only_dual_arm_normalizer_from_stat,
@@ -59,6 +66,12 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
 
+        rgb_keys, lowdim_keys = get_shape_meta_obs_keys(shape_meta)
+        obs_shapes = {
+            key: tuple(attr['shape'])
+            for key, attr in shape_meta['obs'].items()
+        }
+
         replay_buffer = None
         if use_cache:
             cache_zarr_path = dataset_path + f'-n_{num_demo}' + '.zarr'
@@ -70,12 +83,18 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                     try:
                         print('Cache does not exist. Creating!')
                         # store = zarr.DirectoryStore(cache_zarr_path)
-                        replay_buffer = _convert_robomimic_to_replay(
+                        replay_buffer = convert_robomimic_to_replay(
                             store=zarr.MemoryStore(), 
-                            shape_meta=shape_meta, 
                             dataset_path=dataset_path, 
-                            abs_action=abs_action, 
-                            rotation_transformer=rotation_transformer,
+                            rgb_keys=rgb_keys,
+                            lowdim_keys=lowdim_keys,
+                            obs_shapes=obs_shapes,
+                            action_shape=tuple(shape_meta['action']['shape']),
+                            action_converter=lambda actions: _convert_actions(
+                                raw_actions=actions,
+                                abs_action=abs_action,
+                                rotation_transformer=rotation_transformer,
+                            ),
                             num_demo=num_demo)
                         print('Saving cache to disk.')
                         with zarr.DirectoryStore(cache_zarr_path) as zip_store:
@@ -92,44 +111,31 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                             src_store=zip_store, store=zarr.MemoryStore())
                     print('Loaded!')
         else:
-            replay_buffer = _convert_robomimic_to_replay(
+            replay_buffer = convert_robomimic_to_replay(
                 store=zarr.MemoryStore(), 
-                shape_meta=shape_meta, 
                 dataset_path=dataset_path, 
-                abs_action=abs_action, 
-                rotation_transformer=rotation_transformer,
+                rgb_keys=rgb_keys,
+                lowdim_keys=lowdim_keys,
+                obs_shapes=obs_shapes,
+                action_shape=tuple(shape_meta['action']['shape']),
+                action_converter=lambda actions: _convert_actions(
+                    raw_actions=actions,
+                    abs_action=abs_action,
+                    rotation_transformer=rotation_transformer,
+                ),
                 num_demo=num_demo)
-
-        rgb_keys = list()
-        lowdim_keys = list()
-        obs_shape_meta = shape_meta['obs']
-        for key, attr in obs_shape_meta.items():
-            type = attr.get('type', 'low_dim')
-            if type == 'rgb':
-                rgb_keys.append(key)
-            elif type == 'low_dim':
-                lowdim_keys.append(key)
         
         # for key in rgb_keys:
         #     replay_buffer[key].compressor.numthreads=1
 
-        key_first_k = dict()
-        if n_obs_steps is not None:
-            # only take first k obs from images
-            for key in rgb_keys + lowdim_keys:
-                key_first_k[key] = n_obs_steps
-
-        val_mask = get_val_mask(
-            n_episodes=replay_buffer.n_episodes, 
-            val_ratio=val_ratio,
-            seed=seed)
-        train_mask = ~val_mask
-        sampler = SequenceSampler(
-            replay_buffer=replay_buffer, 
-            sequence_length=horizon,
-            pad_before=pad_before, 
+        key_first_k = get_key_first_k(n_obs_steps, rgb_keys, lowdim_keys)
+        train_mask, _ = create_train_val_mask(replay_buffer, val_ratio, seed)
+        sampler = create_image_sequence_sampler(
+            replay_buffer=replay_buffer,
+            horizon=horizon,
+            pad_before=pad_before,
             pad_after=pad_after,
-            episode_mask=train_mask,
+            train_mask=train_mask,
             key_first_k=key_first_k)
         
         self.replay_buffer = replay_buffer
@@ -254,127 +260,6 @@ def _convert_actions(raw_actions, abs_action, rotation_transformer):
         actions = raw_actions
     return actions
 
-
-def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
-        n_workers=None, max_inflight_tasks=None, num_demo=None):
-    if n_workers is None:
-        n_workers = multiprocessing.cpu_count()
-    if max_inflight_tasks is None:
-        max_inflight_tasks = n_workers * 5
-
-    # parse shape_meta
-    rgb_keys = list()
-    lowdim_keys = list()
-    # construct compressors and chunks
-    obs_shape_meta = shape_meta['obs']
-    for key, attr in obs_shape_meta.items():
-        shape = attr['shape']
-        type = attr.get('type', 'low_dim')
-        if type == 'rgb':
-            rgb_keys.append(key)
-        elif type == 'low_dim':
-            lowdim_keys.append(key)
-    
-    root = zarr.group(store)
-    data_group = root.require_group('data', overwrite=True)
-    meta_group = root.require_group('meta', overwrite=True)
-
-    with h5py.File(dataset_path) as file:
-        # count total steps
-        demos = file['data']
-        episode_ends = list()
-        prev_end = 0
-        n_demo = len(demos) if num_demo is None else min(num_demo, len(demos))
-        print("Total number of demos:", n_demo)
-        for i in range(n_demo):
-            demo = demos[f'demo_{i}']
-            episode_length = demo['actions'].shape[0]
-            episode_end = prev_end + episode_length
-            prev_end = episode_end
-            episode_ends.append(episode_end)
-        n_steps = episode_ends[-1]
-        episode_starts = [0] + episode_ends[:-1]
-        _ = meta_group.array('episode_ends', episode_ends, 
-            dtype=np.int64, compressor=None, overwrite=True)
-
-        # save lowdim data
-        for key in tqdm(lowdim_keys + ['action'], desc="Loading lowdim data"):
-            data_key = 'obs/' + key
-            if key == 'action':
-                data_key = 'actions'
-            this_data = list()
-            for i in range(n_demo):
-                demo = demos[f'demo_{i}']
-                this_data.append(demo[data_key][:].astype(np.float32))
-            this_data = np.concatenate(this_data, axis=0)
-            if key == 'action':
-                this_data = _convert_actions(
-                    raw_actions=this_data,
-                    abs_action=abs_action,
-                    rotation_transformer=rotation_transformer
-                )
-                assert this_data.shape == (n_steps,) + tuple(shape_meta['action']['shape'])
-            else:
-                assert this_data.shape == (n_steps,) + tuple(shape_meta['obs'][key]['shape'])
-            _ = data_group.array(
-                name=key,
-                data=this_data,
-                shape=this_data.shape,
-                chunks=this_data.shape,
-                compressor=None,
-                dtype=this_data.dtype
-            )
-        
-        def img_copy(zarr_arr, zarr_idx, hdf5_arr, hdf5_idx):
-            try:
-                zarr_arr[zarr_idx] = hdf5_arr[hdf5_idx]
-                # make sure we can successfully decode
-                _ = zarr_arr[zarr_idx]
-                return True
-            except Exception as e:
-                return False
-        
-        with tqdm(total=n_steps*len(rgb_keys), desc="Loading image data", mininterval=1.0) as pbar:
-            # one chunk per thread, therefore no synchronization needed
-            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
-                futures = set()
-                for key in rgb_keys:
-                    data_key = 'obs/' + key
-                    shape = tuple(shape_meta['obs'][key]['shape'])
-                    c,h,w = shape
-                    this_compressor = Jpeg2k(level=50)
-                    img_arr = data_group.require_dataset(
-                        name=key,
-                        shape=(n_steps,h,w,c),
-                        chunks=(1,h,w,c),
-                        compressor=this_compressor,
-                        dtype=np.uint8
-                    )
-                    for episode_idx in range(n_demo):
-                        demo = demos[f'demo_{episode_idx}']
-                        hdf5_arr = demo['obs'][key]
-                        for hdf5_idx in range(hdf5_arr.shape[0]):
-                            if len(futures) >= max_inflight_tasks:
-                                # limit number of inflight tasks
-                                completed, futures = concurrent.futures.wait(futures, 
-                                    return_when=concurrent.futures.FIRST_COMPLETED)
-                                for f in completed:
-                                    if not f.result():
-                                        raise RuntimeError('Failed to encode image!')
-                                pbar.update(len(completed))
-
-                            zarr_idx = episode_starts[episode_idx] + hdf5_idx
-                            futures.add(
-                                executor.submit(img_copy, 
-                                    img_arr, zarr_idx, hdf5_arr, hdf5_idx))
-                completed, futures = concurrent.futures.wait(futures)
-                for f in completed:
-                    if not f.result():
-                        raise RuntimeError('Failed to encode image!')
-                pbar.update(len(completed))
-
-    replay_buffer = ReplayBuffer(root)
-    return replay_buffer
 
 def normalizer_from_stat(stat):
     max_abs = np.maximum(stat['max'].max(), np.abs(stat['min']).max())

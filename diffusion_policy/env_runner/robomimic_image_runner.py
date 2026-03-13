@@ -19,9 +19,38 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper
+from diffusion_policy.env.robomimic.robomimic_image_relative_wrapper import RobomimicImageRelativeWrapper
 import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.obs_utils as ObsUtils
+
+
+def _get_env_shape_meta(shape_meta: dict, action_pose_repr: str):
+    if action_pose_repr != 'relative':
+        return shape_meta
+    env_shape_meta = {
+        'obs': dict(),
+        'action': {
+            'shape': [7]
+        }
+    }
+    for key, value in shape_meta['obs'].items():
+        env_key = key
+        env_value = dict(value)
+        if key.endswith('_rot6d'):
+            env_key = key[:-len('_rot6d')] + '_quat'
+            env_value['shape'] = [4]
+        env_shape_meta['obs'][env_key] = env_value
+    return env_shape_meta
+
+
+def _find_wrapper(env, cls):
+    curr = env
+    while curr is not None:
+        if isinstance(curr, cls):
+            return curr
+        curr = getattr(curr, 'env', None)
+    raise RuntimeError(f'Failed to find wrapper {cls.__name__}')
 
 
 def create_env(env_meta, shape_meta, enable_render=True):
@@ -62,6 +91,7 @@ class RobomimicImageRunner(BaseImageRunner):
             crf=22,
             past_action=False,
             abs_action=False,
+            action_pose_repr=None,
             tqdm_interval_sec=5.0,
             n_envs=None
         ):
@@ -81,25 +111,29 @@ class RobomimicImageRunner(BaseImageRunner):
         # disable object state observation
         env_meta['env_kwargs']['use_object_obs'] = False
 
+        if action_pose_repr is None:
+            action_pose_repr = 'abs' if abs_action else 'delta'
+        env_shape_meta = _get_env_shape_meta(shape_meta, action_pose_repr)
         rotation_transformer = None
-        if abs_action:
+        if action_pose_repr in ('abs', 'relative'):
             env_meta['env_kwargs']['controller_configs']['control_delta'] = False
+        if action_pose_repr == 'abs':
             rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
 
         def env_fn():
             robomimic_env = create_env(
                 env_meta=env_meta, 
-                shape_meta=shape_meta
+                shape_meta=env_shape_meta
             )
             # Robosuite's hard reset causes excessive memory consumption.
             # Disabled to run more envs.
             # https://github.com/ARISE-Initiative/robosuite/blob/92abf5595eddb3a845cd1093703e5a3ccd01e77e/robosuite/environments/base.py#L247-L248
             robomimic_env.env.hard_reset = False
-            return MultiStepWrapper(
+            wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
                     RobomimicImageWrapper(
                         env=robomimic_env,
-                        shape_meta=shape_meta,
+                        shape_meta=env_shape_meta,
                         init_state=None,
                         render_obs_key=render_obs_key
                     ),
@@ -118,6 +152,12 @@ class RobomimicImageRunner(BaseImageRunner):
                 n_action_steps=n_action_steps,
                 max_episode_steps=max_steps
             )
+            if action_pose_repr == 'relative':
+                wrapped_env = RobomimicImageRelativeWrapper(
+                    env=wrapped_env,
+                    shape_meta=shape_meta
+                )
+            return wrapped_env
         
         # For each process the OpenGL context can only be initialized once
         # Since AsyncVectorEnv uses fork to create worker process,
@@ -126,14 +166,14 @@ class RobomimicImageRunner(BaseImageRunner):
         def dummy_env_fn():
             robomimic_env = create_env(
                     env_meta=env_meta, 
-                    shape_meta=shape_meta,
+                    shape_meta=env_shape_meta,
                     enable_render=False
                 )
-            return MultiStepWrapper(
+            wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
                     RobomimicImageWrapper(
                         env=robomimic_env,
-                        shape_meta=shape_meta,
+                        shape_meta=env_shape_meta,
                         init_state=None,
                         render_obs_key=render_obs_key
                     ),
@@ -152,6 +192,12 @@ class RobomimicImageRunner(BaseImageRunner):
                 n_action_steps=n_action_steps,
                 max_episode_steps=max_steps
             )
+            if action_pose_repr == 'relative':
+                wrapped_env = RobomimicImageRelativeWrapper(
+                    env=wrapped_env,
+                    shape_meta=shape_meta
+                )
+            return wrapped_env
 
         env_fns = [env_fn] * n_envs
         env_seeds = list()
@@ -169,19 +215,19 @@ class RobomimicImageRunner(BaseImageRunner):
                     enable_render=enable_render):
                     # setup rendering
                     # video_wrapper
-                    assert isinstance(env.env, VideoRecordingWrapper)
-                    env.env.video_recoder.stop()
-                    env.env.file_path = None
+                    video_wrapper = _find_wrapper(env, VideoRecordingWrapper)
+                    video_wrapper.video_recoder.stop()
+                    video_wrapper.file_path = None
                     if enable_render:
                         filename = pathlib.Path(output_dir).joinpath(
                             'media', f"train_{train_idx}" + ".mp4")
                         filename.parent.mkdir(parents=False, exist_ok=True)
                         filename = str(filename)
-                        env.env.file_path = filename
+                        video_wrapper.file_path = filename
 
                     # switch to init_state reset
-                    assert isinstance(env.env.env, RobomimicImageWrapper)
-                    env.env.env.init_state = init_state
+                    image_wrapper = _find_wrapper(env, RobomimicImageWrapper)
+                    image_wrapper.init_state = init_state
 
                 env_seeds.append(train_idx)
                 env_prefixs.append('train/')
@@ -196,19 +242,19 @@ class RobomimicImageRunner(BaseImageRunner):
                 enable_render=enable_render):
                 # setup rendering
                 # video_wrapper
-                assert isinstance(env.env, VideoRecordingWrapper)
-                env.env.video_recoder.stop()
-                env.env.file_path = None
+                video_wrapper = _find_wrapper(env, VideoRecordingWrapper)
+                video_wrapper.video_recoder.stop()
+                video_wrapper.file_path = None
                 if enable_render:
                     filename = pathlib.Path(output_dir).joinpath(
                         'media', f"test_{seed}" + ".mp4")
                     filename.parent.mkdir(parents=False, exist_ok=True)
                     filename = str(filename)
-                    env.env.file_path = filename
+                    video_wrapper.file_path = filename
 
                 # switch to seed reset
-                assert isinstance(env.env.env, RobomimicImageWrapper)
-                env.env.env.init_state = None
+                image_wrapper = _find_wrapper(env, RobomimicImageWrapper)
+                image_wrapper.init_state = None
                 env.seed(seed)
 
             env_seeds.append(seed)
@@ -233,6 +279,7 @@ class RobomimicImageRunner(BaseImageRunner):
         self.max_steps = max_steps
         self.rotation_transformer = rotation_transformer
         self.abs_action = abs_action
+        self.action_pose_repr = action_pose_repr
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self, policy: BaseImagePolicy):
@@ -304,7 +351,7 @@ class RobomimicImageRunner(BaseImageRunner):
                 
                 # step env
                 env_action = action
-                if self.abs_action:
+                if self.action_pose_repr == 'abs':
                     env_action = self.undo_transform_action(action)
 
                 obs, reward, done, info = env.step(env_action)
