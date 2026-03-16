@@ -341,14 +341,14 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         pred_vib_il = self.model(noisy_trajectory, timesteps, global_cond=modified_global_cond)
         vib_il_loss = F.mse_loss(pred_vib_il, target)
         # --- VIB reconstruction loss ---, disabled for now
-        # vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
+        vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
         
         # Total loss
         loss = il_loss
         vib_loss = (
             vib_il_loss
             + self.vib_beta * vib_kl_loss
-            # + self.vib_recon * vib_recon_loss
+            + self.vib_recon * vib_recon_loss
         )
 
         with torch.no_grad():
@@ -365,7 +365,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
                 'z_mean_rms': z_mean.pow(2).mean().sqrt().item(),
                 'z_std_rms': (z_logvar * 0.5).exp().pow(2).mean().sqrt().item(),
                 'z_rms': z.pow(2).mean().sqrt().item(),
-                # 'vib_recon_loss': vib_recon_loss.item(),
+                'vib_recon_loss': vib_recon_loss.item(),
             }
 
         return loss, vib_loss, info
