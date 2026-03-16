@@ -109,6 +109,8 @@ def main(task, mode):
                 smooth_factor = 5
             else: # mode == 'eval'
                 smooth_factor = 2
+                if algo_name == 'DPPO':
+                    smooth_factor = 7
             y_values = smooth(y_values, sm=smooth_factor)
             
             # Calculate x-axis steps
@@ -181,7 +183,7 @@ def main(task, mode):
         ax.set_xlim(right=2)
     elif task.startswith('metaworld'):
         ax.set_xlim(right=1)
-    ax.set_ylim(bottom=-0.05, top=1.05)
+    ax.set_ylim(bottom=0.00, top=1.05)
 
     # Customize the legend
     handles, labels = ax.get_legend_handles_labels()

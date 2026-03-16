@@ -12,7 +12,7 @@ shape_meta: &shape_meta
   action:
     shape: [26]
 
-base_ckpt: "data/outputs/2025.12.12/16.13.12_train_flow_match_vib_unet_image_adroit_hammer/checkpoints/latest.ckpt"
+base_ckpt: "data/outputs/2026.03.16/11.30.36_train_flow_match_vib_unet_image_adroit_hammer/checkpoints/latest.ckpt"
 
 # train
 n_envs: 20

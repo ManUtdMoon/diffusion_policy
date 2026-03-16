@@ -259,7 +259,7 @@ class TrainOnlineWorkspace(BaseWorkspace):
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
                     ## uncomment to disable progressive exploration
-                    res_ratio = 1.0
+                    # res_ratio = 1.0
 
                     ## prepare masks for progressive exploration
                     if self.global_step < learning_start:
