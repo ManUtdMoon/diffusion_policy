@@ -31,6 +31,14 @@ LINEWIDTHS = {
     'Offline': 1.5,
 }
 
+OFFLINE = {
+    'door': 0.62,
+    'hammer': 0.74,
+    'pen': 0.68,
+    'metaworld_box-close': 0.53,
+    'metaworld_push-wall': 0.64,
+}
+
 ARIAL_FONT_PATH = Path(__file__).resolve().parent.parent / 'data' / 'Arial.ttf'
 if ARIAL_FONT_PATH.exists():
     font_manager.fontManager.addfont(str(ARIAL_FONT_PATH))
@@ -173,6 +181,15 @@ def main(task, mode):
         sizes=LINEWIDTHS,
     )
 
+    offline_value = OFFLINE.get(task)
+    if offline_value is not None:
+        ax.axhline(
+            y=offline_value,
+            color=PALETTE['Offline'],
+            linewidth=LINEWIDTHS['Offline'],
+            linestyle='--',
+        )
+
     # --- Customize Aesthetics ---
     ax.set_xlabel(r'Env Steps ($\times 10^6$)', fontsize=12)
     ax.set_ylabel('Success Rate', fontsize=12)
@@ -180,7 +197,7 @@ def main(task, mode):
         task = 'adroit_' + task
     ax.set_title(f'{task.capitalize()}', fontsize=12)
     ax.tick_params(axis='both', which='major', labelsize=11)
-    ax.yaxis.set_major_formatter('{x:.2f}')
+    ax.yaxis.set_major_formatter('{x:.1f}')
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}'))
     ax.grid(True, which='major', linestyle='-', linewidth='0.5', color='lightgrey')
     
