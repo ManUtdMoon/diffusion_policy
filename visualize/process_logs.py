@@ -73,6 +73,11 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.16/09.53.32_train_online_vib_adroit_workspace_adroit_door',
             '2025.12.16/10.58.17_train_online_vib_adroit_workspace_adroit_door',
         ],
+        'DSRL': [
+            '2026.03.16/19.26.52_train_online_noise_workspace_adroit_door',
+            '2026.03.16/19.05.46_train_online_noise_workspace_adroit_door',
+            '2026.03.16/17.09.11_train_online_noise_workspace_adroit_door',
+        ]
     },
     'hammer' : { # adroit_hammer
         'Po-dec': [
@@ -96,6 +101,11 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.16/21.35.44_train_online_vib_adroit_workspace_adroit_pen',
             '2025.12.17/01.12.35_train_online_vib_adroit_workspace_adroit_pen',
             '2025.12.17/02.16.25_train_online_vib_adroit_workspace_adroit_pen',
+        ],
+        'DSRL': [
+            '2026.03.16/16.59.18_train_online_noise_workspace_adroit_pen',
+            '2026.03.16/18.23.27_train_online_noise_workspace_adroit_pen',
+            '2026.03.16/19.25.31_train_online_noise_workspace_adroit_pen',
         ]
     },
     'metaworld_push-wall': {

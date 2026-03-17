@@ -3,21 +3,24 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+from matplotlib import font_manager
 from pathlib import Path
 
 # =============================================================================
 # Plotting Configuration
 # =============================================================================
 PALETTE = {
-    'ZPRL': '#E63983',
-    'Po-dec': '#56B4E9',
-    'DSRL': '#59D171',
-    'ReinFlow': '#F6AA4A',
-    'Offline': '#9A4DFF',
-    'DPPO': '#A0522D',
+    'ZPRL': '#c66a42',
+    'Po-dec': '#696fa2',
+    'DSRL': '#e8cd81',
+    'ReinFlow': '#89c085',
+    'Offline': '#000000',
+    'DPPO': '#8aaeb2',
 }
 
 DS = 10  # Downsample factor
+CI_ALPHA = 0.1
 
 LINEWIDTHS = {
     'ZPRL': 3,
@@ -27,6 +30,15 @@ LINEWIDTHS = {
     'DPPO': 1.5,
     'Offline': 1.5,
 }
+
+ARIAL_FONT_PATH = Path(__file__).resolve().parent.parent / 'data' / 'Arial.ttf'
+if ARIAL_FONT_PATH.exists():
+    font_manager.fontManager.addfont(str(ARIAL_FONT_PATH))
+    mpl.rcParams['font.family'] = font_manager.FontProperties(
+        fname=str(ARIAL_FONT_PATH)
+    ).get_name()
+else:
+    mpl.rcParams['font.family'] = ['Arial', 'Liberation Sans', 'DejaVu Sans', 'sans-serif']
 
 def smooth(data, sm=2):
     """Simple moving average smoothing."""
@@ -109,8 +121,10 @@ def main(task, mode):
                 smooth_factor = 5
             else: # mode == 'eval'
                 smooth_factor = 2
-                if algo_name == 'DPPO':
+                if algo_name == 'DPPO' and 'metaworld' in task:
                     smooth_factor = 7
+                elif algo_name == 'ReinFlow':
+                    smooth_factor = 3
             y_values = smooth(y_values, sm=smooth_factor)
             
             # Calculate x-axis steps
@@ -153,6 +167,7 @@ def main(task, mode):
         hue='Algorithm',
         palette=PALETTE,
         errorbar=('ci', 95),
+        err_kws={'alpha': CI_ALPHA, 'linewidth': 0, 'edgecolor': 'none'},
         ax=ax,
         size='Algorithm',
         sizes=LINEWIDTHS,
@@ -161,6 +176,8 @@ def main(task, mode):
     # --- Customize Aesthetics ---
     ax.set_xlabel(r'Env Steps ($\times 10^6$)', fontsize=12)
     ax.set_ylabel('Success Rate', fontsize=12)
+    if task in ['door', 'hammer', 'pen']:
+        task = 'adroit_' + task
     ax.set_title(f'{task.capitalize()}', fontsize=12)
     ax.tick_params(axis='both', which='major', labelsize=11)
     ax.yaxis.set_major_formatter('{x:.2f}')
@@ -175,15 +192,15 @@ def main(task, mode):
         ax.set_xlim(right=8)
     elif task == 'transport':
         ax.set_xlim(right=10)
-    elif task == 'door':
+    elif 'door' in task:
         ax.set_xlim(right=2)
-    elif task == 'hammer':
+    elif 'hammer' in task:
         ax.set_xlim(right=1)
-    elif task == 'pen':
+    elif 'pen' in task:
         ax.set_xlim(right=2)
     elif task.startswith('metaworld'):
         ax.set_xlim(right=1)
-    ax.set_ylim(bottom=0.00, top=1.05)
+    ax.set_ylim(bottom=0.00, top=1.01)
 
     # Customize the legend
     handles, labels = ax.get_legend_handles_labels()
