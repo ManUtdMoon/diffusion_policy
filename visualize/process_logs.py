@@ -13,19 +13,19 @@ from pathlib import Path
 TASK_TO_ALGO_EXP_MAP = {
     'can': { # robomimic-can
         'Po-dec': [
-            '2025.12.05/09.36.02_train_online_robomimic_workspace_can_image',
-            '2025.12.05/12.33.40_train_online_robomimic_workspace_can_image',
-            '2025.12.05/15.25.39_train_online_robomimic_workspace_can_image',
+            '2026.03.17/12.20.33_train_online_robomimic_workspace_can_image',
+            '2026.03.17/14.09.47_train_online_robomimic_workspace_can_image',
+            '2026.03.17/15.49.18_train_online_robomimic_workspace_can_image'
         ],
         'ZPRL': [
-            '2025.12.05/11.13.30_train_online_vib_robomimic_workspace_can_image',
-            '2025.12.05/15.00.13_train_online_vib_robomimic_workspace_can_image',
-            '2025.12.05/17.53.38_train_online_vib_robomimic_workspace_can_image',
+            '2026.03.17/20.29.59_train_online_vib_robomimic_workspace_can_image',
+            '2026.03.17/19.28.15_train_online_vib_robomimic_workspace_can_image',
+            '2026.03.17/17.39.35_train_online_vib_robomimic_workspace_can_image'
         ],
         'DSRL': [
-            '2025.12.05/22.47.33_train_online_noise_robomimic_workspace_can_image',
-            '2025.12.06/04.36.49_train_online_noise_robomimic_workspace_can_image',
-            '2025.12.06/01.42.29_train_online_noise_robomimic_workspace_can_image',
+            '2026.03.17/12.23.48_train_online_noise_robomimic_workspace_can_image',
+            '2026.03.17/14.09.32_train_online_noise_robomimic_workspace_can_image',
+            '2026.03.17/15.49.26_train_online_noise_robomimic_workspace_can_image'
         ],
     },
     'square': { # robomimic-square
@@ -47,14 +47,14 @@ TASK_TO_ALGO_EXP_MAP = {
     },
     'transport': { # robomimic-transport
         'Po-dec': [
-            '2025.12.09/12.56.40_train_online_robomimic_workspace_transport_image',
-            '2025.12.09/18.47.08_train_online_robomimic_workspace_transport_image',
-            '2025.12.10/00.16.36_train_online_robomimic_workspace_transport_image',
+            '2026.03.16/02.51.15_train_online_robomimic_workspace_transport_image',
+            '2026.03.15/15.33.23_train_online_robomimic_workspace_transport_image',
+            '2026.03.15/21.16.19_train_online_robomimic_workspace_transport_image'
         ],
         'ZPRL': [
-            '2025.12.09/16.08.09_train_online_vib_robomimic_workspace_transport_image',
-            '2025.12.09/10.05.15_train_online_vib_robomimic_workspace_transport_image',
-            '2025.12.10/17.09.40_train_online_vib_robomimic_workspace_transport_image',
+            '2026.03.15/21.25.13_train_online_vib_robomimic_workspace_transport_image',
+            '2026.03.15/15.30.22_train_online_vib_robomimic_workspace_transport_image',
+            '2026.03.15/07.57.44_train_online_vib_robomimic_workspace_transport_image',
         ],
         'DSRL': [
             '2025.12.10/09.50.51_train_online_noise_robomimic_workspace_transport_image',
@@ -62,6 +62,72 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.10/15.20.59_train_online_noise_robomimic_workspace_transport_image',
         ],
     },
+    'num_demo': {
+        '25': [
+            '2026.01.13/17.42.28_train_online_vib_robomimic_workspace_square_image',
+            '2026.01.13/22.40.33_train_online_vib_robomimic_workspace_square_image',
+            '2026.01.14/01.39.51_train_online_vib_robomimic_workspace_square_image'
+        ],
+        '50': [
+            '2026.01.16/00.36.42_train_online_vib_robomimic_workspace_square_image',
+            '2026.01.15/21.49.53_train_online_vib_robomimic_workspace_square_image',
+            '2026.01.15/18.57.50_train_online_vib_robomimic_workspace_square_image'
+        ],
+        '75': [
+            '2026.01.13/17.45.50_train_online_vib_robomimic_workspace_square_image',
+            '2026.01.13/22.41.53_train_online_vib_robomimic_workspace_square_image',
+            '2026.01.14/01.41.44_train_online_vib_robomimic_workspace_square_image'
+        ],
+        '100': [
+            '2025.12.06/11.37.04_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/14.40.48_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/17.39.21_train_online_vib_robomimic_workspace_square_image',
+        ],
+    },
+    "scale": {
+        "0.2": [
+            '2025.12.06/11.37.04_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/14.40.48_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/17.39.21_train_online_vib_robomimic_workspace_square_image',
+        ],
+        "0.15": [
+            '2025.12.06/00.47.18_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/11.35.11_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/14.30.14_train_online_vib_robomimic_workspace_square_image'
+        ],
+        "0.175": [
+            '2025.12.06/11.37.52_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/14.41.39_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/17.45.33_train_online_vib_robomimic_workspace_square_image'
+        ],
+        "0.225": [
+            '2026.03.17/22.08.08_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.18/00.17.18_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.18/02.37.25_train_online_vib_robomimic_workspace_square_image'
+        ],
+        "0.25": [
+            '2026.03.17/22.07.17_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.18/00.23.08_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.18/02.37.25_train_online_vib_robomimic_workspace_square_image'
+        ]
+    },
+    "dim": {
+        "8": [
+            '2026.03.17/23.44.02_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.18/01.57.38_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.18/04.15.30_train_online_vib_robomimic_workspace_square_image'
+        ],
+        "16": [
+            '2025.12.06/11.37.04_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/14.40.48_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/17.39.21_train_online_vib_robomimic_workspace_square_image',
+        ],
+        "32": [
+            '2026.03.18/02.02.21_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.18/04.20.05_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.17/23.48.13_train_online_vib_robomimic_workspace_square_image'
+        ]
+    }
 }
 
 # =============================================================================
