@@ -85,6 +85,11 @@ TASK_TO_ALGO_EXP_MAP = {
         ],
     },
     "scale": {
+        "0.1": [
+            '2026.03.21/16.06.58_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.21/18.58.34_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.21/21.22.11_train_online_vib_robomimic_workspace_square_image'
+        ],
         "0.2": [
             '2025.12.06/11.37.04_train_online_vib_robomimic_workspace_square_image',
             '2025.12.06/14.40.48_train_online_vib_robomimic_workspace_square_image',
@@ -95,20 +100,25 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.06/11.35.11_train_online_vib_robomimic_workspace_square_image',
             '2025.12.06/14.30.14_train_online_vib_robomimic_workspace_square_image'
         ],
-        "0.175": [
-            '2025.12.06/11.37.52_train_online_vib_robomimic_workspace_square_image',
-            '2025.12.06/14.41.39_train_online_vib_robomimic_workspace_square_image',
-            '2025.12.06/17.45.33_train_online_vib_robomimic_workspace_square_image'
-        ],
-        "0.225": [
-            '2026.03.17/22.08.08_train_online_vib_robomimic_workspace_square_image',
-            '2026.03.18/00.17.18_train_online_vib_robomimic_workspace_square_image',
-            '2026.03.18/02.37.25_train_online_vib_robomimic_workspace_square_image'
-        ],
+        # "0.175": [
+        #     '2025.12.06/11.37.52_train_online_vib_robomimic_workspace_square_image',
+        #     '2025.12.06/14.41.39_train_online_vib_robomimic_workspace_square_image',
+        #     '2025.12.06/17.45.33_train_online_vib_robomimic_workspace_square_image'
+        # ],
+        # "0.225": [
+        #     '2026.03.17/22.08.08_train_online_vib_robomimic_workspace_square_image',
+        #     '2026.03.18/00.17.18_train_online_vib_robomimic_workspace_square_image',
+        #     '2026.03.18/02.37.25_train_online_vib_robomimic_workspace_square_image'
+        # ],
         "0.25": [
             '2026.03.17/22.07.17_train_online_vib_robomimic_workspace_square_image',
             '2026.03.18/00.23.08_train_online_vib_robomimic_workspace_square_image',
             '2026.03.18/02.37.25_train_online_vib_robomimic_workspace_square_image'
+        ],
+        "0.5": [
+            '2026.03.21/15.32.52_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.21/18.02.00_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.21/20.26.02_train_online_vib_robomimic_workspace_square_image'
         ]
     },
     "dim": {
@@ -127,6 +137,38 @@ TASK_TO_ALGO_EXP_MAP = {
             '2026.03.18/04.20.05_train_online_vib_robomimic_workspace_square_image',
             '2026.03.17/23.48.13_train_online_vib_robomimic_workspace_square_image'
         ]
+    },
+    "type": {
+        'ZPRL': [
+            '2025.12.06/11.37.04_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/14.40.48_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/17.39.21_train_online_vib_robomimic_workspace_square_image',
+        ],
+        '0.001': [
+            '2026.03.22/10.14.15_train_online_cond_res_workspace_square_image',
+            '2026.03.22/10.15.50_train_online_cond_res_workspace_square_image',
+            '2026.03.22/10.15.57_train_online_cond_res_workspace_square_image'
+        ],
+        '0.005': [
+            '2026.03.21/23.49.32_train_online_cond_res_workspace_square_image',
+            '2026.03.22/02.22.52_train_online_cond_res_workspace_square_image',
+            '2026.03.22/04.51.06_train_online_cond_res_workspace_square_image'
+        ],
+        '0.01': [
+            '2026.03.21/23.17.47_train_online_cond_res_workspace_square_image',
+            '2026.03.22/01.50.37_train_online_cond_res_workspace_square_image',
+            '2026.03.22/04.18.35_train_online_cond_res_workspace_square_image'
+        ],
+        '0.025': [
+            '2026.03.21/19.00.58_train_online_cond_res_workspace_square_image',
+            '2026.03.21/21.01.19_train_online_cond_res_workspace_square_image',
+            '2026.03.22/04.25.35_train_online_cond_res_workspace_square_image'
+        ],
+        '0.05': [
+            '2026.03.21/21.27.27_train_online_cond_res_workspace_square_image',
+            '2026.03.21/23.33.26_train_online_cond_res_workspace_square_image',
+            '2026.03.22/06.54.56_train_online_cond_res_workspace_square_image'
+        ],
     }
 }
 

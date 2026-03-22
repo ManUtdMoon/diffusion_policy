@@ -58,20 +58,38 @@ PLOT_CONFIGS = {
     },
     'scale': {
         'palette': {
-            '0.15': '#e8cd81',
-            '0.175': '#89c085',
+            '0.1': '#e8cd81',
+            '0.15': '#89c085',
             '0.2': '#c66a42',
-            '0.225': '#696fa2',
-            '0.25': '#6a4a2b',
+            '0.25': '#696fa2',
+            '0.5': '#6a4a2b',
         },
         'algo_name_map': {
+            '0.1': r'$\lambda=0.1$',
             '0.15': r'$\lambda=0.15$',
-            '0.175': r'$\lambda=0.175$',
             '0.2': r'$\lambda=0.2$',
-            '0.225': r'$\lambda=0.225$',
             '0.25': r'$\lambda=0.25$',
+            '0.5': r'$\lambda=0.5$',
         },
     },
+    'type': {
+        'palette': {
+            'ZPRL': '#c66a42',
+            '0.001': '#f7efb2',
+            '0.005': '#fbd66c',
+            '0.01': '#93d4dd',
+            '0.025': '#4f95cd',
+            '0.05': '#224e76',
+        },
+        'algo_name_map': {
+            'ZPRL': 'ZPRL',
+            '0.001': r'ResEmb@$\lambda=0.001$',
+            '0.005': r'ResEmb@$\lambda=0.005$',
+            '0.01': r'ResEmb@$\lambda=0.01$',
+            '0.025': r'ResEmb@$\lambda=0.025$',
+            '0.05': r'ResEmb@$\lambda=0.05$',
+        }
+    }
 }
 
 DS = 20  # Downsample factor
@@ -263,16 +281,18 @@ def main(task, mode):
         )
 
     # --- Customize Aesthetics ---
-    ax.set_xlabel(r'Env Steps ($\times 10^6$)', fontsize=12)
-    ax.set_ylabel('Success Rate', fontsize=12)
+    ax.set_xlabel(r'Env Steps ($\times 10^6$)', fontsize=14)
+    ax.set_ylabel('Success Rate', fontsize=14)
     if task_key in ['can', 'square', 'transport']:
         task = 'robomimic_' + task_key
-    elif task_key in ['num_demo', 'dim', 'scale']:
+    elif task_key in ['num_demo', 'dim', 'scale', 'type']:
         task = 'robomimic_square_' + task_key
     else:
         task = task_key
     ax.set_title(f'{task.capitalize()}', fontsize=12)
-    ax.tick_params(axis='both', which='major', labelsize=11)
+    # remove title
+    ax.title.set_visible(False)
+    ax.tick_params(axis='both', which='major', labelsize=14)
     ax.yaxis.set_major_formatter('{x:.1f}')
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}'))
     ax.grid(True, which='major', linestyle='-', linewidth='0.5', color='lightgrey')

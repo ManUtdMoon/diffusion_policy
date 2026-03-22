@@ -4,12 +4,34 @@ import pandas as pd
 from pathlib import Path
 
 
-THRESHOLD = 0.8
+THRESHOLD = 0.9
 TAIL_POINTS = 5
-BASE_DIR = Path("data/plot")
+PLOT_ROOT = Path(__file__).resolve().parent.parent / "data" / "plot"
+END_STEP_BY_TASK = {
+    "can": 1e6,
+    "square": 3e6,
+    "transport": 3e6,
+    "num_demo": 3e6,
+    "dim": 3e6,
+    "scale": 3e6,
+}
 
 
-def load_run_stats(run_dir: Path):
+def resolve_task_dir(task: str) -> Path:
+    candidates = [
+        PLOT_ROOT / task,
+        PLOT_ROOT / "done" / "exp-1-main" / task,
+        PLOT_ROOT / "done" / f"exp-2-{task}",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise click.BadParameter(
+        f"Task directory not found for '{task}'. Checked: {', '.join(str(path) for path in candidates)}"
+    )
+
+
+def load_run_stats(run_dir: Path, end_step: float | None):
     train_dir = run_dir / "train"
     sr_path = train_dir / "sr.csv"
     interval_path = train_dir / "interval.txt"
@@ -26,19 +48,28 @@ def load_run_stats(run_dir: Path):
     interval = int(interval_path.read_text().strip())
     start = int(start_path.read_text().strip()) if start_path.is_file() else 0
     ta = float(ta_path.read_text().strip()) if ta_path.is_file() else 1.0
+    env_steps = (start + np.arange(len(sr_values)) * interval) * ta
 
     crossing_indices = np.flatnonzero(sr_values > THRESHOLD)
     if len(crossing_indices) == 0:
         steps_to_threshold = np.nan
     else:
         first_idx = int(crossing_indices[0])
-        steps_to_threshold = (start + first_idx * interval) * ta
+        steps_to_threshold = env_steps[first_idx]
 
-    final_sr = float(np.mean(sr_values[-TAIL_POINTS:]))
+    if end_step is None:
+        valid_indices = np.arange(len(sr_values))
+    else:
+        valid_indices = np.flatnonzero(env_steps <= end_step)
+
+    if len(valid_indices) == 0:
+        raise ValueError(f"No train data points found at or before end step {end_step} in {train_dir}")
+
+    final_sr = float(np.mean(sr_values[valid_indices[-TAIL_POINTS:]]))
     return steps_to_threshold, final_sr
 
 
-def summarize_algo(task_dir: Path, algo_dir: Path):
+def summarize_algo(task_name: str, task_dir: Path, algo_dir: Path, end_step: float | None):
     run_dirs = sorted(
         d for d in algo_dir.iterdir() if d.is_dir() and d.name.startswith("run")
     )
@@ -50,7 +81,7 @@ def summarize_algo(task_dir: Path, algo_dir: Path):
     missing_threshold_runs = []
 
     for run_dir in run_dirs:
-        steps_to_threshold, final_sr = load_run_stats(run_dir)
+        steps_to_threshold, final_sr = load_run_stats(run_dir, end_step=end_step)
         if np.isnan(steps_to_threshold):
             missing_threshold_runs.append(run_dir.name)
         else:
@@ -61,11 +92,11 @@ def summarize_algo(task_dir: Path, algo_dir: Path):
         return None
 
     return {
-        "task": task_dir.name,
+        "task": task_name,
         "algorithm": algo_dir.name,
         "num_runs": len(run_dirs),
         "num_threshold_runs": len(steps_to_threshold_values),
-        "steps_to_0.8": np.mean(steps_to_threshold_values) / 1e6 if steps_to_threshold_values else np.nan,
+        "steps_to_thres": np.mean(steps_to_threshold_values) / 1e6 if steps_to_threshold_values else np.nan,
         "final_sr": np.mean(final_sr_values),
         "missing_threshold_runs": ",".join(missing_threshold_runs) if missing_threshold_runs else "",
     }
@@ -78,9 +109,9 @@ def main(tasks):
     rows = []
 
     for task in tasks:
-        task_dir = BASE_DIR / task
-        if not task_dir.is_dir():
-            raise click.BadParameter(f"Task directory not found: {task_dir}")
+        task_dir = resolve_task_dir(task)
+
+        end_step = END_STEP_BY_TASK.get(task)
 
         algo_dirs = sorted(d for d in task_dir.iterdir() if d.is_dir())
         if not algo_dirs:
@@ -88,7 +119,7 @@ def main(tasks):
             continue
 
         for algo_dir in algo_dirs:
-            summary = summarize_algo(task_dir, algo_dir)
+            summary = summarize_algo(task, task_dir, algo_dir, end_step=end_step)
             if summary is None:
                 click.echo(f"Warning: skipped {algo_dir} because no valid run directories were found")
                 continue
@@ -99,7 +130,7 @@ def main(tasks):
         return
 
     df = pd.DataFrame(rows)
-    df["steps_to_0.8"] = df["steps_to_0.8"].map(
+    df["steps_to_thres"] = df["steps_to_thres"].map(
         lambda x: "N/A" if pd.isna(x) else f"{x:.3f}"
     )
     df["final_sr"] = df["final_sr"].map(lambda x: f"{x:.3f}")
