@@ -50,7 +50,7 @@ training:
   utd: 1.0
   n_envs: ${online_task.n_envs}
   # residue progress
-  res_scale: 0.325
+  res_scale: 0.2  # 0.2 for can, square; 0.1 for transport
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
   q_pretrain_steps: 0

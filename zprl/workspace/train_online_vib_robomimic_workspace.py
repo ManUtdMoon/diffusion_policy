@@ -429,9 +429,7 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                     'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
-                    'info/res_naction_norm': actor_info['res_z_norm'],
-                    'info/z_mean_norm': actor_info['z_mean_norm'],
-                    'info/z_norm': actor_info['z_norm'],
+
                     'info/z_mean_rms': actor_info['z_mean_rms'],
                     'info/z_rms': actor_info['z_rms'],
                     'info/res_z_rms': actor_info['res_z_rms'],

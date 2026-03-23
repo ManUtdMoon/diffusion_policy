@@ -4,6 +4,8 @@ sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1)
 sys.stderr = open(sys.stderr.fileno(), mode='w', buffering=1)
 
 import os
+import random
+import numpy as np
 import pathlib
 import click
 import hydra
@@ -26,6 +28,14 @@ def main(checkpoint, output_dir, device, n_action_steps):
     # load checkpoint
     payload = torch.load(open(checkpoint, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
+
+    ## deterministic mode
+    seed = cfg.training.seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     cfg.n_action_steps = n_action_steps
     cfg.policy.n_action_steps = n_action_steps

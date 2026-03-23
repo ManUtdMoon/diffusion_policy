@@ -1,15 +1,19 @@
 # Beyond Action Residuals: Steering Robot Manipulation Policies with Bottleneck Latent Reinforcement Learning (ZPRL)
 
-Dongjie Yu$^{*,1,2}$, Kun Lei$^{*,2,3}$, Zhennan Jiang$^{4}$, Jia Pan$^{\dagger,1}$, Huazhe Xu$^{\dagger,2,5}$
+Dongjie Yu<sup>&#42;,1,2</sup>,
+Kun Lei<sup>&#42;,2,3</sup>,
+Zhennan Jiang<sup>4</sup>,
+Jia Pan<sup>&#35;,1</sup>,
+Huazhe Xu<sup>&#35;,2,5</sup>
 
-$^*$ Equal contribution
-$^{\dagger}$ Corresponding authors
+<sup>&#42;</sup> Equal contribution
+<sup>&#35;</sup> Corresponding authors
 
-$^1$ School of Computing and Data Science, HKU
-$^2$ Shanghai Qi Zhi Institute
-$^3$ Shanghai Jiao Tong University
-$^4$ Institute of Automation, CAS
-$^5$ IIIS, THU
+<sup>1</sup> School of Computing and Data Science, HKU;
+<sup>2</sup> Shanghai Qi Zhi Institute;
+<sup>3</sup> Shanghai Jiao Tong University;
+<sup>4</sup> Institute of Automation, CAS;
+<sup>5</sup> IIIS, THU
 
 TLDR: ZPRL is an RL finetuning framework that perturbs bottleneck latents to steer robot manipulation policies, achieving efficient steering and smooth robot actions.
 
@@ -23,7 +27,7 @@ cd zprl
 
 2. Create a virtual environment and install the required dependencies. (We used mamba for fast env management, but you can also use conda.)
 ```bash
-mamba create env -f ./conda_environment.yaml
+mamba env create -f ./conda_environment.yaml
 mamba activate zprl
 mamba install -c conda-forge mesalib glew glfw # necessary for GPU rendering
 ```
@@ -48,7 +52,7 @@ pip install -e .
 python /your/path/to/dependencies/robomimic/robomimic/scripts/setup_macros.py
 ```
 
-4. We made a small patch to `robosuite` to correct its GPU rendering on the specified device and enable faster parallel simulation. Replace `/your/path/to/dependencies/robosuite/robosuite/renderers/context/egl_context.py` with [this](https://drive.google.com/file/d/1oxenFUt2E1uwEYaltP6bOZGFZgxxHef2/view?usp=sharing) and replace `/your/path/to/dependencies/robosuite/robosuite/utils/binding_utils.py` with [this](https://drive.google.com/file/d/1_AaxnOZVl629tBK-QVNkh9xzT8HObKat/view?usp=sharing). You may need to change the `conversion_map` in `egl_context.py` because the map varies on different computers.
+4. We made a small patch to `robosuite` to correct its GPU rendering on the specified device and enable faster parallel simulation. Replace `/your/path/to/dependencies/robosuite/robosuite/renderers/context/egl_context.py` with [this](patches/egl_context.py) and replace `/your/path/to/dependencies/robosuite/robosuite/utils/binding_utils.py` with [this](patches/binding_utils.py). You may need to change the `conversion_map` in `egl_context.py` because the map varies on different computers. (Credit to [Baiye Cheng](https://scholar.google.com/citations?user=YOvZXGAAAAAJ))
 
 
 ## Downloading datasets
@@ -71,13 +75,85 @@ Each `.hdf5` randomly samples 100 trajectories from the original Robomimic [MH d
 
 
 ## Offline Training
+1. Activate the environment and login to W&B to track experiments if you have never done before.
+```bash
+mamba activate zprl
+wandb login
+```
+2. Launch training on cuda:0 with seed 10.
+```bash
+export MUJOCO_EGL_DEVICE_ID=0 # make robomimic envs run on cuda:0
+python train.py \
+    --config-name=train_flow_match_vib_unet_image_workspace \
+    training.seed=10 \
+    task.dataset.seed=10 \
+    exp_name=unet_vib_default \
+    training.device=cuda:0 \
+    task=square_image_abs \
+    policy.vib_latent_dim=16 \
+    policy.vib_beta=0.0002 \
+    policy.vib_recon=0.01
+```
+> We only change `vib_latent_dim`, `vib_beta`, `vib_recon` during offline training. Specifically, we set `(16, 0.0002, 0.01)` for can and square and `(32, 0.0001, 0.005)` for transport. You can also try other values to see how they affect the performance.
+
+After the training finishes, you will get a directory containing the results like this.
+```bash
+data/outputs/yyyy.mm.dd/hh.mm.ss_train_flow_match_vib_unet_image_square_image
+├── .hydra
+│   ├── config.yaml
+│   ├── hydra.yaml
+│   └── overrides.yaml
+├── checkpoints
+│   ├── epoch_0000-score_0.000.ckpt
+│   └── latest.ckpt
+├── logs.json.txt
+├── media
+│   ├── ...
+│   └── train_1.mp4
+└── train.log
+```
+
+You can evaluate the checkpoint again with specified action chunk length (here we use 4) by
+```bash
+python eval_base.py \
+    -c data/outputs/yyyy.mm.dd/hh.mm.ss_train_flow_match_vib_unet_image_square_image/checkpoints/latest.ckpt\
+    -o data/eval/square/ \
+    -t 4 \
+    -d cuda:0
+```
+
+Then you will get a directory containing the results on 50 rollouts. You can edit `eval_base.py` to change configurations of evaluation.
+```bash
+data/eval/square
+├── eval_log.json
+└── media
+    ├── test_100000.mp4
+    ├── ...
+    └── test_100009.mp4
+```
+
+The offline stack generally follows [Diffusion Policy](https://github.com/real-stanford/diffusion_policy) and the authors have built an incredible code base and tutorial. Remember to check it out if you are interested.
 
 
 ## Online RL
+After the offline training, you can try ZPRL from a given base policy with
+```bash
+python train.py \                                          
+    --config-name=train_online_vib_robomimic_workspace \     
+    training.seed=10 \
+    exp_name=zprl_default \
+    training.device=cuda:0 \
+    online_task=square_image_abs \
+    online_task.base_ckpt=data/outputs/yyyy.mm.dd/hh.mm.ss_train_flow_match_vib_unet_image_square_image/checkpoints/latest.ckpt
+```
+Note that there will be 45 parallel environments running (20 for training and 25 for evaluation) and it will not cause OOM on RTX 4090. The structure of the resulting RL training directory under `data/outputs/` is similar as that of offline IL.
 
+> An important hyperparameter in ZPRL is the scale of z-perturbation ($\lambda$ in our paper). We recommend starting from let $\mathrm{RMS}(\lambda\Delta z) \approx 0.15 \mathrm{RMS}(z)$. We track these values during online RL for tuning reference.
+
+> When you summarize the RL results, remember to multiply the steps in w&b by `n_action_steps` (the length of action chunk) such that the actual environment steps are counted. 
 
 ## Acknowledgements
-Our code base is built on the following repositories and this README borrows a lot from [DICE-RL](https://github.com/real-stanford/dice-rl). We thank the authors for open-sourcing their wonderful codes and clear documentation.
+Our code base is built on the following repositories and the structure of this README borrows a lot from [DICE-RL](https://github.com/real-stanford/dice-rl). We thank the authors for open-sourcing their wonderful codes and clear documentation.
 - [Diffusion Policy](https://github.com/real-stanford/diffusion_policy): our offline pipeline generally follows the Diffusion Policy workspace but replaces DDPM/DDIM with a rectified flow to reduce denoising steps during inference.
 - [Policy Decorator](https://github.com/tongzhoumu/policy_decorator): our online workspace basically follows what policy decorator does. We make some optimization (such as next observation pre-encoding) to accelerate training.
 
