@@ -26,8 +26,7 @@ from stable_baselines3.common.buffers import ReplayBuffer
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.flow_match_unet_image_policy import FlowMatchUnetImagePolicy
-from diffusion_policy.policy.residue_policy import ResiduePolicy
-from diffusion_policy.policy.sum_policy import SumPolicy
+from diffusion_policy.policy.residue_policy import ResiduePolicy, SumPolicy
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger

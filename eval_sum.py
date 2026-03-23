@@ -19,8 +19,7 @@ import dill
 import wandb
 import json
 
-from diffusion_policy.policy.sum_policy import SumPolicy
-from diffusion_policy.policy.residue_policy import ResiduePolicy
+from diffusion_policy.policy.residue_policy import ResiduePolicy, SumPolicy
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 @click.command()
