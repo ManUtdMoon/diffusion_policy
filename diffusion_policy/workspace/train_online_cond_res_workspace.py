@@ -51,6 +51,7 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
         np.random.seed(seed)
         random.seed(seed)
         torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
         # configure training state
         self.global_step = 0
