@@ -89,6 +89,18 @@ PLOT_CONFIGS = {
             '0.025': r'ResEmb@$\lambda=0.025$',
             '0.05': r'ResEmb@$\lambda=0.05$',
         }
+    },
+    'beta': {
+        'palette': {
+            '1e-3': '#696fa2',
+            '1e-4': '#c66a42',
+            '1e-5': '#d59f5e',
+        },
+        'algo_name_map': {
+            '1e-3': r'$\beta=1e-3$',
+            '1e-4': r'$\beta=1e-4$',
+            '1e-5': r'$\beta=1e-5$',
+        }
     }
 }
 
@@ -285,7 +297,7 @@ def main(task, mode):
     ax.set_ylabel('Success Rate', fontsize=14)
     if task_key in ['can', 'square', 'transport']:
         task = 'robomimic_' + task_key
-    elif task_key in ['num_demo', 'dim', 'scale', 'type']:
+    elif task_key in ['num_demo', 'dim', 'scale', 'type', 'beta']:
         task = 'robomimic_square_' + task_key
     else:
         task = task_key

@@ -169,6 +169,23 @@ TASK_TO_ALGO_EXP_MAP = {
             '2026.03.21/23.33.26_train_online_cond_res_workspace_square_image',
             '2026.03.22/06.54.56_train_online_cond_res_workspace_square_image'
         ],
+    },
+    "beta": {
+        "1e-3": [
+            '2026.03.22/20.29.09_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.22/22.51.33_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.23/01.13.37_train_online_vib_robomimic_workspace_square_image'
+        ],
+        "1e-4": [
+            '2025.12.06/11.37.04_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/14.40.48_train_online_vib_robomimic_workspace_square_image',
+            '2025.12.06/17.39.21_train_online_vib_robomimic_workspace_square_image',
+        ],
+        "1e-5": [
+            '2026.03.22/20.41.09_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.22/23.00.58_train_online_vib_robomimic_workspace_square_image',
+            '2026.03.23/01.21.52_train_online_vib_robomimic_workspace_square_image'
+        ]
     }
 }
 
