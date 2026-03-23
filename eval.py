@@ -1,8 +1,3 @@
-"""
-Usage:
-python eval.py --checkpoint data/image/pusht/diffusion_policy_cnn/train_0/checkpoints/latest.ckpt -o data/pusht_eval_output
-"""
-
 import sys
 # use line-buffering for both stdout and stderr
 sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1)
@@ -16,7 +11,7 @@ import torch
 import dill
 import wandb
 import json
-from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from zprl.workspace.base_workspace import BaseWorkspace
 
 @click.command()
 @click.option('-c', '--checkpoint', required=True)

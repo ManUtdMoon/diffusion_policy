@@ -1,8 +1,3 @@
-"""
-Usage:
-python eval.py --checkpoint data/image/pusht/diffusion_policy_cnn/train_0/checkpoints/latest.ckpt -o data/pusht_eval_output
-"""
-
 import sys
 # use line-buffering for both stdout and stderr
 sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1)
@@ -19,8 +14,8 @@ import dill
 import wandb
 import json
 
-from diffusion_policy.policy.residue_policy import ResiduePolicy, SumPolicy
-from diffusion_policy.policy.base_image_policy import BaseImagePolicy
+from zprl.policy.residue_policy import ResiduePolicy, SumPolicy
+from zprl.policy.base_image_policy import BaseImagePolicy
 
 @click.command()
 @click.option('-c', '--checkpoint', required=True)

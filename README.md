@@ -65,7 +65,7 @@ robomimicv030
     └── mh
         └── image_v141_subset_abs.hdf5
 ```
-Each `.hdf5` randomly samples 100 trajectories from the original Robomimic [MH dataset](https://robomimic.github.io/docs/v0.3/datasets/overview.html), renders the image observation following scripts [here](https://github.com/EricJin2002/SIME/blob/main/simulation/extract_obs_from_raw_datasets.sh), and turns the delta action into an absolute action with [this](diffusion_policy/scripts/robomimic_dataset_conversion.py). But downloading the dataset we uploads can save you all of these steps.
+Each `.hdf5` randomly samples 100 trajectories from the original Robomimic [MH dataset](https://robomimic.github.io/docs/v0.3/datasets/overview.html), renders the image observation following scripts [here](https://github.com/EricJin2002/SIME/blob/main/simulation/extract_obs_from_raw_datasets.sh), and turns the delta action into an absolute action with [this](zprl/scripts/robomimic_dataset_conversion.py). But downloading the dataset we uploads can save you all of these steps.
 
 > After downloading, remember to change the `dataset_path` in `zprl/config/task/{task}_image_abs.yaml` to `/your/path/to/the_hdf5` per task.
 

@@ -1,0 +1,54 @@
+name: square_image
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    agentview_image:
+      shape: [3, 84, 84]
+      type: rgb
+    robot0_eye_in_hand_image:
+      shape: [3, 84, 84]
+      type: rgb
+    robot0_eef_pos:
+      shape: [3]
+      # type default: low_dim
+    robot0_eef_quat:
+      shape: [4]
+    robot0_gripper_qpos:
+      shape: [2]
+  action: 
+    shape: [10]
+
+task_name: &task_name square
+dataset_type: &dataset_type mh
+dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_subset_abs.hdf5
+abs_action: &abs_action True
+
+base_ckpt: "data/outputs/2025.12.04/21.27.40_train_flow_match_vib_unet_image_square_image/checkpoints/epoch=1000-score=0.420.ckpt"
+
+# train
+n_envs: 20
+
+# eval
+env_runner:
+  _target_: zprl.env_runner.robomimic_image_runner.RobomimicImageRunner
+  dataset_path: *dataset_path
+  shape_meta: *shape_meta
+  # costs 1GB per env
+  n_train: 0
+  n_train_vis: 0
+  train_start_idx: 0
+  n_test: 50
+  n_test_vis: 4
+  test_start_seed: 100000
+  # use python's eval function as resolver, single-quoted string as argument
+  max_steps: ${eval:'400 if "${online_task.dataset_type}" == "mh" else 200'}
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  render_obs_key: 'agentview_image'
+  fps: 10
+  crf: 22
+  past_action: False
+  abs_action: *abs_action
+  tqdm_interval_sec: 1.0
+  n_envs: 25  # for eval only

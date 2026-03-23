@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
 setup(
-  name = 'diffusion_policy',
+  name = 'zprl',
   packages = find_packages(),
 )
