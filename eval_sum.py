@@ -42,8 +42,6 @@ def main(checkpoint, output_dir, device):
     Ta = int(cfg.n_action_steps)
     To = int(cfg.n_obs_steps)
 
-    print(f"load RL ckpt @ step = {payload['global_step']} from {checkpoint}")
-
     ## deterministic mode
     seed = cfg.training.seed
     torch.manual_seed(seed)
@@ -111,8 +109,8 @@ def main(checkpoint, output_dir, device):
     # run eval
     cfg.online_task.env_runner.n_train = 0
     cfg.online_task.env_runner.n_train_vis = 0
-    cfg.online_task.env_runner.n_test = 50
-    cfg.online_task.env_runner.n_test_vis = 0
+    cfg.online_task.env_runner.n_test = 100
+    cfg.online_task.env_runner.n_test_vis = 5
     cfg.online_task.env_runner.test_start_seed = 100_000
     cfg.online_task.env_runner.n_envs = 50
     env_runner = hydra.utils.instantiate(

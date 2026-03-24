@@ -454,7 +454,7 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
 
                 # checkpointing
                 if self.global_step % checkpoint_every == 0:
-                    path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step={self.global_step}.ckpt'
+                    path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step_{self.global_step}.ckpt'
                     path.parent.mkdir(parents=False, exist_ok=True)
                     payload = {
                         'cfg': self.cfg,

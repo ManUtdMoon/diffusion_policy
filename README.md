@@ -15,7 +15,7 @@ Huazhe Xu<sup>&#35;,2,5</sup>
 <sup>4</sup> Institute of Automation, CAS;
 <sup>5</sup> IIIS, THU
 
-TLDR: ZPRL is an RL finetuning framework that perturbs bottleneck latents to steer robot manipulation policies, achieving efficient steering and smooth robot actions.
+TL;DR: ZPRL is an RL finetuning framework that perturbs bottleneck latents to steer robot manipulation policies, achieving efficient steering and smooth robot actions.
 
 
 ## Installation
@@ -69,9 +69,11 @@ robomimicv030
     └── mh
         └── image_v141_subset_abs.hdf5
 ```
-Each `.hdf5` randomly samples 100 trajectories from the original Robomimic [MH dataset](https://robomimic.github.io/docs/v0.3/datasets/overview.html), renders the image observation following scripts [here](https://github.com/EricJin2002/SIME/blob/main/simulation/extract_obs_from_raw_datasets.sh), and turns the delta action into an absolute action with [this](zprl/scripts/robomimic_dataset_conversion.py). But downloading the dataset we uploads can save you all of these steps.
+Each `.hdf5` randomly samples 100 trajectories from the original Robomimic [MH dataset](https://robomimic.github.io/docs/v0.3/datasets/overview.html), renders the image observation following scripts [here](https://github.com/EricJin2002/SIME/blob/main/simulation/extract_obs_from_raw_datasets.sh), and turns the delta action into an absolute action with [this](zprl/scripts/robomimic_dataset_conversion.py). But downloading the dataset we upload can save you all of these steps.
 
 > After downloading, remember to change the `dataset_path` in `zprl/config/task/{task}_image_abs.yaml` to `/your/path/to/the_hdf5` per task.
+
+> We found that the version of robomimic (and robosuite) for generating datasets should match the version for training policies. Therefore, remember to `git checkout` and do not mix environments.
 
 
 ## Offline Training
@@ -80,13 +82,13 @@ Each `.hdf5` randomly samples 100 trajectories from the original Robomimic [MH d
 mamba activate zprl
 wandb login
 ```
-2. Launch training on cuda:0 with seed 10.
+2. Launch training on cuda:0 with seed 0.
 ```bash
 export MUJOCO_EGL_DEVICE_ID=0 # make robomimic envs run on cuda:0
 python train.py \
     --config-name=train_flow_match_vib_unet_image_workspace \
-    training.seed=10 \
-    task.dataset.seed=10 \
+    training.seed=0 \
+    task.dataset.seed=0 \
     exp_name=unet_vib_default \
     training.device=cuda:0 \
     task=square_image_abs \
@@ -94,7 +96,7 @@ python train.py \
     policy.vib_beta=0.0002 \
     policy.vib_recon=0.01
 ```
-> We only change `vib_latent_dim`, `vib_beta`, `vib_recon` during offline training. Specifically, we set `(16, 0.0002, 0.01)` for can and square and `(32, 0.0001, 0.005)` for transport. You can also try other values to see how they affect the performance.
+> We only change `vib_latent_dim`, `vib_beta` during offline training. Specifically, we set `(16, 0.0002)` for can and square and `(32, 0.0001)` for transport. You can also try other values to see how they affect the performance.
 
 After the training finishes, you will get a directory containing the results like this.
 ```bash
@@ -116,7 +118,7 @@ data/outputs/yyyy.mm.dd/hh.mm.ss_train_flow_match_vib_unet_image_square_image
 You can evaluate the checkpoint again with specified action chunk length (here we use 4) by
 ```bash
 python eval_base.py \
-    -c data/outputs/yyyy.mm.dd/hh.mm.ss_train_flow_match_vib_unet_image_square_image/checkpoints/latest.ckpt\
+    -c path/to/offline/checkpoints/latest.ckpt\
     -o data/eval/square/ \
     -t 4 \
     -d cuda:0
@@ -136,21 +138,29 @@ The offline stack generally follows [Diffusion Policy](https://github.com/real-s
 
 
 ## Online RL
-After the offline training, you can try ZPRL from a given base policy with
+After the offline training, you can try ZPRL starting from a given base policy with
 ```bash
-python train.py \                                          
-    --config-name=train_online_vib_robomimic_workspace \     
-    training.seed=10 \
+python train.py \
+    --config-name=train_online_vib_robomimic_workspace \
+    training.seed=0 \
     exp_name=zprl_default \
     training.device=cuda:0 \
     online_task=square_image_abs \
-    online_task.base_ckpt=data/outputs/yyyy.mm.dd/hh.mm.ss_train_flow_match_vib_unet_image_square_image/checkpoints/latest.ckpt
+    online_task.base_ckpt=path/to/offline/checkpoints/latest.ckpt
 ```
 Note that there will be 45 parallel environments running (20 for training and 25 for evaluation) and it will not cause OOM on RTX 4090. The structure of the resulting RL training directory under `data/outputs/` is similar as that of offline IL.
 
-> An important hyperparameter in ZPRL is the scale of z-perturbation ($\lambda$ in our paper). We recommend starting from let $\mathrm{RMS}(\lambda\Delta z) \approx 0.15 \mathrm{RMS}(z)$. We track these values during online RL for tuning reference.
+> An important hyperparameter in ZPRL is the scale of z-perturbation ($\lambda$ in our paper). We recommend starting from let $\mathrm{RMS}(\lambda\Delta z) \approx 0.1 \mathrm{RMS}(z)$. We track these values during online RL for tuning reference.
 
-> When you summarize the RL results, remember to multiply the steps in w&b by `n_action_steps` (the length of action chunk) such that the actual environment steps are counted. 
+> When you summarize the RL results, remember to multiply the steps in w&b by `n_action_steps` (the length of action chunk) such that the actual environment steps are counted.
+
+You can evaluate the composed policy after online finetuning with
+```bash
+python eval_sum.py \
+   -c path/to/checkpoints/step_600000.ckpt \
+   -o path/to/eval_logs/ \
+   -d cuda:0
+```
 
 ## Acknowledgements
 Our code base is built on the following repositories and the structure of this README borrows a lot from [DICE-RL](https://github.com/real-stanford/dice-rl). We thank the authors for open-sourcing their wonderful codes and clear documentation.
