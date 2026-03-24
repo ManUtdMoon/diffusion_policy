@@ -15,6 +15,12 @@ import wandb
 import json
 from zprl.workspace.base_workspace import BaseWorkspace
 
+# a patch due to uploaded checkpoints using a absolute specified dataset path.
+DATASET_ROOT = "./data_local/robomimicv030/"
+if not os.path.exists(DATASET_ROOT):
+    raise ValueError(f"Dataset root {DATASET_ROOT} does not exist! Please set the correct path to robomimicv030/.")
+
+
 @click.command()
 @click.option('-c', '--checkpoint', required=True)
 @click.option('-o', '--output_dir', required=True)
@@ -63,6 +69,11 @@ def main(checkpoint, output_dir, device, n_action_steps):
     cfg.task.env_runner.n_test_vis = 5
     cfg.task.env_runner.test_start_seed = 100_000
     cfg.task.env_runner.n_envs = 50
+    # reset dataset_path to avoid location mismatch between training and evaluation.
+    task_name = cfg.task.task_name
+    dataset_type = cfg.task.dataset_type
+    dataset_path = DATASET_ROOT + f"{task_name}/{dataset_type}/image_v141_subset_abs.hdf5"
+    cfg.task.env_runner.dataset_path = dataset_path
     env_runner = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir)

@@ -56,7 +56,7 @@ python /your/path/to/dependencies/robomimic/robomimic/scripts/setup_macros.py
 
 
 ## Downloading datasets
-We have uploaded the datasets for training robomimic tasks (can, square, transport) [here](https://huggingface.co/datasets/ManUtdMoon/robomimicv030). You can download the directory, put it anywhere you like and organize it as follows:
+We have uploaded the datasets for training robomimic tasks (can, square, transport) [here](https://huggingface.co/datasets/ManUtdMoon/robomimicv030). After downloading the whole directory, you can either put it under `./data_local/` or create a soft link to it by `ln -s /your/path/to/robomimicv030 ./data_local/`. The data root directory is like:
 ```bash
 robomimicv030
 ├── can
@@ -70,8 +70,6 @@ robomimicv030
         └── image_v141_subset_abs.hdf5
 ```
 Each `.hdf5` randomly samples 100 trajectories from the original Robomimic [MH dataset](https://robomimic.github.io/docs/v0.3/datasets/overview.html), renders the image observation following scripts [here](https://github.com/EricJin2002/SIME/blob/main/simulation/extract_obs_from_raw_datasets.sh), and turns the delta action into an absolute action with [this](zprl/scripts/robomimic_dataset_conversion.py). But downloading the dataset we upload can save you all of these steps.
-
-> After downloading, remember to change the `dataset_path` in `zprl/config/task/{task}_image_abs.yaml` to `/your/path/to/the_hdf5` per task.
 
 > We found that the version of robomimic (and robosuite) for generating datasets should match the version for training policies. Therefore, remember to `git checkout` and do not mix environments.
 

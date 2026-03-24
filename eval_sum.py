@@ -24,11 +24,19 @@ from zprl.policy.residue_policy import (
     SumPolicy as ActionSumPolicy,
 )
 
+
+# a patch due to uploaded checkpoints using a absolute specified dataset path.
+DATASET_ROOT = "./data_local/robomimicv030/"
+if not os.path.exists(DATASET_ROOT):
+    raise ValueError(f"Dataset root {DATASET_ROOT} does not exist! Please set the correct path to robomimicv030/.")
+
+
 @click.command()
 @click.option('-c', '--checkpoint', required=True)
 @click.option('-o', '--output_dir', required=True)
 @click.option('-d', '--device', default='cuda:0')
-def main(checkpoint, output_dir, device):
+@click.option('-b', '--base_ckpt', default=None, type=str)
+def main(checkpoint, output_dir, device, base_ckpt):
     if os.path.exists(output_dir):
         click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -49,6 +57,14 @@ def main(checkpoint, output_dir, device):
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+    if (base_ckpt is None) and not pathlib.Path(cfg.online_task.base_ckpt).exists():
+        raise ValueError(
+            f"Base policy not specified and not found at {cfg.online_task.base_ckpt}. Maybe downloading the checkpoint from internet? Please also download the base ckpt and specify the correct path using --base_ckpt.")
+    elif base_ckpt is not None:
+        cfg.online_task.base_ckpt = base_ckpt
+        print(f"Using base policy from cli argument: {base_ckpt}")
+        print("Make sure the RL policy matches the base policy for correct evaluation!")
 
     ## 1. base_policy
     base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
@@ -113,6 +129,11 @@ def main(checkpoint, output_dir, device):
     cfg.online_task.env_runner.n_test_vis = 5
     cfg.online_task.env_runner.test_start_seed = 100_000
     cfg.online_task.env_runner.n_envs = 50
+    # reset dataset_path to avoid location mismatch between training and evaluation.
+    task_name = cfg.online_task.task_name
+    dataset_type = cfg.online_task.dataset_type
+    dataset_path = DATASET_ROOT + f"{task_name}/{dataset_type}/image_v141_subset_abs.hdf5"
+    cfg.online_task.env_runner.dataset_path = dataset_path
     env_runner = hydra.utils.instantiate(
         cfg.online_task.env_runner,
         output_dir=output_dir)

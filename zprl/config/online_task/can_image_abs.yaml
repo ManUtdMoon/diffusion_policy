@@ -21,7 +21,7 @@ shape_meta: &shape_meta
 
 task_name: &task_name can
 dataset_type: &dataset_type mh
-dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_subset_abs.hdf5
+dataset_path: &dataset_path ./data_local/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_subset_abs.hdf5
 abs_action: &abs_action True
 
 base_ckpt: "data/outputs/2025.12.05/00.58.34_train_flow_match_vib_unet_image_can_image/checkpoints/epoch=1000-score=0.800.ckpt"

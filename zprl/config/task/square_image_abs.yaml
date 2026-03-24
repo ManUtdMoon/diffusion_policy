@@ -21,7 +21,7 @@ shape_meta: &shape_meta
 
 task_name: &task_name square
 dataset_type: &dataset_type mh
-dataset_path: &dataset_path /media/datahub-2/ydj/robomimicv030/${task.task_name}/${task.dataset_type}/image_v141_subset_abs.hdf5
+dataset_path: &dataset_path ./data_local/robomimicv030/${task.task_name}/${task.dataset_type}/image_v141_subset_abs.hdf5
 abs_action: &abs_action True
 
 env_runner:

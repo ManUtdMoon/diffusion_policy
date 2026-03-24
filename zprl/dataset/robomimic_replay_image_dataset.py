@@ -276,7 +276,7 @@ def normalizer_from_stat(stat):
 def main():
     task = "square"
     dataset_type = "mh"
-    dataset_path = f"/media/datahub-2/ydj/robomimicv030/{task}/{dataset_type}/image_v141_subset_abs.hdf5"
+    dataset_path = f"./data_local/robomimicv030/{task}/{dataset_type}/image_v141_subset_abs.hdf5"
     shape_meta = {
         "obs": {
             "agentview_image": {
