@@ -130,9 +130,11 @@ def main(checkpoint, output_dir, device, base_ckpt):
     cfg.online_task.env_runner.test_start_seed = 100_000
     cfg.online_task.env_runner.n_envs = 50
     # reset dataset_path to avoid location mismatch between training and evaluation.
+    # extract the filename from the original config to avoid hardcoding (e.g., tool_hang uses a different name).
     task_name = cfg.online_task.task_name
     dataset_type = cfg.online_task.dataset_type
-    dataset_path = DATASET_ROOT + f"{task_name}/{dataset_type}/image_v141_subset_abs.hdf5"
+    dataset_filename = os.path.basename(cfg.online_task.env_runner.dataset_path)
+    dataset_path = os.path.join(DATASET_ROOT, task_name, dataset_type, dataset_filename)
     cfg.online_task.env_runner.dataset_path = dataset_path
     env_runner = hydra.utils.instantiate(
         cfg.online_task.env_runner,
