@@ -11,6 +11,7 @@ import click
 import hydra
 import torch
 import dill
+from omegaconf import OmegaConf
 import wandb
 import json
 
@@ -45,6 +46,10 @@ def main(checkpoint, output_dir, device, base_ckpt):
     device = torch.device(device)
     payload = torch.load(open(checkpoint, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
+    # patch legacy checkpoint configs that still use the old package name
+    cfg_yaml = OmegaConf.to_yaml(cfg)
+    if 'diffusion_policy' in cfg_yaml:
+        cfg = OmegaConf.create(cfg_yaml.replace('diffusion_policy', 'zprl'))
     res_policy_state_dict = payload['res_policy']
 
     Ta = int(cfg.n_action_steps)
@@ -69,12 +74,18 @@ def main(checkpoint, output_dir, device, base_ckpt):
     ## 1. base_policy
     base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
     base_cfg = base_payload['cfg']
+    # patch legacy checkpoint configs that still use the old package name
+    base_cfg_yaml = OmegaConf.to_yaml(base_cfg)
+    if 'diffusion_policy' in base_cfg_yaml:
+        base_cfg = OmegaConf.create(base_cfg_yaml.replace('diffusion_policy', 'zprl'))
     assert base_cfg.task_name == cfg.task_name, \
         f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
     base_cfg.n_action_steps = Ta
     base_cfg.policy.n_action_steps = Ta
     base_cfg.task.env_runner.n_action_steps = Ta
     base_cfg.task.dataset.pad_after = Ta - 1
+    num_inference_steps = OmegaConf.select(cfg, 'num_inference_steps', default=2)
+    base_cfg.policy.num_inference_steps = num_inference_steps
     base_policy: BaseImagePolicy = hydra.utils.instantiate(base_cfg.policy)
     base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])
     print(f"Loaded base policy from {cfg.online_task.base_ckpt}")

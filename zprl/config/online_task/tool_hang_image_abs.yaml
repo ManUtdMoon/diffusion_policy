@@ -1,13 +1,13 @@
-name: can_image
+name: tool_hang_image_abs
 
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
   obs:
-    agentview_image:
-      shape: [3, 84, 84]
+    sideview_image:
+      shape: [3, 240, 240]
       type: rgb
     robot0_eye_in_hand_image:
-      shape: [3, 84, 84]
+      shape: [3, 240, 240]
       type: rgb
     robot0_eef_pos:
       shape: [3]
@@ -19,17 +19,15 @@ shape_meta: &shape_meta
   action: 
     shape: [10]
 
-task_name: &task_name can
-dataset_type: &dataset_type mh
-dataset_path: &dataset_path ./data_local/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_subset_abs.hdf5
+task_name: &task_name tool_hang
+dataset_type: &dataset_type ph
+dataset_path: &dataset_path ./data_local/robomimicv030/${online_task.task_name}/${online_task.dataset_type}/image_v141_abs.hdf5
 abs_action: &abs_action True
 
-base_ckpt: null
+base_ckpt: data/outputs/2026.03.26/16.31.53_train_flow_match_vib_unet_image_tool_hang_image_abs/checkpoints/latest.ckpt
 
-# train
 n_envs: 20
 
-# eval
 env_runner:
   _target_: zprl.env_runner.robomimic_image_runner.RobomimicImageRunner
   dataset_path: *dataset_path
@@ -41,14 +39,14 @@ env_runner:
   n_test: 50
   n_test_vis: 4
   test_start_seed: 100000
-  # use python's eval function as resolver, single-quoted string as argument
-  max_steps: ${eval:'400 if "${online_task.dataset_type}" == "mh" else 200'}
+  max_steps: 700
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
-  render_obs_key: 'agentview_image'
+  render_obs_key: 'sideview_image'
   fps: 10
   crf: 22
   past_action: False
   abs_action: *abs_action
   tqdm_interval_sec: 1.0
-  n_envs: 25  # for eval only
+  n_envs: 25
+# evaluation at this config requires a 16 core 64GB instance.

@@ -66,9 +66,15 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
         ## load base policy
         base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
         base_cfg = base_payload['cfg']
+        # patch legacy checkpoint configs that still use the old package name
+        base_cfg_yaml = OmegaConf.to_yaml(base_cfg)
+        if 'diffusion_policy' in base_cfg_yaml:
+            base_cfg_yaml = base_cfg_yaml.replace('diffusion_policy', 'zprl')
+            base_cfg = OmegaConf.create(base_cfg_yaml)
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
         base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
+        base_cfg.policy.num_inference_steps = cfg.num_inference_steps
         self.base_policy: FlowMatchVibUnetImagePolicy
         self.base_policy = hydra.utils.instantiate(base_cfg.policy)
         self.base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])

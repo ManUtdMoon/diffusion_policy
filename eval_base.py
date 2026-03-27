@@ -11,6 +11,7 @@ import click
 import hydra
 import torch
 import dill
+from omegaconf import OmegaConf
 import wandb
 import json
 from zprl.workspace.base_workspace import BaseWorkspace
@@ -26,7 +27,8 @@ if not os.path.exists(DATASET_ROOT):
 @click.option('-o', '--output_dir', required=True)
 @click.option('-d', '--device', default='cuda:0')
 @click.option('-t', '--n_action_steps', default=4, type=int, required=True)
-def main(checkpoint, output_dir, device, n_action_steps):
+@click.option('-n', '--num_inference_steps', default=2, type=int, required=False)
+def main(checkpoint, output_dir, device, n_action_steps, num_inference_steps):
     if os.path.exists(output_dir):
         click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -34,6 +36,10 @@ def main(checkpoint, output_dir, device, n_action_steps):
     # load checkpoint
     payload = torch.load(open(checkpoint, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
+    # patch legacy checkpoint configs that still use the old package name
+    cfg_yaml = OmegaConf.to_yaml(cfg)
+    if 'diffusion_policy' in cfg_yaml:
+        cfg = OmegaConf.create(cfg_yaml.replace('diffusion_policy', 'zprl'))
 
     ## deterministic mode
     seed = cfg.training.seed
@@ -57,6 +63,7 @@ def main(checkpoint, output_dir, device, n_action_steps):
     policy = workspace.model
     if cfg.training.use_ema:
         policy = workspace.ema_model
+    policy.num_inference_steps = num_inference_steps
     
     device = torch.device(device)
     policy.to(device)
