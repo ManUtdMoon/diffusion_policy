@@ -1,10 +1,10 @@
 # Beyond Action Residuals: Steering Robot Manipulation Policies with Bottleneck Latent Reinforcement Learning (ZPRL)
 
-Dongjie Yu<sup>&#42;,1,2</sup>,
-Kun Lei<sup>&#42;,2,3</sup>,
-Zhennan Jiang<sup>4</sup>,
-Jia Pan<sup>&#35;,1</sup>,
-Huazhe Xu<sup>&#35;,2,5</sup>
+[Dongjie Yu](https://manutdmoon.github.io/)<sup>&#42;,1,2</sup>,
+[Kun Lei](https://lei-kun.github.io/)<sup>&#42;,2,3</sup>,
+[Zhennan Jiang](https://jzndd.github.io/)<sup>4</sup>,
+[Jia Pan](https://www.ai.hku.hk/people/academic-staff/jpan)<sup>&#35;,1</sup>,
+[Huazhe Xu](http://hxu.rocks/)<sup>&#35;,2,5</sup>
 
 <sup>&#42;</sup> Equal contribution
 <sup>&#35;</sup> Corresponding authors
@@ -15,25 +15,35 @@ Huazhe Xu<sup>&#35;,2,5</sup>
 <sup>4</sup> Institute of Automation, CAS;
 <sup>5</sup> IIIS, THU
 
-TL;DR: ZPRL is an RL finetuning framework that perturbs bottleneck latents to steer robot manipulation policies, achieving efficient steering and smooth robot actions.
+**TL;DR**: ZPRL is an RL finetuning framework that perturbs bottleneck latents to steer robot manipulation policies, achieving efficient steering and smooth robot actions.
 
 
 ## Installation
 1. Clone the repository.
 ```bash
 git clone
-cd zprl
+cd ZPRL
 ```
 
-2. Create a virtual environment and install the required dependencies. (We used mamba for fast env management, but you can also use conda.)
+2. Create a virtual environment and install the required dependencies. We used [mamba](https://github.com/conda-forge/miniforge) for fast env management, but you can also use conda.
 ```bash
 mamba env create -f ./conda_environment.yaml
 mamba activate zprl
 mamba install -c conda-forge mesalib glew glfw # necessary for GPU rendering
 ```
-Then add `export MUJOCO_GL=egl` to your `~/.bashrc`.
+Then add `export MUJOCO_GL=egl` to your `~/.bashrc`. If osmesa/glfw/glew issues still exist during training, check this [page](https://docs.pytorch.org/rl/0.6/reference/generated/knowledge_base/MUJOCO_INSTALLATION.html) for possible solutions.
 
-3. Install `robosuite` and `robomimic`.
+3. Check your `~/.bashrc` and locate `MAMBA_ROOT_PREFIX` or `CONDA_PREFIX`. Then add either
+```bash
+export CPATH=$MAMBA_ROOT_PREFIX/include
+```
+or
+```bash
+export CPATH=$CONDA_PREFIX/include
+```
+correspondingly to your `~/.bashrc` if there is no such command.
+
+4. Install `robosuite` and `robomimic`. We use specific versions for both to leverage Python bindings of `mujoco` so we do not have to install `mujoco-py` and download more files.
 ```bash
 mamba activate zprl
 cd /your/path/to/dependencies/
@@ -52,7 +62,7 @@ pip install -e .
 python /your/path/to/dependencies/robomimic/robomimic/scripts/setup_macros.py
 ```
 
-4. We made a small patch to `robosuite` to correct its GPU rendering on the specified device and enable faster parallel simulation. Replace `/your/path/to/dependencies/robosuite/robosuite/renderers/context/egl_context.py` with [this](patches/egl_context.py) and replace `/your/path/to/dependencies/robosuite/robosuite/utils/binding_utils.py` with [this](patches/binding_utils.py). You may need to change the `conversion_map` in `egl_context.py` because the map varies on different computers. (Credit to [Baiye Cheng](https://scholar.google.com/citations?user=YOvZXGAAAAAJ))
+5. We made a small patch to `robosuite` to correct its GPU rendering on the specified device and enable faster parallel simulation. Replace `/your/path/to/dependencies/robosuite/robosuite/renderers/context/egl_context.py` with [this](patches/egl_context.py) and replace `/your/path/to/dependencies/robosuite/robosuite/utils/binding_utils.py` with [this](patches/binding_utils.py). You may need to change the `conversion_map` in `egl_context.py` because the map varies on different computers. (Credit to [Baiye Cheng](https://scholar.google.com/citations?user=YOvZXGAAAAAJ))
 
 
 ## Downloading datasets
@@ -122,7 +132,7 @@ python eval_base.py \
     -d cuda:0
 ```
 
-Then you will get a directory containing the results on 50 rollouts. You can edit `eval_base.py` to change configurations of evaluation.
+Then you will get a directory containing the results on 100 rollouts. You can edit `eval_base.py` to change configurations of evaluation.
 ```bash
 data/eval/square
 ├── eval_log.json
@@ -164,6 +174,7 @@ python eval_sum.py \
 Our code base is built on the following repositories and the structure of this README borrows a lot from [DICE-RL](https://github.com/real-stanford/dice-rl). We thank the authors for open-sourcing their wonderful codes and clear documentation.
 - [Diffusion Policy](https://github.com/real-stanford/diffusion_policy): our offline pipeline generally follows the Diffusion Policy workspace but replaces DDPM/DDIM with a rectified flow to reduce denoising steps during inference.
 - [Policy Decorator](https://github.com/tongzhoumu/policy_decorator): our online workspace basically follows what policy decorator does. We make some optimization (such as next observation pre-encoding) to accelerate training.
+- [SOE](https://github.com/EricJin2002/SOE): We borrow the idea of introducing VIB module into imitation policies to realize in-manifold exploration from SOE.
 
 ## Contact
 Feel free to contact [Dongjie Yu](mailto:djyu@connect.hku.hk) if you have any questions about the paper or the code base.

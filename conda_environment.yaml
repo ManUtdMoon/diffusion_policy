@@ -50,7 +50,6 @@ dependencies:
   - imagecodecs==2022.8.8
   - pip:
     # requires mujoco py dependencies libosmesa6-dev libgl1-mesa-glx libglfw3 patchelf
-    - free-mujoco-py==2.1.6
     - mujoco==2.3.5
     - pygame==2.1.2
     - pybullet-svl==3.1.6.4
