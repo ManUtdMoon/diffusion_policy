@@ -86,6 +86,9 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
             self.ema_model.set_normalizer(normalizer)
 
         # configure lr scheduler
+        lr_scheduler_kwargs = OmegaConf.to_container(
+            OmegaConf.select(cfg, "training.lr_scheduler_kwargs", default={}),
+            resolve=True)
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=self.optimizer,
@@ -95,7 +98,8 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                     // cfg.training.gradient_accumulate_every,
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
-            last_epoch=self.global_step-1
+            last_epoch=self.global_step-1,
+            **lr_scheduler_kwargs
         )
 
         # configure ema

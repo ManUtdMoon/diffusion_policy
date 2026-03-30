@@ -68,7 +68,10 @@ def convert_robomimic_to_replay(
         action_converter,
         n_workers=None,
         max_inflight_tasks=None,
-        num_demo=None):
+        num_demo=None,
+        img_compressor='default'):
+    if img_compressor == 'default':
+        img_compressor = Jpeg2k(level=50)
     if n_workers is None:
         n_workers = multiprocessing.cpu_count()
     if max_inflight_tasks is None:
@@ -140,7 +143,7 @@ def convert_robomimic_to_replay(
                         name=key,
                         shape=(n_steps, h, w, c),
                         chunks=(1, h, w, c),
-                        compressor=Jpeg2k(level=50),
+                        compressor=img_compressor,
                         dtype=np.uint8
                     )
                     for episode_idx in range(n_demo):

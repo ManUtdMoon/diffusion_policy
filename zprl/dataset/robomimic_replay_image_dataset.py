@@ -84,8 +84,8 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                         print('Cache does not exist. Creating!')
                         # store = zarr.DirectoryStore(cache_zarr_path)
                         replay_buffer = convert_robomimic_to_replay(
-                            store=zarr.MemoryStore(), 
-                            dataset_path=dataset_path, 
+                            store=zarr.MemoryStore(),
+                            dataset_path=dataset_path,
                             rgb_keys=rgb_keys,
                             lowdim_keys=lowdim_keys,
                             obs_shapes=obs_shapes,
@@ -95,7 +95,11 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                                 abs_action=abs_action,
                                 rotation_transformer=rotation_transformer,
                             ),
-                            num_demo=num_demo)
+                            num_demo=num_demo,
+                            img_compressor=None)
+                        # convert to numpy backend for fast random access
+                        replay_buffer = ReplayBuffer.copy_from_store(
+                            src_store=replay_buffer.root.store, store=None)
                         print('Saving cache to disk.')
                         with zarr.DirectoryStore(cache_zarr_path) as zip_store:
                             replay_buffer.save_to_store(
@@ -108,12 +112,12 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                     print('Loading cached ReplayBuffer from Disk.')
                     with zarr.DirectoryStore(cache_zarr_path) as zip_store:
                         replay_buffer = ReplayBuffer.copy_from_store(
-                            src_store=zip_store, store=zarr.MemoryStore())
+                            src_store=zip_store, store=None)  # numpy backend
                     print('Loaded!')
         else:
             replay_buffer = convert_robomimic_to_replay(
-                store=zarr.MemoryStore(), 
-                dataset_path=dataset_path, 
+                store=zarr.MemoryStore(),
+                dataset_path=dataset_path,
                 rgb_keys=rgb_keys,
                 lowdim_keys=lowdim_keys,
                 obs_shapes=obs_shapes,
@@ -123,7 +127,11 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                     abs_action=abs_action,
                     rotation_transformer=rotation_transformer,
                 ),
-                num_demo=num_demo)
+                num_demo=num_demo,
+                img_compressor=None)
+            # convert to numpy backend for fast random access
+            replay_buffer = ReplayBuffer.copy_from_store(
+                src_store=replay_buffer.root.store, store=None)
         
         # for key in rgb_keys:
         #     replay_buffer[key].compressor.numthreads=1
@@ -236,6 +244,49 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             'action': torch.from_numpy(data['action'].astype(np.float32))
         }
         return torch_data
+
+    def __getitems__(self, indices: List[int]) -> List[Dict[str, torch.Tensor]]:
+        """Batched fetch: vectorized obs reads for n_obs_steps=1."""
+        threadpool_limits(1)
+
+        if self.n_obs_steps != 1:
+            return [self.__getitem__(idx) for idx in indices]
+
+        indices_arr = np.asarray(indices, dtype=np.int64)
+        batch_indices = self.sampler.indices[indices_arr]  # (B, 4)
+        buffer_starts = batch_indices[:, 0]  # (B,)
+        B = len(indices)
+
+        # Batch read obs: arr[buffer_starts] is correct for k=1
+        # regardless of padding (first obs frame is always arr[buffer_start])
+        obs_batched = dict()
+        for key in self.rgb_keys:
+            arr = self.replay_buffer[key]
+            frames = arr[buffer_starts]  # (B, H, W, C)
+            frames = np.moveaxis(frames, -1, 1)  # (B, C, H, W)
+            obs_batched[key] = frames[:, np.newaxis].astype(np.float32) / 255.  # (B,1,C,H,W)
+        for key in self.lowdim_keys:
+            arr = self.replay_buffer[key]
+            obs_batched[key] = arr[buffer_starts][:, np.newaxis].astype(np.float32)  # (B,1,D)
+
+        # Action: per-sample (small data, needs padding logic)
+        # Only read 'action' key, not all keys
+        action_arr = self.replay_buffer['action']
+        actions = np.empty(
+            (B, self.horizon) + action_arr.shape[1:], dtype=np.float32)
+        for i, idx in enumerate(indices):
+            index_row = self.sampler.indices[idx]
+            data = self.sampler._sample_sequence_from_index_row(index_row, ['action'])
+            actions[i] = data['action'].astype(np.float32)
+
+        result = []
+        for i in range(B):
+            obs_dict = {key: torch.from_numpy(obs_batched[key][i]) for key in obs_batched}
+            result.append({
+                'obs': obs_dict,
+                'action': torch.from_numpy(actions[i])
+            })
+        return result
 
 
 def _convert_actions(raw_actions, abs_action, rotation_transformer):
