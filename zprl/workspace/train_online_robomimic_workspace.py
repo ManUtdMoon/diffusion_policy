@@ -25,7 +25,7 @@ import collections
 from stable_baselines3.common.buffers import ReplayBuffer
 
 from zprl.workspace.base_workspace import BaseWorkspace
-from zprl.policy.flow_match_unet_image_policy import FlowMatchUnetImagePolicy
+from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 from zprl.policy.residue_policy import ResiduePolicy, SumPolicy
 from zprl.env_runner.base_image_runner import BaseImageRunner
 from zprl.common.checkpoint_util import TopKCheckpointManager
@@ -66,10 +66,16 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         ## load base policy
         base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
         base_cfg = base_payload['cfg']
+        # patch legacy checkpoint configs that still use the old package name
+        base_cfg_yaml = OmegaConf.to_yaml(base_cfg)
+        if 'diffusion_policy' in base_cfg_yaml:
+            base_cfg_yaml = base_cfg_yaml.replace('diffusion_policy', 'zprl')
+            base_cfg = OmegaConf.create(base_cfg_yaml)
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
         base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
-        self.base_policy: FlowMatchUnetImagePolicy
+        base_cfg.policy.num_inference_steps = cfg.num_inference_steps
+        self.base_policy: FlowMatchVibUnetImagePolicy
         self.base_policy = hydra.utils.instantiate(base_cfg.policy)
         self.base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])
         print(f"Loaded base policy from {cfg.online_task.base_ckpt}")
@@ -84,26 +90,24 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             for m in crop_randomizers:
                 m.force_random_crop = mode
 
-        ## load demo_obs_emb from base policy
-        checkpoint = cfg.online_task.base_ckpt
-        ckpt_dir = pathlib.Path(checkpoint).parent
-        ckpt_name = pathlib.Path(checkpoint).stem
-        demo_emb_path = ckpt_dir / f'{ckpt_name}_obs_emb_action.pt'
-        # demo_emb = torch.load(open(demo_emb_path, 'rb'), pickle_module=dill)
-
         ## configure res policy
-        obs_emb_dim = self.base_policy.obs_feature_dim # do, Do=To*do
-        act_dim = cfg.shape_meta.action.shape[0] # da
-        act_seq_dim = cfg.n_action_steps * act_dim # Da=Ta*da
+        To = cfg.n_obs_steps
+        Ta = cfg.n_action_steps
+        do = self.base_policy.obs_feature_dim
+        Do = To * do  # obs chunk dim
+        dz = self.base_policy.vib_latent_dim
+        da = cfg.shape_meta.action.shape[0]
+        Da = Ta * da  # action chunk dim
+
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=obs_emb_dim, action_dim=act_seq_dim)
-        print(f"Residue policy with do={obs_emb_dim}, Da={act_seq_dim}, gamma={self.res_policy.gamma}")
+            cfg.res_policy, obs_dim=Do, action_dim=Da)
+        print(f"Residue policy with Do={Do}, Da={Da}, gamma={self.res_policy.gamma}")
 
         ## sum policy
         sum_policy = SumPolicy(
             res_scale=cfg.training.res_scale,
-            obs_emb_dim=obs_emb_dim,
-            action_dim=act_dim,
+            obs_emb_dim=Do,
+            action_dim=Da,
             n_action_steps=cfg.n_action_steps,
             base_policy=self.base_policy,
             res_policy=self.res_policy
@@ -163,19 +167,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
 
-        ### uncomment to set all train env as in-demo env
-        # env_init_fn_dills = list()
-        # with h5py.File(dataset_path, 'r') as f:
-        #     for i in range(cfg.training.n_envs):
-        #         init_state = f[f'data/demo_{i}/states'][0]
-
-        #         def init_fn(env, init_state=init_state):
-        #             assert isinstance(env.env, RobomimicImageWrapper)
-        #             env.env.init_state = init_state
-        #         env_init_fn_dills.append(dill.dumps(init_fn))
-        # envs.call_each('run_dill_function', 
-        #     args_list=[(x,) for x in env_init_fn_dills])
-
         # configure logging
         wandb_run = wandb.init(
             dir=str(self.output_dir),
@@ -192,10 +183,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         device = torch.device(cfg.training.device)
         self.base_policy.to(device)
         self.res_policy.to(device)
-        ## extract rgb_emb from demo_obs_emb
-        lowdim_dim = sum([self.base_policy.obs_encoder.key_shape_map[k][0] for k in self.base_policy.obs_encoder.low_dim_keys])
-        rgb_emb_dim = obs_emb_dim - lowdim_dim
-        # demo_rgb_emb = demo_emb['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim].to(device)  # (N, di)
 
         optimizers = self.res_policy.get_optimizer(
             policy_lr=cfg.training.policy_lr,
@@ -208,11 +195,11 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(obs_emb_dim,), dtype=np.float32
+            shape=(Do,), dtype=np.float32
         )
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(act_seq_dim * 3,), dtype=np.float32
+            shape=(Da * 3,), dtype=np.float32
         )
         rb = ReplayBuffer(
             cfg.training.buffer_size,
@@ -307,7 +294,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     self.global_step += n_envs
 
                     ## retrieve from base cache
-                    obs_emb_tensor = base_dict['obs_emb'][:, -obs_emb_dim:].detach()
+                    obs_emb_tensor = base_dict['obs_emb'].detach()
                     base_naction_tensor = base_dict['naction'].detach()
                     base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
 
@@ -353,7 +340,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                     next_base_dict = self.base_policy.predict_action(next_obs_seq_tensor)
-                    next_obs_emb_tensor = next_base_dict['obs_emb'][:, -obs_emb_dim:].detach()
+                    next_obs_emb_tensor = next_base_dict['obs_emb'].detach()
                     next_base_naction_tensor = next_base_dict['naction'].detach()
                     actions_to_save = np.concatenate(
                         [
@@ -434,21 +421,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## fetch data
                     batch = rb.sample(cfg.training.batch_size)
 
-                    ## compute d2d of this batch
-                    # with torch.no_grad():
-                    #     batch_rgb = batch.observations[..., :rgb_emb_dim]
-                    #     batch_d2d = torch.cdist(
-                    #         batch_rgb, demo_rgb_emb
-                    #     ).min(dim=1).values # (B,)
-
                     ## update critics
                     critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
                     q_opt.zero_grad()
                     critic_loss.backward()
                     q1_grad_norm = torch.nn.utils.clip_grad_norm_(
                         self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
-                    # q2_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    #     self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
                     q_opt.step()
 
                     ## update target
@@ -489,7 +467,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
-                    # 'info/uncertainty': batch_d2d.mean().item(),
+
                     'info/res_naction_norm': actor_info['res_naction_norm'],
                     'info/recent_done_sr': recent_done_sr,
                     'info/recent_done_count': recent_done_count,
@@ -497,7 +475,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'loss/critic_loss': critic_loss.item() / 2.0,
                     'loss/actor_loss': actor_loss.item(),
                     'loss/q1_grad_norm': q1_grad_norm.item(),
-                    # 'loss/q2_grad_norm': q2_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),
                     'loss/alpha': alpha,
                 }
@@ -527,19 +504,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         'res_policy': self.res_policy.state_dict(),
                     }
                     torch.save(payload, path.open('wb'), pickle_module=dill)
-                
-                # uncomment to save early buffer for d2d visualization
-                # if self.global_step % 10_000 == 0 and self.global_step <= 50_000:
-                #     rb_obs_emb = rb.observations
-                #     if not rb.full:
-                #         rb_obs_emb = rb.observations[:rb.pos]
-                #     print(rb_obs_emb.shape) # (N, n_env, do)
-
-                #     rb_obs_emb_path = pathlib.Path(self.output_dir) / f'rb_obs_emb_{self.global_step}.npy'
-                #     np.save(rb_obs_emb_path, rb_obs_emb)
-                #     print(f"RB obs embeddings saved to {rb_obs_emb_path}")
-
-        # envs.close()
 
 
 @hydra.main(
