@@ -11,9 +11,9 @@ exp_name: "default"
 
 horizon: 16
 n_obs_steps: 1
-n_action_steps: 5 # 5 for transport, others 4, tool_hang TBD
+n_action_steps: 4 # transport 5, others 4, tool_hang 8
 n_latency_steps: 0
-num_inference_steps: 2 # 2 for can/square/transport, tool_hang TBD
+num_inference_steps: 2 # 2 for can/square/transport, tool_hang 20
 
 res_policy:
   _target_: zprl.policy.latent_policy.ResiduePolicy
@@ -24,8 +24,8 @@ res_policy:
   hidden_dim: 256
   log_std_min: -10.0
   log_std_max: 2.0
-  gamma: ${eval:"round(0.997**${n_action_steps}, 3)"}  # for transport, tool_hang TBD
-  # gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}  # for can, square is enough
+  # gamma: ${eval:"round(0.997**${n_action_steps}, 3)"}  # for transport, tool_hang TBD
+  gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}  # for can, square is enough
   tau: 0.005
   init_alpha: 0.01
   auto_alpha: True
@@ -41,7 +41,7 @@ training:
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 3e-4
-  learning_start: 4000  # 4k for transport, tool_hang, 2k for others
+  learning_start: 2000  # 4k for transport, tool_hang, 2k for others
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
@@ -55,8 +55,8 @@ training:
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
   q_pretrain_steps: 0
-  num_steps: 800000
-  buffer_size: 800000  # 500k for transport, tool_hang, 1M for others
+  num_steps: 1000000
+  buffer_size: 1000000  # 500k for transport, tool_hang, 1M for others
   log_every: 1000
   eval_every: 50000
   checkpoint_every: 100000
