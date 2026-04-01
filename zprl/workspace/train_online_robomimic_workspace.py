@@ -22,8 +22,6 @@ import numpy as np
 import gym
 import gymnasium
 import collections
-from stable_baselines3.common.buffers import ReplayBuffer
-
 from zprl.workspace.base_workspace import BaseWorkspace
 from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 from zprl.policy.residue_policy import ResiduePolicy, SumPolicy
@@ -31,11 +29,13 @@ from zprl.env_runner.base_image_runner import BaseImageRunner
 from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
 from zprl.common.pytorch_util import dict_apply, optimizer_to
+from zprl.common.online_episode_accumulator import OnlineEpisodeAccumulator
+from zprl.common.dense_chunk_replay_buffer import DenseChunkReplayBuffer
 from zprl.model.common.rotation_transformer import RotationTransformer
 from zprl.model.vision.crop_randomizer import CropRandomizerV2
 from zprl.env_runner.robomimic_image_runner import create_env
 from zprl.gym_util.async_vector_env import AsyncVectorEnv
-from zprl.gym_util.multistep_wrapper import MultiStepWrapper
+from zprl.gym_util.dense_multistep_wrapper import DenseMultiStepWrapper
 from zprl.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper, RobomimicEarlyStopWrapper
 import robomimic.utils.file_utils as FileUtils
 
@@ -107,7 +107,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         sum_policy = SumPolicy(
             res_scale=cfg.training.res_scale,
             obs_emb_dim=Do,
-            action_dim=Da,
+            action_dim=da,
             n_action_steps=cfg.n_action_steps,
             base_policy=self.base_policy,
             res_policy=self.res_policy
@@ -134,7 +134,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 shape_meta=shape_meta
             )
             robomimic_env.env.hard_reset = False
-            return MultiStepWrapper(
+            return DenseMultiStepWrapper(
                 RobomimicImageWrapper(
                     env=RobomimicEarlyStopWrapper(robomimic_env),
                     shape_meta=shape_meta,
@@ -144,15 +144,16 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
-                reward_agg_method='discounted_sum'
+                reward_agg_method='discounted_sum',
+                gamma=cfg.single_gamma
             )
         def dummy_env_fn():
             robomimic_env = create_env(
-                env_meta=env_meta, 
+                env_meta=env_meta,
                 shape_meta=shape_meta,
                 enable_render=False
             )
-            return MultiStepWrapper(
+            return DenseMultiStepWrapper(
                 RobomimicImageWrapper(
                     env=RobomimicEarlyStopWrapper(robomimic_env),
                     shape_meta=shape_meta,
@@ -162,7 +163,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
-                reward_agg_method='discounted_sum'
+                reward_agg_method='discounted_sum',
+                gamma=cfg.single_gamma
             )
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
@@ -192,23 +194,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         actor_opt = optimizers['actor_optimizer']
         alpha_opt = optimizers['alpha_optimizer']
 
-        # replay buffer
-        dummy_obs_space = gymnasium.spaces.Box(
-            low=-np.inf, high=np.inf,
-            shape=(Do,), dtype=np.float32
-        )
-        dummy_buf_action_space = gymnasium.spaces.Box(
-            low=-np.inf, high=np.inf,
-            shape=(Da * 3,), dtype=np.float32
-        )
-        rb = ReplayBuffer(
-            cfg.training.buffer_size,
-            dummy_obs_space,
-            dummy_buf_action_space,
+        # replay buffer & episode accumulator
+        rb = DenseChunkReplayBuffer(
+            capacity=cfg.training.buffer_size,
+            obs_dim=Do,
+            action_dim=Da,
             device=device,
-            n_envs=cfg.training.n_envs,
-            handle_timeout_termination=False,
         )
+        accumulator = OnlineEpisodeAccumulator(n_envs=cfg.training.n_envs)
 
         if cfg.training.debug:
             cfg.training.num_steps = 5000
@@ -296,7 +289,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## retrieve from base cache
                     obs_emb_tensor = base_dict['obs_emb'].detach()
                     base_naction_tensor = base_dict['naction'].detach()
-                    base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
 
                     ## pi-dec progressive exploration
                     res_ratio = min(
@@ -318,9 +310,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         obs_emb_tensor,
                         res_mask=res_masks
                     )
+
+                    ## save normalized action chunks for accumulator (before cpu numpy)
+                    base_naction_np = base_naction_tensor.cpu().numpy()  # (n_envs, Ta, da)
+                    sum_naction_np = sum_dict['naction'].detach().cpu().numpy()  # (n_envs, Ta, da)
+
                     sum_dict = dict_apply(
                         sum_dict, lambda x: x.detach().cpu().numpy())
-                    res_naction_flat = sum_dict['res_naction_flat']
                     action = sum_dict['action']
 
                     ## env_action and step
@@ -334,43 +330,43 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## 1. fixed epi len performs better with positive rewards
                     # rewards -= 1.0
 
-                    ## prepare transitions for rb
-                    ## because we do not bootstrap at done, we can use next_obs_seq directly
-                    assert cfg.training.bootstrap_at_done == 'never'
+                    ## feed to accumulator and finalize finished episodes
+                    finished_episodes = accumulator.add_step(
+                        infos=infos,
+                        base_naction_chunks=base_naction_np,
+                        sum_naction_chunks=sum_naction_np,
+                    )
+                    for ep in finished_episodes:
+                        result = DenseChunkReplayBuffer.finalize_episode(
+                            episode=ep,
+                            base_policy=self.base_policy,
+                            n_obs_steps=To,
+                            n_action_steps=Ta,
+                            action_dim=da,
+                            res_scale=res_scale,
+                            gamma=cfg.single_gamma,
+                            chunk_stride=cfg.training.chunk_stride,
+                            keep_terminal_chunk=cfg.training.keep_terminal_chunk,
+                        )
+                        if result is not None:
+                            rb.add_chunks(*result)
+
+                    ## prepare next step base info
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                     next_base_dict = self.base_policy.predict_action(next_obs_seq_tensor)
-                    next_obs_emb_tensor = next_base_dict['obs_emb'].detach()
-                    next_base_naction_tensor = next_base_dict['naction'].detach()
-                    actions_to_save = np.concatenate(
-                        [
-                            res_naction_flat,
-                            base_naction_flat,
-                            next_base_naction_tensor.flatten(start_dim=1).cpu().numpy()
-                        ],
-                        axis=-1
-                    )
-
-                    rb.add(
-                        obs=obs_emb_tensor.cpu().numpy(),
-                        next_obs=next_obs_emb_tensor.cpu().numpy(),
-                        action=actions_to_save,
-                        reward=rewards,
-                        done=dones,
-                        infos=infos
-                    )
 
                     ## switch to next step
                     obs_seq = next_obs_seq
                     base_dict = next_base_dict
 
-                if self.global_step < learning_start:
+                if self.global_step < learning_start or len(rb) < cfg.training.batch_size:
                     # Warmup phase: skip training, only collect data
                     continue
 
-                # Q pre-training
+                # Q pre-training (once, when enough data is available)
                 if (
-                    self.global_step == learning_start and
+                    self.global_update == 0 and
                     cfg.training.q_pretrain_steps > 0
                 ):
                     print("Q pre-training starts...")

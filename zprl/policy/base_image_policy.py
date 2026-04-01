@@ -15,6 +15,17 @@ class BaseImagePolicy(ModuleAttrMixin):
         """
         raise NotImplementedError()
 
+    def encode_frame(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Encode single-step observations into frame embeddings.
+
+        Args:
+            obs_dict: dict of tensors with shape (B, *)
+        Returns:
+            frame_emb: (B, do) per-timestep observation embedding
+        """
+        raise NotImplementedError()
+
     # reset state for stateful policies
     def reset(self):
         pass

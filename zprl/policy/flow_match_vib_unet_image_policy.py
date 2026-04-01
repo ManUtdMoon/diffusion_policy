@@ -141,6 +141,19 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
 
         return trajectory
     
+    def encode_frame(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Encode single-step observations into frame embeddings.
+
+        Args:
+            obs_dict: dict of tensors with shape (B, *)
+        Returns:
+            frame_emb: (B, do)
+        """
+        nobs = self.normalizer.normalize(obs_dict)
+        obs_emb = self.obs_encoder(nobs)  # (B, do)
+        return obs_emb
+
     def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         nobs = self.normalizer.normalize(obs_dict)
         B, To = next(iter(nobs.values())).shape[:2]
