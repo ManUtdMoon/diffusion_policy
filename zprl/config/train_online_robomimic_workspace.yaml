@@ -17,18 +17,15 @@ single_gamma: 0.99  # single-step gamma; multi-step gamma for RL is computed fro
 num_inference_steps: 2
 
 res_policy:
-  _target_: zprl.policy.residue_policy.ResiduePolicy
+  _target_: zprl.policy.td3_policy.TD3Policy
   obs_dim: ???
   action_dim: ???
   actor_input: obs_action
   hidden_dim: 256
-  log_std_min: -10.0
-  log_std_max: 2.0
   gamma: ${eval:"round(${single_gamma}**${n_action_steps}, 4)"}  # multi-step gamma for Bellman target
   tau: 0.005
-  init_alpha: 0.01
-  auto_alpha: True
   res_scale: ${training.res_scale}
+  stddev_clip: 0.3
   num_qs: 2
   num_subset: 2
 
@@ -46,7 +43,10 @@ training:
   max_grad_norm: 50.0
   training_freq: 1000
   utd: 1.0
-  n_envs: ${online_task.n_envs}
+  # stddev schedule: linear decay from max to min over stddev_steps
+  stddev_max: 0.1
+  stddev_min: 0.1
+  stddev_steps: 500000
   # residue progress
   res_scale: 0.05
   prog_explore: 50000
