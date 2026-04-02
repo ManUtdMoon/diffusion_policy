@@ -115,9 +115,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
         # configure env
         ## eval, only average score needed
-        eval_env_runner: BaseImageRunner = hydra.utils.instantiate(
-            cfg.online_task.env_runner,
-            output_dir=self.output_dir)
+        # eval_env_runner: BaseImageRunner = hydra.utils.instantiate(
+        #     cfg.online_task.env_runner,
+        #     output_dir=self.output_dir)
         ## train
         ### fetch env_meta
         dataset_path = os.path.expanduser(cfg.online_task.dataset_path)
@@ -276,13 +276,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         base_dict = self.base_policy.predict_action(obs_seq_tensor)
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as logger:
-            set_rand_crop(False)
-            sum_policy.eval()
-            eval_log = eval_env_runner.run(sum_policy)
-            sum_policy.train()
+            # set_rand_crop(False)
+            # sum_policy.eval()
+            # eval_log = eval_env_runner.run(sum_policy)
+            # sum_policy.train()
             set_rand_crop(True)
-            logger.log(eval_log)
-            wandb_run.log(eval_log, step=self.global_step)
+            # logger.log(eval_log)
+            # wandb_run.log(eval_log, step=self.global_step)
 
             while self.global_step < n_steps:
                 step_log = dict()
@@ -387,8 +387,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         q_opt.step()
                         pretrain_q_losses.append(critic_loss.item())
 
-                        if self.global_update % cfg.training.target_freq == 0:
-                            self.res_policy.target_update()
+                        self.res_policy.target_update()
                     
                     print("Q pre-training finished.")
                     
@@ -412,45 +411,54 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     continue  # pretrain Q only
 
                 # training
+                n_utd = int(utd)
+                bs = cfg.training.batch_size
                 for _ in tqdm.tqdm(
-                        range(n_updates_per_training),
-                        desc=f"Update {n_updates_per_training} times",
+                        range(training_freq),
+                        desc=f"Update critic {n_updates_per_training}, actor {training_freq} times",
                         leave=False):
-                    self.global_update += 1
 
-                    ## fetch data
-                    batch = rb.sample(cfg.training.batch_size)
+                    ## sample all batches at once: n_utd for critic + 1 for actor
+                    big_batch = rb.sample((n_utd + 1) * bs)
+                    batches = [
+                        type(big_batch)(*(
+                            f[i*bs:(i+1)*bs] if f is not None else None
+                            for f in big_batch
+                        ))
+                        for i in range(n_utd + 1)
+                    ]
 
-                    ## update critics
-                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
-                    q_opt.zero_grad()
-                    critic_loss.backward()
-                    q1_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
-                    q_opt.step()
+                    ## update critics (UTD times per actor update)
+                    for i in range(n_utd):
+                        self.global_update += 1
 
-                    ## update target
-                    if self.global_update % cfg.training.target_freq == 0:
+                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batches[i], None)
+                        q_opt.zero_grad()
+                        critic_loss.backward()
+                        q1_grad_norm = torch.nn.utils.clip_grad_norm_(
+                            self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
+                        q_opt.step()
+
                         self.res_policy.target_update()
-                    
-                    ## update policy
-                    if self.global_update % cfg.training.policy_freq == 0:
-                        actor_loss, actor_info = self.res_policy.compute_actor_loss(batch)
-                        actor_opt.zero_grad()
-                        actor_loss.backward()
-                        actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                            self.res_policy.actor.parameters(),
-                            cfg.training.max_grad_norm
-                        )
-                        actor_opt.step()
 
-                        alpha = self.res_policy.init_alpha
-                        if cfg.res_policy.auto_alpha:
-                            alpha_loss = self.res_policy.compute_alpha_loss(batch)
-                            alpha_opt.zero_grad()
-                            alpha_loss.backward()
-                            alpha_opt.step()
-                            alpha = self.res_policy.log_alpha.exp().item()
+                    ## update actor (once per outer iteration)
+                    actor_batch = batches[-1]
+                    actor_loss, actor_info = self.res_policy.compute_actor_loss(actor_batch)
+                    actor_opt.zero_grad()
+                    actor_loss.backward()
+                    actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.res_policy.actor.parameters(),
+                        cfg.training.max_grad_norm
+                    )
+                    actor_opt.step()
+
+                    alpha = self.res_policy.init_alpha
+                    if cfg.res_policy.auto_alpha:
+                        alpha_loss = self.res_policy.compute_alpha_loss(actor_batch)
+                        alpha_opt.zero_grad()
+                        alpha_loss.backward()
+                        alpha_opt.step()
+                        alpha = self.res_policy.log_alpha.exp().item()
 
                 ## training metrics
                 recent_done_count, recent_done_sr = get_recent_success_stats()
@@ -482,12 +490,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     step_log['loss/alpha_loss'] = alpha_loss.item()
 
                 # evaluation
-                sum_policy.eval()
-                if self.global_step > 0 and self.global_step % eval_every == 0:
-                    set_rand_crop(False)
-                    eval_log = eval_env_runner.run(sum_policy)
-                    step_log.update(eval_log)
-                    set_rand_crop(True)
+                # sum_policy.eval()
+                # if self.global_step > 0 and self.global_step % eval_every == 0:
+                #     set_rand_crop(False)
+                #     eval_log = eval_env_runner.run(sum_policy)
+                #     step_log.update(eval_log)
+                #     set_rand_crop(True)
                 sum_policy.train()
 
                 # logging
@@ -496,14 +504,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     wandb_run.log(step_log, step=self.global_step)
 
                 # checkpointing
-                if self.global_step % checkpoint_every == 0:
-                    path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step_{self.global_step}.ckpt'
-                    path.parent.mkdir(parents=False, exist_ok=True)
-                    payload = {
-                        'cfg': self.cfg,
-                        'res_policy': self.res_policy.state_dict(),
-                    }
-                    torch.save(payload, path.open('wb'), pickle_module=dill)
+                # if self.global_step % checkpoint_every == 0:
+                #     path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step_{self.global_step}.ckpt'
+                #     path.parent.mkdir(parents=False, exist_ok=True)
+                #     payload = {
+                #         'cfg': self.cfg,
+                #         'res_policy': self.res_policy.state_dict(),
+                #     }
+                #     torch.save(payload, path.open('wb'), pickle_module=dill)
 
 
 @hydra.main(
