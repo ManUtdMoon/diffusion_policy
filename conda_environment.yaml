@@ -61,3 +61,4 @@ dependencies:
     - gymnasium==1.2.1
     - patchelf==0.17.2.4
     - stable-baselines3==2.7.0
+    - timm==1.0.26
