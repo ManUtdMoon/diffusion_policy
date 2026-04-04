@@ -52,6 +52,8 @@ training:
   prog_explore: 50000
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
+  preload_offline_data: False
+  preload_shuffle: True
   q_pretrain_steps: 0
   num_steps: 250000
   buffer_size: 250000  # 500k for transport, 1M for others

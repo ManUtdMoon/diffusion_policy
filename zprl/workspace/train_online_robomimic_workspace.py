@@ -209,6 +209,20 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             handle_timeout_termination=False,
         )
 
+        # offline demo preload
+        if cfg.training.preload_offline_data:
+            from zprl.common.robomimic_offline_replay import (
+                load_robomimic_offline_data_into_replay_buffer)
+            load_robomimic_offline_data_into_replay_buffer(
+                rb=rb,
+                dataset_path=dataset_path,
+                base_policy=self.base_policy,
+                base_cfg=base_cfg,
+                cfg=cfg,
+                device=device,
+                n_envs=cfg.online_task.n_envs,
+            )
+
         if cfg.training.debug:
             cfg.training.num_steps = 5000
             cfg.training.prog_explore = 1000
