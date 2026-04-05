@@ -8,7 +8,7 @@
 SESSION="train"
 GPUS=(0 1 2)
 SEEDS=(10 20 30)
-EXP_NAME="resrl-td3"
+EXP_NAME="resrl-td3-utd5"
 BASE_CKPT="data/upload/offline/square/checkpoints/epoch_0600-score_0.460.ckpt"
 
 # kill old session with the same name (optional, comment out if not wanted)

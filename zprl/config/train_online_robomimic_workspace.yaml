@@ -26,7 +26,7 @@ res_policy:
   tau: 0.005
   res_scale: ${training.res_scale}
   stddev_clip: 0.3
-  num_qs: 2
+  num_qs: 10
   num_subset: 2
 
 training:
@@ -41,8 +41,10 @@ training:
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
+  policy_freq: 2
+  target_freq: 2
   training_freq: 1000
-  utd: 1.0
+  utd: 5.0
   # stddev schedule: linear decay from max to min over stddev_steps
   stddev_max: 0.1
   stddev_min: 0.1
@@ -52,7 +54,7 @@ training:
   prog_explore: 50000
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
-  preload_offline_data: False
+  preload_offline_data: True
   preload_shuffle: True
   q_pretrain_steps: 0
   num_steps: 250000

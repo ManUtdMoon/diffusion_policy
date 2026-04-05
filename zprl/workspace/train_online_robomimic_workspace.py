@@ -322,7 +322,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
                     ## uncomment to disable progressive exploration
-                    # res_ratio = 1.0
+                    res_ratio = 1.0
 
                     ## prepare masks for progressive exploration
                     if self.global_step < learning_start:
@@ -337,7 +337,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     sum_dict = sum_policy.predict_train_action(
                         base_naction_tensor,
                         obs_emb_tensor,
-                        stddev=stddev,
+                        stddev=None,
                         res_mask=res_masks
                     )
                     sum_dict = dict_apply(
@@ -409,7 +409,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         q_opt.step()
                         pretrain_q_losses.append(critic_loss.item())
 
-                        self.res_policy.target_update()
+                        if self.global_update % cfg.training.target_freq == 0:
+                            self.res_policy.target_update()
                     
                     print("Q pre-training finished.")
                     
@@ -433,46 +434,37 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     continue  # pretrain Q only
 
                 # training
-                n_utd = int(utd)
-                bs = cfg.training.batch_size
                 for _ in tqdm.tqdm(
-                        range(training_freq),
-                        desc=f"Update critic {n_updates_per_training}, actor {training_freq} times",
+                        range(n_updates_per_training),
+                        desc=f"Update {n_updates_per_training} times",
                         leave=False):
+                    self.global_update += 1
 
-                    ## sample all batches at once: n_utd for critic + 1 for actor
-                    big_batch = rb.sample((n_utd + 1) * bs)
-                    batches = [
-                        type(big_batch)(*(
-                            f[i*bs:(i+1)*bs] if f is not None else None
-                            for f in big_batch
-                        ))
-                        for i in range(n_utd + 1)
-                    ]
+                    ## fetch data
+                    batch = rb.sample(cfg.training.batch_size)
 
-                    ## update critics (UTD times per actor update)
-                    for i in range(n_utd):
-                        self.global_update += 1
+                    ## update critics
+                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, stddev=None)
+                    q_opt.zero_grad()
+                    critic_loss.backward()
+                    q1_grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
+                    q_opt.step()
 
-                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batches[i], stddev)
-                        q_opt.zero_grad()
-                        critic_loss.backward()
-                        q1_grad_norm = torch.nn.utils.clip_grad_norm_(
-                            self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
-                        q_opt.step()
-
+                    ## update target
+                    if self.global_update % cfg.training.target_freq == 0:
                         self.res_policy.target_update()
-
-                    ## update actor (once per outer iteration)
-                    actor_batch = batches[-1]
-                    actor_loss, actor_info = self.res_policy.compute_actor_loss(actor_batch, stddev)
-                    actor_opt.zero_grad()
-                    actor_loss.backward()
-                    actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        self.res_policy.actor.parameters(),
-                        cfg.training.max_grad_norm
-                    )
-                    actor_opt.step()
+                    
+                    ## update policy
+                    if self.global_update % cfg.training.policy_freq == 0:
+                        actor_loss, actor_info = self.res_policy.compute_actor_loss(batch, stddev=None)
+                        actor_opt.zero_grad()
+                        actor_loss.backward()
+                        actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                            self.res_policy.actor.parameters(),
+                            cfg.training.max_grad_norm
+                        )
+                        actor_opt.step()
 
                 ## training metrics
                 recent_done_count, recent_done_sr = get_recent_success_stats()

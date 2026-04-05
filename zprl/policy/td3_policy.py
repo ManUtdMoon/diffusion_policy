@@ -95,8 +95,11 @@ class TD3Policy(ModuleAttrMixin):
                 actor_input = torch.cat([batch.next_observations, base_next_naction], dim=-1)
 
             # target policy smoothing
-            next_res_naction = self.actor.sample(
-                actor_input, stddev=stddev, clip=self.stddev_clip)
+            if stddev is None or stddev == 0:
+                next_res_naction = self.actor(actor_input)
+            else:
+                next_res_naction = self.actor.sample(
+                    actor_input, stddev=stddev, clip=self.stddev_clip)
 
             next_naction = next_res_naction * self.res_scale + base_next_naction
 
@@ -138,7 +141,7 @@ class TD3Policy(ModuleAttrMixin):
         actor_input = batch.observations
         if self.actor_input == 'obs_action':
             actor_input = torch.cat([batch.observations, base_naction], dim=-1)
-        if stddev > 0:
+        if stddev is not None and stddev > 0:
             res_naction = self.actor.sample(actor_input, stddev=stddev, clip=self.stddev_clip)
         else:
             res_naction = self.actor(actor_input)
@@ -149,6 +152,11 @@ class TD3Policy(ModuleAttrMixin):
         assert_shape(predicted_q, (bs, 1))
 
         actor_loss = -predicted_q.mean()
+
+        # q normalization
+        q_abs = all_q_preds.abs().mean().detach()
+        if q_abs > 1e-8:
+            actor_loss = actor_loss / q_abs
 
         info = {
             'res_naction_norm': torch.norm(res_naction, dim=-1).mean().item(),
