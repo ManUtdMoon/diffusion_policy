@@ -2,8 +2,8 @@ defaults:
   - _self_
   - task: can_image_abs
 
-name: train_flow_match_vib_unet_image
-_target_: zprl.workspace.train_flow_match_vib_unet_image_workspace.TrainFlowMatchVibUnetImageWorkspace
+name: train_flow_match_vib_unet_image_accelerate
+_target_: zprl.workspace.train_flow_match_vib_unet_image_accelerate_workspace.TrainFlowMatchVibUnetImageAccelerateWorkspace
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}
@@ -11,7 +11,7 @@ exp_name: "default"
 
 horizon: 16
 n_obs_steps: 1
-n_action_steps: 4  # transport 5, others 4, tool_hang 8
+n_action_steps: 4
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -37,15 +37,13 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: zprl.model.vision.model_getter.TimmPooling
-      model_name: "resnet18"
-      input_shape: [3, 76, 76] # should match crop_shape, [216, 216] for tool_hang
-      # pooling_kwargs
+      model_name: "convnextv2_pico"
+      input_shape: [3, 160, 160]
       pooling_type: "spatial_learned_embeddings"
       num_spatial_blocks: 8
       bottleneck_dim: 256
-    resize_shape: null
-    crop_shape: [76, 76]
-    # constant center crop
+    resize_shape: [177, 177]
+    crop_shape: [160, 160]
     random_crop: True
     use_group_norm: True
     share_rgb_model: False
@@ -54,16 +52,13 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 5 # 2 for can/square/transport, tool_hang 20
+  num_inference_steps: 5
   obs_as_global_cond: ${obs_as_global_cond}
   diffusion_step_embed_dim: 128
   down_dims: [128,256,512]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
-
-  # scheduler.step params
-  # predict_epsilon: True
 
 ema:
   _target_: zprl.model.diffusion.ema_model.EMAModel
@@ -74,15 +69,15 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 256
-  num_workers: 12
+  batch_size: 256  # total batch size across all GPUs
+  num_workers: 6
   shuffle: True
   pin_memory: True
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 64
-  num_workers: 4
+  batch_size: 64  # total batch size across all GPUs
+  num_workers: 2
   shuffle: False
   pin_memory: True
   persistent_workers: False
@@ -99,26 +94,20 @@ training:
   seed: 42
   debug: False
   resume: True
-  # optimization
+  mixed_precision: "no"
+  ddp_find_unused_parameters: True
   lr_scheduler: cosine_with_min_lr
   lr_warmup_steps: 100
   lr_scheduler_kwargs:
     min_lr_ratio: 0.0
   num_epochs: 1001
-  gradient_accumulate_every: 1
-  # EMA destroys performance when used with BatchNorm
-  # replace BatchNorm with GroupNorm.
   use_ema: True
-  # training loop control
-  # in epochs
   rollout_every: 100
   checkpoint_every: 100
   val_every: 25
   sample_every: 25
-  # steps per epoch
   max_train_steps: null
   max_val_steps: null
-  # misc
   tqdm_interval_sec: 1.0
 
 logging:

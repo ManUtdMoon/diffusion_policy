@@ -18,7 +18,6 @@ import random
 import wandb
 import tqdm
 import numpy as np
-import shutil
 from zprl.workspace.base_workspace import BaseWorkspace
 from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 from zprl.dataset.base_dataset import BaseImageDataset
@@ -94,8 +93,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
             optimizer=self.optimizer,
             num_warmup_steps=cfg.training.lr_warmup_steps,
             num_training_steps=(
-                len(train_dataloader) * cfg.training.num_epochs) \
-                    // cfg.training.gradient_accumulate_every,
+                len(train_dataloader) * cfg.training.num_epochs),
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
             last_epoch=self.global_step-1,
@@ -159,10 +157,6 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
             for local_epoch_idx in range(cfg.training.num_epochs):
                 step_log = dict()
                 # ========= train for this epoch ==========
-                if cfg.training.freeze_encoder:
-                    self.model.obs_encoder.eval()
-                    self.model.obs_encoder.requires_grad_(False)
-
                 train_losses = list()
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
@@ -173,10 +167,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                             train_sampling_batch = batch
 
                         # compute loss
-                        loss, vib_loss, info = self.model.compute_loss(batch)
-
-                        vib_loss.backward(retain_graph=True)
-                        self.model.model.zero_grad()  # vib does not update denoiser
+                        loss, info = self.model(batch)
                         loss.backward()
 
                         # step optimizer
@@ -237,7 +228,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss, vib_loss, info = self.model.compute_loss(batch)
+                                loss, info = self.model(batch)
                                 val_losses.append(loss.item())
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
