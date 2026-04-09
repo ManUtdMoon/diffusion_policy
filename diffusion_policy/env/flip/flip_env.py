@@ -38,6 +38,11 @@ keyboard_listener = keyboard.Listener(on_press=on_press)
 keyboard_listener.start()    
 
 
+def bgr_hwc_to_rgb_chw_uint8(image: np.ndarray) -> np.ndarray:
+    """Convert camera frame from HWC BGR uint8 to CHW RGB uint8."""
+    return np.moveaxis(image[:, :, ::-1], -1, 0).copy()
+
+
 class FlipEnv:
     def __init__(
         self, 
@@ -59,6 +64,8 @@ class FlipEnv:
         self.camera_queue = queue.Queue(maxsize=1)
         self.camera_thread = threading.Thread(target=self._get_camera_frame)
         self.camera_thread.start()
+        self._raw_step_images = []
+        self._raw_step_timestamps = []
 
         self.mode = mode
         self.prev_target = None
@@ -89,6 +96,24 @@ class FlipEnv:
         })
 
         print("Franka Env Init Done")
+
+    def start_dense_recording(self):
+        self._raw_step_images = []
+        self._raw_step_timestamps = []
+
+    def stop_dense_recording(self):
+        return
+
+    def get_dense_recording(self):
+        if len(self._raw_step_images) == 0:
+            images = np.array([])
+        else:
+            images = np.stack(self._raw_step_images, axis=0)
+        timestamps = np.array(self._raw_step_timestamps, dtype=np.float64)
+        return {
+            'image': images,
+            'timestamp': timestamps
+        }
 
     def _ensure_gripper(self):
         if self.gripper is None:
@@ -126,6 +151,7 @@ class FlipEnv:
         ## image
         frame = self.get_frame()
         raw_img = frame['color']  # (H, W, 3(bgr)), uint8
+        raw_img_chw = bgr_hwc_to_rgb_chw_uint8(raw_img)
 
         ## low_dim
         qpos = self.franka.get_joint()
@@ -134,6 +160,9 @@ class FlipEnv:
             'image': self._transform_image(raw_img),
         }
 
+        self.start_dense_recording()
+        self._raw_step_images.append(raw_img_chw)
+        self._raw_step_timestamps.append(time.monotonic())
         self.t_start = time.monotonic()
         self.prev_target = self.franka.get_pose()
         return obs.copy()
@@ -182,6 +211,7 @@ class FlipEnv:
         ## image
         frame = self.get_frame()
         raw_img = frame['color']  # (H, W, 3(bgr)), uint8
+        raw_img_chw = bgr_hwc_to_rgb_chw_uint8(raw_img)
 
         ## low_dim
         qpos = self.franka.get_joint()
@@ -189,6 +219,8 @@ class FlipEnv:
             'qpos': np.array(qpos, dtype=np.float32),
             'image': self._transform_image(raw_img),
         }
+        self._raw_step_images.append(raw_img_chw)
+        self._raw_step_timestamps.append(time.monotonic())
 
         self.done, timeout = self.terminate(is_done)
 
@@ -196,6 +228,7 @@ class FlipEnv:
         reward = 0.0
         is_success = False
         if self.done:
+            self.stop_dense_recording()
             user_input = input(
                 "\nEpisode ended. [0-9]=success, [a-z]=failure, [+]=s+regrasp, [-]=f+regrasp: "
             ).strip()

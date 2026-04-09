@@ -17,6 +17,7 @@ import os
 import random
 import numpy as np
 import pathlib
+import time
 import click
 import hydra
 import torch
@@ -43,8 +44,8 @@ from diffusion_policy.policy.sum_policy import SumPolicy as ActionSumPolicy
 @click.option("-m", "--max_steps", default=250, type=int, show_default=True)
 @click.option("-s", "--num_inference_steps", default=5, type=int, show_default=True)
 def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_steps, num_inference_steps):
-    if os.path.exists(output_dir):
-        click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(output_dir, timestamp)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     device = torch.device(device)
@@ -116,11 +117,11 @@ def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_step
         )
     else:
         res_policy: ActionResiduePolicy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=do, action_dim=Da
+            cfg.res_policy, obs_dim=Do, action_dim=Da
         )
         sum_policy = ActionSumPolicy(
             res_scale=cfg.training.res_scale,
-            obs_emb_dim=do,
+            obs_emb_dim=Do,
             action_dim=da,
             n_action_steps=Ta,
             base_policy=base_policy,

@@ -4,7 +4,7 @@ export MKL_NUM_THREADS=1
 
 python eval_sum_real.py \
     -c data/outputs/2026.02.12/14.27.47_train_online_vib_real_workspace_flip-8500/checkpoints/latest.ckpt \
-    -o data/eval/flip/robust_size \
+    -o data/eval/flip/zprl-demo \
     -d cuda:0 \
     -t 16 \
     -n 15 \

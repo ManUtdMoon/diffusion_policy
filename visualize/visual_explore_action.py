@@ -15,10 +15,14 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 from diffusion_policy.env.juicing.realsense import RealSense
+from diffusion_policy.env.flip.franka.common.pose_util import *
+from diffusion_policy.env.flip.franka.franka_interpolation_controller import tx_flange_tip, tx_tip_flange
 
 
 camera_intrinsics = (1346.89, 1346.89, 962.28, 559.75)
 camera_intrinsics = (1352.6510009765625, 1352.558837890625, 977.66455078125, 544.5784301757812)
+camera_intrinsics = (1370.8177490234375, 1369.2760009765625, 969.8046264648438, 559.4913940429688) # flip, 1080p
+camera_intrinsics = (304.62615966796875, 304.2835388183594, 162.17880249023438, 124.3314208984375) # flip, 240p
 # modify after calibrating extrinsics 
 X_root_camera = np.array([
     [-0.28586096,  0.63197252, -0.72034314,  0.7757766 ],
@@ -26,30 +30,25 @@ X_root_camera = np.array([
     [-0.02847747, -0.75698166, -0.65281528,  0.493779  ],
     [ 0.        ,  0.        ,  0.        ,  1.        ]
 ])
+X_root_camera = np.array([
+    [ 0.9986473,   0.0423569,   0.0301571,   0.598690  ],
+    [ 0.0118751,  -0.7504600,   0.6608092,  -0.3329134 ],
+    [ 0.0506215,  -0.6595572,  -0.7499479,   0.3920208 ],
+    [ 0.        ,  0.        ,  0.        ,  1.        ]
+]) # flip main
 
 
-def _rpy_to_matrix(roll, pitch, yaw):
-    cr = np.cos(roll)
-    sr = np.sin(roll)
-    cp = np.cos(pitch)
-    sp = np.sin(pitch)
-    cy = np.cos(yaw)
-    sy = np.sin(yaw)
-    # R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
-    return np.array([
-        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-        [-sp, cp * sr, cp * cr],
-    ], dtype=np.float64)
+# franka
+def _wrist_to_ee_position(tip_pose):
+    # tip_pose is xyz + rotvec
+    # 1. transfer to flange pose
+    flange_mat = pose_to_mat(tip_pose) @ tx_tip_flange
+    p_root_flange = flange_mat[:3, 3]
+    R = flange_mat[:3, :3]
+    p_flange_ee = np.array([0.0, 0.21, 0.33], dtype=np.float64)
 
-
-def _wrist_to_ee_position(wrist_pose):
-    # wrist_pose: [x, y, z, roll, pitch, yaw] in root frame
-    x, y, z, roll, pitch, yaw = wrist_pose.tolist()
-    R = _rpy_to_matrix(roll, pitch, yaw)
-    p_root_wrist = np.array([x, y, z], dtype=np.float64)
-    p_wrist_ee = np.array([0.0, 0.0, 0.1], dtype=np.float64)
-    p_root_ee = p_root_wrist + R @ p_wrist_ee
+    # 2. from flange to spatula
+    p_root_ee = p_root_flange + R @ p_flange_ee
     return p_root_ee
 
 
@@ -75,6 +74,7 @@ def _load_xyz_points(actions_path, action_key, ratio):
             elif arr.ndim == 2:
                 for i in range(arr.shape[0]):
                     points.append(_wrist_to_ee_position(arr[i, :6]))
+            break
     if len(points) == 0:
         return np.zeros((0, 3), dtype=np.float64)
     if ratio is None or ratio <= 1:
