@@ -8,7 +8,7 @@ if __name__ == "__main__":
 
 import shutil
 from pathlib import Path
-
+import pathlib
 import click
 import cv2
 import h5py
@@ -19,18 +19,34 @@ from diffusion_policy.env.flip.franka.common.pose_util import pose_to_mat
 from diffusion_policy.env.flip.franka.franka_interpolation_controller import tx_tip_flange
 
 
+# # original obs cam
+# camera_intrinsics = (
+#     304.62615966796875,
+#     304.2835388183594,
+#     162.17880249023438,
+#     124.3314208984375,
+# )  # flip, 320x240
+# X_root_camera = np.array([
+#     [0.9986473, 0.0423569, 0.0301571, 0.5986900],
+#     [0.0118751, -0.7504600, 0.6608092, -0.3329134],
+#     [0.0506215, -0.6595572, -0.7499479, 0.3920208],
+#     [0.0, 0.0, 0.0, 1.0],
+# ], dtype=np.float64)  # flip main
+
+
+# new 3rd person cam
 camera_intrinsics = (
-    304.62615966796875,
-    304.2835388183594,
-    162.17880249023438,
-    124.3314208984375,
-)  # flip, 320x240
+    914.2162475585938, 912.3713989257812, 641.2334594726562, 367.01434326171875
+)  # flip, 720p
+camera_intrinsics = (
+    1371.3243408203125, 1368.5570068359375, 961.8501586914062, 550.521484375
+)  # flip, 1080p
 X_root_camera = np.array([
-    [0.9986473, 0.0423569, 0.0301571, 0.5986900],
-    [0.0118751, -0.7504600, 0.6608092, -0.3329134],
-    [0.0506215, -0.6595572, -0.7499479, 0.3920208],
-    [0.0, 0.0, 0.0, 1.0],
-], dtype=np.float64)  # flip main
+    [-0.56807536,  0.40205842, -0.71808037,  0.97540521],
+    [ 0.82259617,  0.30392551, -0.480588,    0.3367891 ],
+    [ 0.02501849, -0.86370036, -0.50338431,  0.51677582],
+    [ 0.         ,  0.         ,  0.         ,  1.        ],
+], dtype=np.float64)
 
 
 def _wrist_to_ee_position(tip_pose):
@@ -142,7 +158,7 @@ def main(traj_h5, fps, save_mode, output_path, in_camera_frame, radius):
         pixels, valid = _project_points(xyz, in_camera_frame)
         proj_chunks.append((pixels, valid))
 
-    chunk_colors = _reds_bgr(chunk_size)
+    chunk_colors = _reds_bgr(chunk_size * 2)
     frames = []
     for t in range(n_steps):
         c = t // chunk_size
@@ -150,7 +166,12 @@ def main(traj_h5, fps, save_mode, output_path, in_camera_frame, radius):
         bgr = np.moveaxis(dense_images[t + 1], 0, -1)[:, :, ::-1].copy()
 
         pixels, valid = proj_chunks[c]
-        _draw_points(bgr, pixels, valid, chunk_colors, radius)
+        _draw_points(bgr, pixels, valid, chunk_colors[:chunk_size], radius)
+
+        # plot next chunk
+        if c + 1 < n_chunk:
+            next_pixels, next_valid = proj_chunks[c + 1]
+            _draw_points(bgr, next_pixels, next_valid, chunk_colors[chunk_size:], radius)
 
         if valid[local_i]:
             u = int(round(pixels[local_i, 0]))
@@ -159,17 +180,20 @@ def main(traj_h5, fps, save_mode, output_path, in_camera_frame, radius):
                 cv2.circle(bgr, (u, v), radius + 3, (0, 255, 0), -1)
 
         frames.append(bgr[:, :, ::-1])
+    
+    # get h5 file name without extension for default output naming
+    suffix = pathlib.Path(traj_h5).stem
 
     if save_mode == "frames":
         if output_path is None:
-            output_path = traj_h5.parent / "flip_traj_frames"
+            output_path = traj_h5.parent / f"flip_traj_frames_{suffix}"
         if output_path.exists():
             shutil.rmtree(output_path)
         _save_frames(frames, output_path)
         print(f"Saved frames dir: {output_path}")
     else:
         if output_path is None:
-            output_path = traj_h5.parent / "flip_traj.mp4"
+            output_path = traj_h5.parent / f"flip_traj_{suffix}.mp4"
         if output_path.is_dir():
             raise ValueError(f"video mode expects file output path, got directory: {output_path}")
         output_path.parent.mkdir(parents=True, exist_ok=True)

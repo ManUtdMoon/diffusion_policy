@@ -298,7 +298,7 @@ class SumPolicy:
         # 2. Construct input for res_policy and predict residual (deterministically)
         Do, dz = self.res_policy.obs_dim, self.res_policy.z_dim
         res_input = _agg_obs(self.actor_input_type, obs_z, Do, dz)
-        res_z = self.res_policy.predict_res_z(res_input, argmax=True)
+        res_z = self.res_policy.predict_res_z(res_input, argmax=False)
 
         # 3. Apply residual and decode back to conditional embedding
         perturbed_z = z_mean + self.res_scale * res_z

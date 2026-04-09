@@ -61,7 +61,7 @@ class SumPolicy:
             res_input = torch.cat(
                 [obs_emb, base_naction.flatten(start_dim=1)], dim=-1)
         res_naction = self.res_policy.predict_res_naction(
-            res_input, True).reshape(-1, self.n_action_steps, self.action_dim)
+            res_input, False).reshape(-1, self.n_action_steps, self.action_dim)
 
         sum_naction = self.res_scale * res_naction + base_naction
         sum_action = normalizer['action'].unnormalize(sum_naction)

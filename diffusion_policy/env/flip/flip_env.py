@@ -1,15 +1,16 @@
 import time
 import numpy as np
 import cv2
-import threading
-import queue
 from pynput import keyboard
 from gym import spaces
 from scipy.spatial.transform import Rotation as R
 from pyrobotiqgripper import RobotiqGripper
 
 from diffusion_policy.env.flip.franka.franka_wrapper import FrankaWrapper
-from diffusion_policy.env.flip.realsense_flip import RealSense
+from diffusion_policy.env.flip.realsense_multiview import (
+    MultiViewRealSense,
+    DEFAULT_MULTI_CAMERAS,
+)
 from diffusion_policy.env.flip.franka.common.precise_sleep import precise_wait
 from diffusion_policy.env.flip.joints import (
     START_JOINTS,
@@ -59,11 +60,8 @@ class FlipEnv:
         self.gripper = None
 
         self.dt = dt
-        self.camera = RealSense(color_width=320, color_height=240)
+        self.camera = MultiViewRealSense(DEFAULT_MULTI_CAMERAS)
         self.camera.start()
-        self.camera_queue = queue.Queue(maxsize=1)
-        self.camera_thread = threading.Thread(target=self._get_camera_frame)
-        self.camera_thread.start()
         self._raw_step_images = []
         self._raw_step_timestamps = []
 
@@ -120,20 +118,8 @@ class FlipEnv:
             self.gripper = RobotiqGripper(portname='/dev/ttyUSB0')
         return self.gripper
 
-    def _get_camera_frame(self):
-        while True:
-            frame = self.camera.get_frame()
-            if self.camera_queue.full():
-                self.camera_queue.get()
-            self.camera_queue.put(frame)
-
     def get_frame(self):
-        while True:
-            if self.camera_queue.full():
-                frame = self.camera_queue.get()
-                assert not self.camera_queue.full()
-                return frame
-            time.sleep(1 / 300)
+        return self.camera.get_frames()
 
     def reset(self):
         print("<RESET>")
@@ -151,7 +137,8 @@ class FlipEnv:
         ## image
         frame = self.get_frame()
         raw_img = frame['color']  # (H, W, 3(bgr)), uint8
-        raw_img_chw = bgr_hwc_to_rgb_chw_uint8(raw_img)
+        raw_record = frame['record']  # (H, W, 3(bgr)), uint8
+        raw_record_chw = bgr_hwc_to_rgb_chw_uint8(raw_record)
 
         ## low_dim
         qpos = self.franka.get_joint()
@@ -161,7 +148,7 @@ class FlipEnv:
         }
 
         self.start_dense_recording()
-        self._raw_step_images.append(raw_img_chw)
+        self._raw_step_images.append(raw_record_chw)
         self._raw_step_timestamps.append(time.monotonic())
         self.t_start = time.monotonic()
         self.prev_target = self.franka.get_pose()
@@ -211,7 +198,8 @@ class FlipEnv:
         ## image
         frame = self.get_frame()
         raw_img = frame['color']  # (H, W, 3(bgr)), uint8
-        raw_img_chw = bgr_hwc_to_rgb_chw_uint8(raw_img)
+        raw_record = frame['record']  # (H, W, 3(bgr)), uint8
+        raw_record_chw = bgr_hwc_to_rgb_chw_uint8(raw_record)
 
         ## low_dim
         qpos = self.franka.get_joint()
@@ -219,7 +207,7 @@ class FlipEnv:
             'qpos': np.array(qpos, dtype=np.float32),
             'image': self._transform_image(raw_img),
         }
-        self._raw_step_images.append(raw_img_chw)
+        self._raw_step_images.append(raw_record_chw)
         self._raw_step_timestamps.append(time.monotonic())
 
         self.done, timeout = self.terminate(is_done)
