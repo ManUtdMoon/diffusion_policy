@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: juicing_s1
+  - task: wallet
 
 name: train_flow_match_vib_unet_image
 _target_: diffusion_policy.workspace.train_flow_match_vib_unet_image_workspace.TrainFlowMatchVibUnetImageWorkspace
@@ -9,9 +9,9 @@ task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: "default"
 
-horizon: 16
+horizon: 15
 n_obs_steps: 1
-n_action_steps: 16
+n_action_steps: 15
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -23,7 +23,7 @@ policy:
   vib_latent_dim: 32
   vib_alpha: 1.0
   vib_beta: 1.0e-4
-  vib_recon: 0.0
+  vib_recon: 0.01
   vib_hidden_dim: 256
 
   shape_meta: ${shape_meta}
@@ -37,14 +37,14 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.ResNet18Pooling
-      input_shape: [3, 128, 128] # should match crop_shape
+      input_shape: [3, 116, 156] # should match crop_shape
       weights: null
       # pooling_kwargs
       pooling_type: "spatial_learned_embeddings"
       num_spatial_blocks: 8
       bottleneck_dim: 256
     resize_shape: null
-    crop_shape: [124, 124]
+    crop_shape: [116, 156]
     # constant center crop
     random_crop: True
     use_group_norm: True

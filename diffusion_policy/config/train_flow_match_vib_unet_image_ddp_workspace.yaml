@@ -1,0 +1,10 @@
+defaults:
+  - train_flow_match_vib_unet_image_workspace
+  - _self_
+
+name: train_flow_match_vib_unet_image_ddp
+_target_: diffusion_policy.workspace.train_flow_match_vib_unet_image_ddp_workspace.TrainFlowMatchVibUnetImageDDPWorkspace
+
+training:
+  mixed_precision: "no"
+  ddp_find_unused_parameters: True

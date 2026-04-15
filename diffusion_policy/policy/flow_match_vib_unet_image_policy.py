@@ -3,6 +3,7 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.func import functional_call
 from einops import rearrange, reduce
 from diffusers.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 
@@ -334,12 +335,14 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
     def set_normalizer(self, normalizer: LinearNormalizer):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
+    def forward(self, batch):
+        return self.compute_loss(batch)
+
     def compute_loss(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
-        nactions = torch.clamp(nactions, -1.0, 1.0)
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
 
@@ -390,25 +393,35 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         # KL divergence loss to regularize the latent space
         vib_kl_loss = -0.5 * torch.mean(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
         # --- VIB IL Loss ---
-        pred_vib_il = self.model(noisy_trajectory, timesteps, global_cond=modified_global_cond)
+        frozen_model_params = {
+            key: value.detach() for key, value in self.model.named_parameters()
+        }
+        frozen_model_buffers = {
+            key: value.detach() for key, value in self.model.named_buffers()
+        }
+        pred_vib_il = functional_call(
+            self.model,
+            (frozen_model_params, frozen_model_buffers),
+            (noisy_trajectory, timesteps),
+            {'global_cond': modified_global_cond}
+        )
         vib_il_loss = F.mse_loss(pred_vib_il, target)
         # --- VIB reconstruction loss ---, disabled for now
-        # vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
-        
-        # Total loss
-        loss = il_loss
+        vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
+
         vib_loss = (
             vib_il_loss
             + self.vib_beta * vib_kl_loss
-            # + self.vib_recon * vib_recon_loss
+            + self.vib_recon * vib_recon_loss
         )
+        loss = il_loss + vib_loss
 
         with torch.no_grad():
             delta_rms = (modified_global_cond - global_cond).pow(2).mean().sqrt()
             base_rms = global_cond.pow(2).mean().sqrt()
             # logging
             info = {
-                # 'il_loss': il_loss.item(),
+                'il_loss': il_loss.item(),
                 'vib_loss': vib_loss.item(),
                 'vib_il_loss': vib_il_loss.item(),
                 'vib_kl_loss': vib_kl_loss.item(),
@@ -417,7 +430,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
                 'z_mean_rms': z_mean.pow(2).mean().sqrt().item(),
                 'z_std_rms': (z_logvar * 0.5).exp().pow(2).mean().sqrt().item(),
                 'z_rms': z.pow(2).mean().sqrt().item(),
-                # 'vib_recon_loss': vib_recon_loss.item(),
+                'vib_recon_loss': vib_recon_loss.item(),
             }
 
-        return loss, vib_loss, info
+        return loss, info

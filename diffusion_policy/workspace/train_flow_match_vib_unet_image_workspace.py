@@ -167,10 +167,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                             train_sampling_batch = batch
 
                         # compute loss
-                        loss, vib_loss, info = self.model.compute_loss(batch)
-
-                        vib_loss.backward(retain_graph=True)
-                        self.model.model.zero_grad()  # vib does not update denoiser
+                        loss, info = self.model(batch)
                         loss.backward()
 
                         # step optimizer
@@ -231,7 +228,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss, vib_loss, info = self.model.compute_loss(batch)
+                                loss, info = self.model(batch)
                                 val_losses.append(loss.item())
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
