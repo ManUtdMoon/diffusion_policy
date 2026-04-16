@@ -23,6 +23,7 @@ import torch
 import dill
 import wandb
 import json
+import time
 
 from diffusion_policy.env_runner.flip_runner import FlipRunner
 from diffusion_policy.env_runner.juicing_runner import JuicingRunner
@@ -45,8 +46,8 @@ from diffusion_policy.policy.sum_policy import SumPolicy as ActionSumPolicy
 @click.option("-m", "--max_steps", default=250, type=int, show_default=True)
 @click.option("-s", "--num_inference_steps", default=5, type=int, show_default=True)
 def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_steps, num_inference_steps):
-    if os.path.exists(output_dir):
-        click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(output_dir, timestamp)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     device = torch.device(device)

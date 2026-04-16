@@ -13,6 +13,7 @@ horizon: 16
 n_obs_steps: 1
 n_action_steps: 16
 n_latency_steps: 0
+num_inference_steps: 5
 
 res_policy:
   _target_: diffusion_policy.policy.latent_policy.ResiduePolicy

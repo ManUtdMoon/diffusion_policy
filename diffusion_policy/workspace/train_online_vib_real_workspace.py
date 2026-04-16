@@ -91,6 +91,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
         base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
+        base_cfg.policy.num_inference_steps = cfg.num_inference_steps # may be different
         self.base_policy: FlowMatchVibUnetImagePolicy
         self.base_policy = hydra.utils.instantiate(base_cfg.policy)
         self.base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])

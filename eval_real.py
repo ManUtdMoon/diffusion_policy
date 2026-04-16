@@ -16,11 +16,13 @@ import torch
 import dill
 import wandb
 import json
+import time
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.env_runner.juicing_runner import JuicingRunner
 from diffusion_policy.env_runner.flip_runner import FlipRunner
 from diffusion_policy.env_runner.box_runner import BoxRunner
+from diffusion_policy.env_runner.wallet_runner import WalletRunner
 
 
 @click.command()
@@ -28,9 +30,10 @@ from diffusion_policy.env_runner.box_runner import BoxRunner
 @click.option('-o', '--output_dir', required=True)
 @click.option('-d', '--device', default='cuda:0')
 @click.option('-t', '--n_action_steps', default=16, type=int, required=True)
-def main(checkpoint, output_dir, device, n_action_steps):
-    if os.path.exists(output_dir):
-        click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
+@click.option('-s', '--num_inference_steps', default=2, type=int, required=True)
+def main(checkpoint, output_dir, device, n_action_steps, num_inference_steps):
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(output_dir, timestamp)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # load checkpoint
@@ -40,6 +43,7 @@ def main(checkpoint, output_dir, device, n_action_steps):
     cfg.n_action_steps = n_action_steps
     cfg.policy.n_action_steps = n_action_steps
     cfg.task.dataset.pad_after = n_action_steps - 1
+    cfg.policy.num_inference_steps = num_inference_steps
 
     cls = hydra.utils.get_class(cfg._target_)
     workspace = cls(cfg, output_dir=output_dir)
@@ -56,10 +60,10 @@ def main(checkpoint, output_dir, device, n_action_steps):
     policy.eval()
 
     # run eval
-    env_runner = BoxRunner(
+    env_runner = WalletRunner(
         output_dir=output_dir,
         eval_episodes=40,
-        max_steps=400,
+        max_steps=1000,
         n_obs_steps=cfg.n_obs_steps,
         n_action_steps=cfg.n_action_steps,
     )
