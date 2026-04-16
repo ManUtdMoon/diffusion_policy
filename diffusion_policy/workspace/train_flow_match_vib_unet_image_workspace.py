@@ -209,10 +209,10 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                 step_log['train_loss'] = train_loss
 
                 # ========= eval for this epoch ==========
-                policy = self.model
-                if cfg.training.use_ema:
-                    policy = self.ema_model
-                policy.eval()
+                policy = self.ema_model if cfg.training.use_ema else self.model
+                self.model.eval()
+                if self.ema_model is not None:
+                    self.ema_model.eval()
 
                 # # run rollout
                 # if (self.epoch % cfg.training.rollout_every) == 0:
@@ -279,7 +279,9 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                     if topk_ckpt_path is not None:
                         self.save_checkpoint(path=topk_ckpt_path)
                 # ========= eval end for this epoch ==========
-                policy.train()
+                self.model.train()
+                if self.ema_model is not None:
+                    self.ema_model.train()
 
                 # end of epoch
                 # log of last step is combined with validation and rollout

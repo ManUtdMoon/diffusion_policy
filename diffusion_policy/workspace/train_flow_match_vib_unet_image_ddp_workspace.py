@@ -153,19 +153,6 @@ class TrainFlowMatchVibUnetImageDDPWorkspace(BaseWorkspace):
             self.ema_model.set_normalizer(normalizer)
             self.ema_model.to(device)
 
-        # configure lr scheduler
-        lr_scheduler = get_scheduler(
-            cfg.training.lr_scheduler,
-            optimizer=self.optimizer,
-            num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=(
-                len(train_dataloader) * cfg.training.num_epochs) \
-                    // cfg.training.gradient_accumulate_every,
-            # pytorch assumes stepping LRScheduler every epoch
-            # however huggingface diffusers steps it every batch
-            last_epoch=self.global_step-1
-        )
-
         # configure ema
         ema: EMAModel = None
         if cfg.training.use_ema:
@@ -213,6 +200,19 @@ class TrainFlowMatchVibUnetImageDDPWorkspace(BaseWorkspace):
             model, optimizer, train_dataloader, val_dataloader)
         raw_policy = accelerator.unwrap_model(model)
 
+        # configure lr scheduler (after prepare so len(train_dataloader)
+        # reflects per-process step count, not the unsharded length)
+        lr_scheduler = get_scheduler(
+            cfg.training.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=(
+                len(train_dataloader) * cfg.training.num_epochs),
+            # pytorch assumes stepping LRScheduler every epoch
+            # however huggingface diffusers steps it every batch
+            last_epoch=self.global_step-1
+        )
+
         # save batch for sampling
         train_sampling_batch = None
 
@@ -234,9 +234,9 @@ class TrainFlowMatchVibUnetImageDDPWorkspace(BaseWorkspace):
                 del local_epoch_idx
                 step_log = dict()
                 # ========= train for this epoch ==========
-                if cfg.training.freeze_encoder:
-                    raw_policy.obs_encoder.eval()
-                    raw_policy.obs_encoder.requires_grad_(False)
+                model.train()
+                if self.ema_model is not None:
+                    self.ema_model.train()
 
                 train_losses = list()
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",
@@ -256,12 +256,12 @@ class TrainFlowMatchVibUnetImageDDPWorkspace(BaseWorkspace):
 
                         # step optimizer
                         optimizer.step()
-                        optimizer.zero_grad()
                         lr_scheduler.step()
 
                         # update ema
                         if cfg.training.use_ema:
                             ema.step(raw_policy)
+                        optimizer.zero_grad()
 
                         # logging
                         loss_cpu = _mean_scalar(accelerator, raw_loss, device)
@@ -317,7 +317,7 @@ class TrainFlowMatchVibUnetImageDDPWorkspace(BaseWorkspace):
                                 disable=not accelerator.is_local_main_process) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss, info = raw_policy.compute_loss(batch)
+                                loss, info = model(batch)
                                 del info
                                 val_losses.append(_mean_scalar(accelerator, loss.detach(), device))
                                 if (cfg.training.max_val_steps is not None) \

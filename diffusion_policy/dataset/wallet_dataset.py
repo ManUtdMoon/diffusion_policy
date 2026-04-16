@@ -46,6 +46,12 @@ class WalletDataset(BaseImageDataset):
             seed=42,
             val_ratio=0.0,
             num_demo=None,
+            # Optional per-sample RGB augmentation applied in __getitem__.
+            # Callable taking a [T, C, H, W] float tensor in [0, 1] and
+            # returning the same shape. One set of params per call, so
+            # augmentation is time-consistent across the T frames of a
+            # single sample. Automatically disabled on the validation set.
+            rgb_aug=None,
         ):
         replay_buffer = None
         if use_cache:
@@ -127,17 +133,19 @@ class WalletDataset(BaseImageDataset):
         self.horizon = horizon
         self.pad_before = pad_before
         self.pad_after = pad_after
+        self.rgb_aug = rgb_aug
 
     def get_validation_dataset(self):
         val_set = copy.copy(self)
         val_set.sampler = SequenceSampler(
-            replay_buffer=self.replay_buffer, 
+            replay_buffer=self.replay_buffer,
             sequence_length=self.horizon,
-            pad_before=self.pad_before, 
+            pad_before=self.pad_before,
             pad_after=self.pad_after,
             episode_mask=~self.train_mask
             )
         val_set.train_mask = ~self.train_mask
+        val_set.rgb_aug = None
         return val_set
 
     def get_normalizer(self, **kwargs) -> LinearNormalizer:
@@ -178,19 +186,21 @@ class WalletDataset(BaseImageDataset):
         obs_dict = dict()
         for key in self.rgb_keys:
             # move channel last to channel first
-            # T,H,W,C(rgb)
-            # convert uint8 image to float32
+            # T,H,W,C(rgb) -> T,C,H,W, float32 in [0, 1]
             imgs = np.moveaxis(data[key][T_slice],-1,1
                 ).astype(np.float32) / 255.
+            imgs = torch.from_numpy(imgs)
+            if self.rgb_aug is not None:
+                # one set of aug params per call -> time-consistent across T
+                imgs = self.rgb_aug(imgs)
             obs_dict[key] = imgs
-            # T,C(rgb),H,W
             del data[key]
         for key in self.lowdim_keys:
-            obs_dict[key] = data[key][T_slice].astype(np.float32)
+            obs_dict[key] = torch.from_numpy(data[key][T_slice].astype(np.float32))
             del data[key]
 
         torch_data = {
-            'obs': dict_apply(obs_dict, torch.from_numpy),
+            'obs': obs_dict,
             'action': torch.from_numpy(data['action'].astype(np.float32))
         }
         return torch_data

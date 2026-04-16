@@ -12,12 +12,12 @@ cd "${SCRIPT_DIR}"
 if [[ "${1:-}" == "--help-script" ]]; then
     cat <<'EOF'
 Usage:
-  ./train_flow_match_vib_unet_image_ddp.sh [hydra overrides ...]
+  ./train_offline_ddp.sh [hydra overrides ...]
 
 Examples:
-  ./train_flow_match_vib_unet_image_ddp.sh task=wallet training.seed=1
-  ./train_flow_match_vib_unet_image_ddp.sh dataloader.batch_size=128 logging.mode=offline
-  CUDA_VISIBLE_DEVICES=0,1 NUM_PROCESSES=2 ./train_flow_match_vib_unet_image_ddp.sh task=wallet
+  ./train_offline_ddp.sh task=wallet training.seed=1
+  ./train_offline_ddp.sh dataloader.batch_size=128 logging.mode=offline
+  CUDA_VISIBLE_DEVICES=0,1 NUM_PROCESSES=2 ./train_offline_ddp.sh task=wallet
 
 Launcher env:
   NUM_PROCESSES       Number of processes / GPUs to launch. Default: inferred from CUDA_VISIBLE_DEVICES, else 1.

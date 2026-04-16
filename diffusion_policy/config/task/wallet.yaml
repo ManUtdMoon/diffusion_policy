@@ -33,3 +33,13 @@ dataset:
   seed: 0
   val_ratio: 0.02
   num_demo: 50
+  # Per-sample image aug; torchvision ColorJitter samples one set of
+  # params per call, so all T frames of a sample get the same shift.
+  # Auto-disabled on the validation set via get_validation_dataset().
+  # Set to null to disable entirely.
+  rgb_aug:
+    _target_: torchvision.transforms.v2.ColorJitter
+    brightness: 0.1
+    contrast: 0.1
+    saturation: 0.1
+    hue: 0.02
