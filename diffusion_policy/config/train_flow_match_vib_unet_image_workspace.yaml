@@ -9,9 +9,10 @@ task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: "default"
 
-horizon: 16
-n_obs_steps: 1
-n_action_steps: 15
+horizon: 32 # 16, 24, 32
+obs_step_indices: [0, 2] # the last index must be o_t
+n_obs_steps: ${eval:'len(${obs_step_indices})'}
+n_action_steps: 20
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -54,7 +55,8 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 2
+  obs_action_offset: ${eval:'max(${obs_step_indices})'}
+  num_inference_steps: 5
   obs_as_global_cond: ${obs_as_global_cond}
   diffusion_step_embed_dim: 128
   down_dims: [256,384,512]
@@ -89,7 +91,7 @@ val_dataloader:
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1.4e-4
+  lr: 1.0e-4
   betas: [0.95, 0.999]
   eps: 1.0e-8
   weight_decay: 1.0e-6

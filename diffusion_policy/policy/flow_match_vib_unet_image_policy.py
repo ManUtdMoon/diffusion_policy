@@ -71,6 +71,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             horizon, 
             n_action_steps, 
             n_obs_steps,
+            obs_action_offset=None,
             num_inference_steps=None,
             obs_as_global_cond=True,
             diffusion_step_embed_dim=256,
@@ -139,6 +140,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
+        self.obs_action_offset = (n_obs_steps - 1) if obs_action_offset is None else obs_action_offset
         self.obs_as_global_cond = obs_as_global_cond
         self.kwargs = kwargs
 
@@ -248,7 +250,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
 
         # get action
-        start = To - 1
+        start = self.obs_action_offset
         end = start + self.n_action_steps
         action = action_pred[:,start:end]
         
@@ -297,7 +299,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
 
         # get action
-        start = To - 1
+        start = self.obs_action_offset
         end = start + self.n_action_steps
         action = action_pred[:,start:end]
         

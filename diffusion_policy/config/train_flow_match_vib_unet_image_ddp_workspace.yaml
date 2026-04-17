@@ -6,10 +6,10 @@ name: train_flow_match_vib_unet_image_ddp
 _target_: diffusion_policy.workspace.train_flow_match_vib_unet_image_ddp_workspace.TrainFlowMatchVibUnetImageDDPWorkspace
 
 dataloader:
-  num_workers: 8
+  num_workers: 16
 
 val_dataloader:
-  num_workers: 2
+  num_workers: 4
 
 training:
   mixed_precision: "no"

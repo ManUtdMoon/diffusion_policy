@@ -7,7 +7,7 @@ if __name__ == "__main__":
     sys.path.append(ROOT_DIR)
 
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import torch
 import numpy as np
 import h5py
@@ -42,6 +42,7 @@ class WalletDataset(BaseImageDataset):
             pad_before=0,
             pad_after=0,
             n_obs_steps=None,
+            obs_step_indices: Optional[List[int]]=None,
             use_cache=False,
             seed=42,
             val_ratio=0.0,
@@ -104,11 +105,18 @@ class WalletDataset(BaseImageDataset):
         # for key in rgb_keys:
         #     replay_buffer[key].compressor.numthreads=1
 
+        if obs_step_indices is not None:
+            assert n_obs_steps is not None
+            assert len(obs_step_indices) == n_obs_steps
+            loaded_obs_steps = max(obs_step_indices) + 1
+        else:
+            loaded_obs_steps = n_obs_steps
+
         key_first_k = dict()
-        if n_obs_steps is not None:
+        if loaded_obs_steps is not None:
             # only take first k obs from images
             for key in rgb_keys + lowdim_keys:
-                key_first_k[key] = n_obs_steps
+                key_first_k[key] = loaded_obs_steps
 
         val_mask = get_val_mask(
             n_episodes=replay_buffer.n_episodes, 
@@ -129,6 +137,7 @@ class WalletDataset(BaseImageDataset):
         self.rgb_keys = rgb_keys
         self.lowdim_keys = lowdim_keys
         self.n_obs_steps = n_obs_steps
+        self.obs_step_indices = np.array(obs_step_indices, dtype=np.int64) if obs_step_indices is not None else None
         self.train_mask = train_mask
         self.horizon = horizon
         self.pad_before = pad_before
@@ -181,7 +190,7 @@ class WalletDataset(BaseImageDataset):
         # since the rest will be discarded anyway.
         # when self.n_obs_steps is None
         # this slice does nothing (takes all)
-        T_slice = slice(self.n_obs_steps)
+        T_slice = self.obs_step_indices if self.obs_step_indices is not None else slice(self.n_obs_steps)
 
         obs_dict = dict()
         for key in self.rgb_keys:

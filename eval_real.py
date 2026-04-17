@@ -44,6 +44,7 @@ def main(checkpoint, output_dir, device, n_action_steps, num_inference_steps):
     cfg.policy.n_action_steps = n_action_steps
     cfg.task.dataset.pad_after = n_action_steps - 1
     cfg.policy.num_inference_steps = num_inference_steps
+    obs_step_indices = getattr(cfg, 'obs_step_indices', None)
 
     cls = hydra.utils.get_class(cfg._target_)
     workspace = cls(cfg, output_dir=output_dir)
@@ -65,6 +66,7 @@ def main(checkpoint, output_dir, device, n_action_steps, num_inference_steps):
         eval_episodes=40,
         max_steps=1000,
         n_obs_steps=cfg.n_obs_steps,
+        obs_step_indices=obs_step_indices,
         n_action_steps=cfg.n_action_steps,
     )
     runner_log = env_runner.run(policy)

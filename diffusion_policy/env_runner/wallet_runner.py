@@ -9,6 +9,7 @@ from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.env.wallet.wallet_env import WalletEnv
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
+from diffusion_policy.gym_util.sparse_obs_history_wrapper import SparseObsHistoryWrapper
 from diffusion_policy.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 
 
@@ -19,22 +20,31 @@ class WalletRunner(BaseImageRunner):
         eval_episodes=30,
         max_steps=1000,
         n_obs_steps=1,
+        obs_step_indices=None,
         n_action_steps=8,
         tqdm_interval_sec=5.0,
     ):
         super().__init__(output_dir)
 
+        env_n_obs_steps = n_obs_steps
+        if obs_step_indices is not None:
+            assert len(obs_step_indices) == n_obs_steps
+            env_n_obs_steps = max(obs_step_indices) + 1
+
         self.env = MultiStepWrapper(
             WalletEnv(),
-            n_obs_steps=n_obs_steps,
+            n_obs_steps=env_n_obs_steps,
             n_action_steps=n_action_steps,
             max_episode_steps=max_steps,
             reward_agg_method="sum",
         )
+        if obs_step_indices is not None:
+            self.env = SparseObsHistoryWrapper(self.env, obs_step_indices=obs_step_indices)
 
         self.eval_episodes = eval_episodes
         self.max_steps = max_steps
         self.n_obs_steps = n_obs_steps
+        self.obs_step_indices = obs_step_indices
         self.n_action_steps = n_action_steps
         self.tqdm_interval_sec = tqdm_interval_sec
 
