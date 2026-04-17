@@ -23,7 +23,7 @@ import multiprocessing
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.dataset.base_dataset import BaseImageDataset, LinearNormalizer
 from diffusion_policy.model.common.normalizer import LinearNormalizer
-from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs, Jpeg2k
+from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs
 from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
 from diffusion_policy.common.normalize_util import (
@@ -33,6 +33,8 @@ from diffusion_policy.common.normalize_util import (
     array_to_stats
 )
 register_codecs()
+
+MERGED_RGB_KEY = '_merged_rgb'
 
 class WalletDataset(BaseImageDataset):
     def __init__(self,
@@ -56,7 +58,7 @@ class WalletDataset(BaseImageDataset):
         ):
         replay_buffer = None
         if use_cache:
-            cache_zarr_path = dataset_path + f'-n_{num_demo}' + '.zarr'
+            cache_zarr_path = dataset_path + f'-n_{num_demo}-merged-rgb.zarr'
             print(f'Using cache at {cache_zarr_path}')
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
@@ -115,8 +117,9 @@ class WalletDataset(BaseImageDataset):
         key_first_k = dict()
         if loaded_obs_steps is not None:
             # only take first k obs from images
-            for key in rgb_keys + lowdim_keys:
+            for key in lowdim_keys:
                 key_first_k[key] = loaded_obs_steps
+            key_first_k[MERGED_RGB_KEY] = loaded_obs_steps
 
         val_mask = get_val_mask(
             n_episodes=replay_buffer.n_episodes, 
@@ -143,15 +146,22 @@ class WalletDataset(BaseImageDataset):
         self.pad_before = pad_before
         self.pad_after = pad_after
         self.rgb_aug = rgb_aug
+        self.loaded_obs_steps = loaded_obs_steps
 
     def get_validation_dataset(self):
         val_set = copy.copy(self)
+        key_first_k = dict()
+        if self.loaded_obs_steps is not None:
+            for key in self.lowdim_keys:
+                key_first_k[key] = self.loaded_obs_steps
+            key_first_k[MERGED_RGB_KEY] = self.loaded_obs_steps
         val_set.sampler = SequenceSampler(
             replay_buffer=self.replay_buffer,
             sequence_length=self.horizon,
             pad_before=self.pad_before,
             pad_after=self.pad_after,
-            episode_mask=~self.train_mask
+            episode_mask=~self.train_mask,
+            key_first_k=key_first_k
             )
         val_set.train_mask = ~self.train_mask
         val_set.rgb_aug = None
@@ -193,17 +203,16 @@ class WalletDataset(BaseImageDataset):
         T_slice = self.obs_step_indices if self.obs_step_indices is not None else slice(self.n_obs_steps)
 
         obs_dict = dict()
-        for key in self.rgb_keys:
+        merged_imgs = data.pop(MERGED_RGB_KEY)[T_slice]
+        for cam_idx, key in enumerate(self.rgb_keys):
             # move channel last to channel first
             # T,H,W,C(rgb) -> T,C,H,W, float32 in [0, 1]
-            imgs = np.moveaxis(data[key][T_slice],-1,1
-                ).astype(np.float32) / 255.
+            imgs = np.moveaxis(merged_imgs[:, cam_idx],-1,1).astype(np.float32) / 255.
             imgs = torch.from_numpy(imgs)
             if self.rgb_aug is not None:
                 # one set of aug params per call -> time-consistent across T
                 imgs = self.rgb_aug(imgs)
             obs_dict[key] = imgs
-            del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = torch.from_numpy(data[key][T_slice].astype(np.float32))
             del data[key]
@@ -286,53 +295,25 @@ def _convert_h5_to_replay(
                 dtype=this_data.dtype
             )
         
-        def img_copy(zarr_arr, zarr_idx, hdf5_arr, hdf5_idx):
-            try:
-                zarr_arr[zarr_idx] = hdf5_arr[hdf5_idx]
-                # make sure we can successfully decode
-                _ = zarr_arr[zarr_idx]
-                return True
-            except Exception as e:
-                return False
-        
-        with tqdm(total=n_steps*len(rgb_keys), desc="Loading image data", mininterval=1.0) as pbar:
-            # one chunk per thread, therefore no synchronization needed
-            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
-                futures = set()
-                for key in rgb_keys:
-                    data_key = f"images/{key}"
-                    shape = tuple(shape_meta['obs'][key]['shape'])
-                    c,h,w = shape
-                    this_compressor = Jpeg2k(level=50)
-                    img_arr = data_group.require_dataset(
-                        name=key,
-                        shape=(n_steps,h,w,c),
-                        chunks=(1,h,w,c),
-                        compressor=this_compressor,
-                        dtype=np.uint8
-                    )
-                    for episode_idx in range(n_demo):
-                        demo = demos[f'demo_{episode_idx}']
-                        hdf5_arr = demo[data_key]
-                        for hdf5_idx in range(hdf5_arr.shape[0]):
-                            if len(futures) >= max_inflight_tasks:
-                                # limit number of inflight tasks
-                                completed, futures = concurrent.futures.wait(futures, 
-                                    return_when=concurrent.futures.FIRST_COMPLETED)
-                                for f in completed:
-                                    if not f.result():
-                                        raise RuntimeError('Failed to encode image!')
-                                pbar.update(len(completed))
-
-                            zarr_idx = episode_starts[episode_idx] + hdf5_idx
-                            futures.add(
-                                executor.submit(img_copy, 
-                                    img_arr, zarr_idx, hdf5_arr, hdf5_idx))
-                completed, futures = concurrent.futures.wait(futures)
-                for f in completed:
-                    if not f.result():
-                        raise RuntimeError('Failed to encode image!')
-                pbar.update(len(completed))
+        c, h, w = tuple(shape_meta['obs'][rgb_keys[0]]['shape'])
+        merged_img_arr = data_group.require_dataset(
+            name=MERGED_RGB_KEY,
+            shape=(n_steps, len(rgb_keys), h, w, c),
+            chunks=(1, len(rgb_keys), h, w, c),
+            compressor=None,
+            dtype=np.uint8
+        )
+        with tqdm(total=n_demo, desc="Loading merged image data", mininterval=1.0) as pbar:
+            for episode_idx in range(n_demo):
+                demo = demos[f'demo_{episode_idx}']
+                stacked_imgs = np.stack(
+                    [demo[f"images/{key}"][:] for key in rgb_keys],
+                    axis=1
+                )
+                episode_start = episode_starts[episode_idx]
+                episode_end = episode_ends[episode_idx]
+                merged_img_arr[episode_start:episode_end] = stacked_imgs
+                pbar.update(1)
 
     replay_buffer = ReplayBuffer(root)
     return replay_buffer
@@ -368,13 +349,14 @@ def main():
     dataset = WalletDataset(
         shape_meta,
         dataset_path=dataset_path,
-        horizon=15,
-        pad_before=0,
-        pad_after=14,
-        n_obs_steps=1,
+        horizon=32,
+        pad_before=2,
+        pad_after=27,
+        n_obs_steps=2,
+        obs_step_indices=[0, 2],
         use_cache=True,
         val_ratio=0.02,
-        num_demo=50
+        num_demo=100
     )
 
     val_set = dataset.get_validation_dataset()
