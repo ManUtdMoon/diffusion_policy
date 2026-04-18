@@ -85,7 +85,7 @@ class WalletDataset(BaseImageDataset):
                     print('Loading cached ReplayBuffer from Disk.')
                     with zarr.DirectoryStore(cache_zarr_path) as zip_store:
                         replay_buffer = ReplayBuffer.copy_from_store(
-                            src_store=zip_store, store=zarr.MemoryStore())
+                            src_store=zip_store, store=None)
                     print('Loaded!')
         else:
             replay_buffer = _convert_h5_to_replay(
@@ -321,7 +321,7 @@ def _convert_h5_to_replay(
 
 def main():
     task = 'wallet'
-    dataset_path = f"/media/datahub-2/ydj/real/wallet/{task}.h5"
+    dataset_path = f"/media/datahub-2/ydj/real/wallet/{task}-n100.h5"
     shape_meta = {
         "obs": {
             "global": {
