@@ -9,9 +9,11 @@ task_name: ${online_task.name}
 shape_meta: ${online_task.shape_meta}
 exp_name: "default"
 
-horizon: 16
-n_obs_steps: 1
-n_action_steps: 16
+# Observation horizon is read from the base checkpoint config.
+horizon: null
+obs_step_indices: null
+n_obs_steps: null
+n_action_steps: 24
 n_latency_steps: 0
 num_inference_steps: 10
 

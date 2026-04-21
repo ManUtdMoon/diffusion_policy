@@ -86,6 +86,25 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         base_cfg = base_payload['cfg']
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
+        obs_step_indices = getattr(base_cfg, "obs_step_indices", None)
+        if obs_step_indices is not None:
+            obs_step_indices = list(obs_step_indices)
+        base_horizon = int(base_cfg.horizon)
+        base_n_obs_steps = int(base_cfg.n_obs_steps)
+        cfg.horizon = base_horizon
+        cfg.n_obs_steps = base_n_obs_steps
+        cfg.obs_step_indices = obs_step_indices
+        self.cfg.horizon = base_horizon
+        self.cfg.n_obs_steps = base_n_obs_steps
+        self.cfg.obs_step_indices = obs_step_indices
+        if obs_step_indices is not None:
+            print(
+                "Using sparse obs history from base checkpoint: "
+                f"obs_step_indices={obs_step_indices}, "
+                f"env_n_obs_steps={max(obs_step_indices) + 1}, "
+                f"policy_n_obs_steps={base_n_obs_steps}, "
+                f"horizon={base_horizon}"
+            )
         base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
         base_cfg.policy.num_inference_steps = cfg.num_inference_steps # may be different
         self.base_policy: FlowMatchVibUnetImagePolicy
@@ -105,7 +124,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         set_rand_crop(True)
 
         ## configure res policy
-        To = cfg.n_obs_steps
+        To = base_n_obs_steps
         Ta = cfg.n_action_steps
         do = self.base_policy.obs_feature_dim
         Do = To * do  # obs chunk dim
@@ -142,13 +161,24 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                 env = JuicingEnv()
             else:
                 raise ValueError(f"Unsupported real-world online task: {task_name}")
-            return MultiStepWrapper(
+
+            env_n_obs_steps = To
+            if obs_step_indices is not None:
+                from diffusion_policy.gym_util.sparse_obs_history_wrapper import SparseObsHistoryWrapper
+                assert len(obs_step_indices) == To, \
+                    f"len(obs_step_indices)={len(obs_step_indices)} must match n_obs_steps={To}"
+                env_n_obs_steps = max(obs_step_indices) + 1
+
+            env = MultiStepWrapper(
                 env,
-                n_obs_steps=To,
+                n_obs_steps=env_n_obs_steps,
                 n_action_steps=Ta,
                 max_episode_steps=cfg.online_task.max_steps,
                 reward_agg_method='discounted_sum'
             )
+            if obs_step_indices is not None:
+                env = SparseObsHistoryWrapper(env, obs_step_indices=obs_step_indices)
+            return env
 
         assert cfg.training.n_envs == 1, "Only support n_envs=1 for real training."
         envs = env_fn()
