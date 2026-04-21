@@ -140,3 +140,4 @@ dmypy.json
 .pyre/
 
 .codex
+AGENTS.md

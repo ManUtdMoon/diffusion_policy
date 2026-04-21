@@ -32,10 +32,6 @@ from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.vision.crop_randomizer import CropRandomizerV2
 from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
-from diffusion_policy.env.juicing.juicing_env import JuicingEnv
-from diffusion_policy.env.flip.flip_env import FlipEnv
-from diffusion_policy.env.box.box_env import BoxEnv
-
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -131,7 +127,21 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
         # configure env
         def env_fn():
-            env = BoxEnv(smooth=True)
+            task_name = cfg.online_task.name
+            if task_name == "wallet":
+                from diffusion_policy.env.wallet.wallet_env import WalletEnv
+                env = WalletEnv(smooth=True)
+            elif task_name == "box":
+                from diffusion_policy.env.box.box_env import BoxEnv
+                env = BoxEnv(smooth=True)
+            elif task_name == "flip":
+                from diffusion_policy.env.flip.flip_env import FlipEnv
+                env = FlipEnv()
+            elif task_name == "juicing_s1":
+                from diffusion_policy.env.juicing.juicing_env import JuicingEnv
+                env = JuicingEnv()
+            else:
+                raise ValueError(f"Unsupported real-world online task: {task_name}")
             return MultiStepWrapper(
                 env,
                 n_obs_steps=To,

@@ -1,0 +1,25 @@
+name: wallet
+
+task_name: &task_name wallet
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    global:
+      shape: [3, 120, 160]
+      type: rgb
+    wrist_0:
+      shape: [3, 120, 160]
+      type: rgb
+    wrist_1:
+      shape: [3, 120, 160]
+      type: rgb
+    qpos:
+      shape: [16]
+      type: low_dim
+  action:
+    shape: [16]
+
+base_ckpt: ???
+
+max_steps: 1000
