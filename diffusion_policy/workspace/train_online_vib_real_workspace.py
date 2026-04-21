@@ -260,88 +260,111 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         else:
             input("No resume_from specified. Start training from scratch? Press Enter to continue...")
 
-        obs_seq = envs.reset()
-        obs_seq_tensor = dict_apply(
-            obs_seq,
-            lambda x: torch.from_numpy(x).to(device=device).unsqueeze(0)
-        )
-        with torch.no_grad():
-            obs_emb_tensor = self.base_policy.encode_obs(obs_seq_tensor)
-            _, z_mean, z_logvar, z = self.base_policy.vib_forward(obs_emb_tensor)
-            obs_z = torch.cat([obs_emb_tensor, z_mean, z_logvar, z], dim=-1)
+        def encode_obs_z(obs_seq):
+            obs_seq_tensor = dict_apply(
+                obs_seq,
+                lambda x: torch.from_numpy(x).to(device=device).unsqueeze(0)
+            )
+            with torch.no_grad():
+                obs_emb_tensor = self.base_policy.encode_obs(obs_seq_tensor).detach()
+                _, z_mean, z_logvar, z = self.base_policy.vib_forward(obs_emb_tensor)
+                return torch.cat([obs_emb_tensor, z_mean, z_logvar, z], dim=-1)
+
+        def reset_env_obs_z():
+            return encode_obs_z(envs.reset())
+
+        obs_z = reset_env_obs_z()
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
+        steps_since_update = 0
+        steps_since_log = self.global_step % log_every
+        steps_since_checkpoint = self.global_step % checkpoint_every
 
         with JsonLogger(log_path) as logger:
             try:
                 while self.global_step < n_steps:
                     step_log = dict()
-                    # collect samples
-                    for _ in tqdm.tqdm(
-                            range(training_freq // n_envs), 
+
+                    # Collect continuously. Once training_freq samples are reached,
+                    # defer all updates/logging/checkpointing until the episode ends.
+                    with tqdm.tqdm(
                             desc=f"{self.global_step} / {n_steps} samples collected",
-                            leave=False):
-                        self.global_step += n_envs
+                            leave=False,
+                            unit="step") as pbar:
+                        while True:
+                            self.global_step += n_envs
+                            steps_since_update += n_envs
+                            steps_since_log += n_envs
+                            steps_since_checkpoint += n_envs
+                            pbar.update(n_envs)
 
-                        ## prepare masks for progressive exploration
-                        if self.global_step < learning_start:
-                            perturb = True  # T, F
-                        else:
-                            perturb = True
+                            ## prepare masks for progressive exploration
+                            if self.global_step < learning_start:
+                                perturb = True  # T, F
+                            else:
+                                perturb = True
 
-                        ## forward sum policy
-                        sum_dict = sum_policy.predict_train_action(obs_z, perturb)
-                        sum_dict = dict_apply(
-                            sum_dict, lambda x: x.detach())
-                        res_z = sum_dict['res_z']
-                        action = sum_dict['action'].cpu().numpy()
+                            ## forward sum policy
+                            sum_dict = sum_policy.predict_train_action(obs_z, perturb)
+                            sum_dict = dict_apply(
+                                sum_dict, lambda x: x.detach())
+                            res_z = sum_dict['res_z']
+                            action = sum_dict['action'].cpu().numpy()
 
-                        ## env_action and step
-                        assert action.shape == (1, Ta, da), \
-                            f"Action shape {action.shape} does not match expected {(1, Ta, da)}"
-                        next_obs_seq, reward, done, infos = envs.step(action.squeeze(0))
-                        if done:
-                            if reward > 0.5:
-                                assert np.any(infos['is_success']), "Done with reward but is_success not marked."
-                            recent_done_successes.append(float(reward) > 0.5)
-                            recent_done_epi_len.append(infos['episode_length'])
-                            self.n_episode += 1
-                            # Run post-processing before resetting the episode.
-                            envs.reset_end()
-                            next_obs_seq = envs.reset()
+                            ## env_action and step
+                            assert action.shape == (1, Ta, da), \
+                                f"Action shape {action.shape} does not match expected {(1, Ta, da)}"
+                            next_obs_seq, reward, done, infos = envs.step(action.squeeze(0))
+                            if done:
+                                if reward > 0.5:
+                                    assert np.any(infos['is_success']), "Done with reward but is_success not marked."
+                                recent_done_successes.append(float(reward) > 0.5)
+                                recent_done_epi_len.append(infos['episode_length'])
+                                self.n_episode += 1
+                                envs.reset_end()
 
-                        ## prepare transitions for rb
-                        assert cfg.training.bootstrap_at_done == 'never'
-                        next_obs_seq_tensor = dict_apply(
-                            next_obs_seq,
-                            lambda x: torch.from_numpy(x).to(device=device).unsqueeze(0)
-                        )
-                        with torch.no_grad():
-                            next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
-                            _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
-                            next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
+                            ## prepare transitions for rb
+                            assert cfg.training.bootstrap_at_done == 'never'
+                            next_obs_seq_tensor = dict_apply(
+                                next_obs_seq,
+                                lambda x: torch.from_numpy(x).to(device=device).unsqueeze(0)
+                            )
+                            with torch.no_grad():
+                                next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
+                                _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
+                                next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
 
-                        rb.add(
-                            obs=obs_z.detach().cpu().numpy(),
-                            next_obs=next_obs_z.detach().cpu().numpy(),
-                            action=res_z.cpu().numpy(),
-                            reward=np.array([reward]),
-                            done=np.array([done]),
-                            infos=[{}]
-                        )
+                            rb.add(
+                                obs=obs_z.detach().cpu().numpy(),
+                                next_obs=next_obs_z.detach().cpu().numpy(),
+                                action=res_z.cpu().numpy(),
+                                reward=np.array([reward]),
+                                done=np.array([done]),
+                                infos=[{}]
+                            )
 
-                        ## switch to next step
-                        obs_z = next_obs_z
+                            ## switch to next step
+                            obs_z = next_obs_z
 
-                        # ensure the global_step aligns with training_freq
-                        if self.global_step % training_freq == 0:
-                            break
+                            if done:
+                                ready_to_update = steps_since_update >= training_freq
+                                in_warmup = self.global_step < learning_start
+                                if ready_to_update:
+                                    if not in_warmup:
+                                        break
 
-                    if self.global_step < learning_start:
-                        # Warmup phase: skip training, only collect data
-                        continue
+                                    # Warm-up reaches a collection window but skips
+                                    # update/log/ckpt. Start a fresh collection window.
+                                    steps_since_update = 0
+
+                                # Either the update window is not due yet, or warm-up
+                                # suppresses training. In both cases reset immediately.
+                                obs_z = reset_env_obs_z()
 
                     # training
-                    for _ in range(n_updates_per_training):
+                    for _ in tqdm.tqdm(
+                            range(n_updates_per_training),
+                            desc=f"{n_updates_per_training} updates",
+                            leave=False):
                         self.global_update += 1
 
                         ## fetch data
@@ -417,11 +440,12 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
                     # logging
                     logger.log(step_log)
-                    if self.global_step % log_every == 0:
+                    if steps_since_log >= log_every:
                         wandb_run.log(step_log, step=self.global_step)
+                        steps_since_log = steps_since_log % log_every
 
                     # checkpointing
-                    if self.global_step % checkpoint_every == 0:
+                    if steps_since_checkpoint >= checkpoint_every:
                         path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step-{self.global_step}.ckpt'
 
                         # prepare payload in main thread to avoid race conditions on model/optimizers
@@ -440,6 +464,13 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                             'replay_buffer': rb
                         }
                         self._save_checkpoint(path, payload)
+                        steps_since_checkpoint = steps_since_checkpoint % checkpoint_every
+                        if self.checkpoint_thread is not None:
+                            self.checkpoint_thread.join()
+
+                    steps_since_update = 0
+                    obs_z = reset_env_obs_z()
+
             # catch all kinds of interrupts to ensure we save a final checkpoint with replay buffer
             except (KeyboardInterrupt, Exception) as e:
                 print(f"\nException {type(e).__name__} occurred: {e}. Saving full checkpoint with ReplayBuffer...")

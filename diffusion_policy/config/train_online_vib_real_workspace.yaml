@@ -57,8 +57,8 @@ training:
   q_pretrain_steps: 0
   num_steps: 50000
   buffer_size: 50000
-  log_every: 50
-  checkpoint_every: 200
+  log_every: 500
+  checkpoint_every: 500
   # misc
   tqdm_interval_sec: 1.0
 
