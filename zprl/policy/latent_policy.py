@@ -201,10 +201,17 @@ class ResiduePolicy(ModuleAttrMixin):
 
         z_curr = res_z * self.res_scale + z
         all_q_preds = self.qs(obs_agg, z_curr)  # (num_qs, B, 1)
-        predicted_q = torch.mean(all_q_preds, dim=0)  # (B, 1)
-        assert_shape(predicted_q, (bs, 1))
+        # predicted_q = torch.mean(all_q_preds, dim=0)  # (B, 1)
+        # assert_shape(predicted_q, (bs, 1))
 
-        actor_loss = (alpha * log_prob - predicted_q).mean()
+        # actor_loss = (alpha * log_prob - predicted_q).mean()
+
+        soft_q = all_q_preds - alpha * log_prob[None, ...]  # (num_qs, B, 1)
+        soft_q_abs = soft_q.abs().mean().detach()
+        if soft_q_abs > 1e-8:
+            soft_q = soft_q / soft_q_abs
+
+        actor_loss = (-soft_q).mean()
 
         info = {
             'actor_entropy': -log_prob.mean().item(),
