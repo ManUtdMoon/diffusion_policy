@@ -200,13 +200,13 @@ class BatchedSoftQNet(nn.Module):
         self.num_qs = num_qs
         self.net = nn.Sequential(
             BatchedLinear(num_qs, obs_dim + action_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            # nn.LayerNorm(hidden_dim),
             nn.GELU(),
             BatchedLinear(num_qs, hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            # nn.LayerNorm(hidden_dim),
             nn.GELU(),
             BatchedLinear(num_qs, hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            # nn.LayerNorm(hidden_dim),
             nn.GELU(),
             BatchedLinear(num_qs, hidden_dim, 1),
         )
@@ -216,5 +216,5 @@ class BatchedSoftQNet(nn.Module):
         # expand for batch
         x = x.unsqueeze(0).expand(self.num_qs, -1, -1) # (num_qs, B, D_in)
         q_logits = self.net(x) # (num_qs, B, 1)
-        # q_values = 0.5 * (torch.tanh(q_logits) + 1.)  # scale to [0, 1]
-        return q_logits
+        q_values = 0.5 * (torch.tanh(q_logits) + 1.)  # scale to [0, 1]
+        return q_values
