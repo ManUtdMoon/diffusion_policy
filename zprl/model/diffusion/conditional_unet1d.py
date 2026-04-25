@@ -7,7 +7,7 @@ from einops.layers.torch import Rearrange
 
 from zprl.model.diffusion.conv1d_components import (
     Downsample1d, Upsample1d, Conv1dBlock)
-from zprl.model.diffusion.positional_embedding import SinusoidalPosEmb
+from zprl.model.diffusion.positional_embedding import FourierTimeEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,9 @@ class ConditionalUnet1D(nn.Module):
         down_dims=[256,512,1024],
         kernel_size=3,
         n_groups=8,
-        cond_predict_scale=False
+        cond_predict_scale=False,
+        time_min_period=4e-3,
+        time_max_period=4.0
         ):
         super().__init__()
         all_dims = [input_dim] + list(down_dims)
@@ -83,7 +85,10 @@ class ConditionalUnet1D(nn.Module):
 
         dsed = diffusion_step_embed_dim
         diffusion_step_encoder = nn.Sequential(
-            SinusoidalPosEmb(dsed),
+            FourierTimeEmbedding(
+                dsed,
+                min_period=time_min_period,
+                max_period=time_max_period),
             nn.Linear(dsed, dsed * 4),
             nn.Mish(),
             nn.Linear(dsed * 4, dsed),
@@ -187,7 +192,7 @@ class ConditionalUnet1D(nn.Module):
         timesteps = timestep
         if not torch.is_tensor(timesteps):
             # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
-            timesteps = torch.tensor([timesteps], dtype=torch.long, device=sample.device)
+            timesteps = torch.tensor([timesteps], dtype=torch.float32, device=sample.device)
         elif torch.is_tensor(timesteps) and len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML

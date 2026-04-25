@@ -143,26 +143,11 @@ class TrainFlowMatchVibUnetImageAccelerateWorkspace(BaseWorkspace):
             shuffle=val_shuffle,
             **val_dataloader_kwargs
         )
-        train_dataloader_len_before_prepare = len(train_dataloader)
-        val_dataloader_len_before_prepare = len(val_dataloader)
 
         self.model.set_normalizer(normalizer)
         if cfg.training.use_ema:
             self.ema_model.set_normalizer(normalizer)
             self.ema_model.to(device)
-
-        lr_scheduler_kwargs = OmegaConf.to_container(
-            OmegaConf.select(cfg, "training.lr_scheduler_kwargs", default={}),
-            resolve=True)
-        lr_scheduler = get_scheduler(
-            cfg.training.lr_scheduler,
-            optimizer=self.optimizer,
-            num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=(
-                len(train_dataloader) * cfg.training.num_epochs),
-            last_epoch=self.global_step-1,
-            **lr_scheduler_kwargs
-        )
 
         ema: EMAModel = None
         if cfg.training.use_ema:
@@ -207,6 +192,21 @@ class TrainFlowMatchVibUnetImageAccelerateWorkspace(BaseWorkspace):
         model, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
             model, optimizer, train_dataloader, val_dataloader)
         raw_model = accelerator.unwrap_model(model)
+
+        train_dataloader_len_after_prepare = len(train_dataloader)
+        num_training_steps = train_dataloader_len_after_prepare * cfg.training.num_epochs
+
+        lr_scheduler_kwargs = OmegaConf.to_container(
+            OmegaConf.select(cfg, "training.lr_scheduler_kwargs", default={}),
+            resolve=True)
+        lr_scheduler = get_scheduler(
+            cfg.training.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=num_training_steps,
+            last_epoch=self.global_step-1,
+            **lr_scheduler_kwargs
+        )
 
         train_sampling_batch = None
 

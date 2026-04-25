@@ -3,7 +3,6 @@ import torch
 import torch.nn.functional as F
 from torch.func import functional_call
 from einops import rearrange, reduce
-from diffusers.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 
 from zprl.model.common.normalizer import LinearNormalizer
 from zprl.model.vib import VIBDecoder, VIBEncoder
@@ -16,7 +15,6 @@ from zprl.common.pytorch_util import dict_apply
 class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
-            noise_scheduler: FlowMatchEulerDiscreteScheduler,
             obs_encoder: MultiImageObsEncoder,
             horizon, 
             n_action_steps, 
@@ -32,9 +30,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             vib_alpha=2.0,
             vib_beta=1e-3,
             vib_recon=0.1,
-            vib_hidden_dim=256,
-            # parameters passed to step
-            **kwargs):
+            vib_hidden_dim=256):
         super().__init__()
 
         # parse shapes
@@ -74,7 +70,6 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             output_dim=global_cond_dim,
             hidden_dim=vib_hidden_dim)
 
-        self.noise_scheduler = noise_scheduler
         self.mask_generator = LowdimMaskGenerator(
             action_dim=action_dim,
             obs_dim=0,
@@ -89,7 +84,6 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
         self.obs_as_global_cond = obs_as_global_cond
-        self.kwargs = kwargs
 
         self.vib_alpha = vib_alpha
         self.vib_beta = vib_beta
@@ -97,21 +91,16 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         self.vib_latent_dim = vib_latent_dim
 
         if num_inference_steps is None:
-            num_inference_steps = noise_scheduler.config.num_train_timesteps
+            num_inference_steps = 100
         self.num_inference_steps = num_inference_steps
 
-        self.timesteps = self.noise_scheduler.timesteps.clone()
-    
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data, condition_mask,
             local_cond=None, global_cond=None,
-            generator=None,
-            # keyword arguments to scheduler.step
-            **kwargs
+            generator=None
             ):
         model = self.model
-        scheduler = self.noise_scheduler
 
         trajectory = torch.randn(
             size=condition_data.shape, 
@@ -119,10 +108,13 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             device=condition_data.device,
             generator=generator)
     
-        # set step values
-        scheduler.set_timesteps(self.num_inference_steps)
+        timesteps = torch.linspace(
+            1.0, 0.0, self.num_inference_steps + 1,
+            device=trajectory.device,
+            dtype=torch.float32)
+        dt = -1.0 / self.num_inference_steps
 
-        for t in scheduler.timesteps:
+        for t in timesteps[:-1]:
             # 1. apply conditioning
             trajectory[condition_mask] = condition_data[condition_mask]
 
@@ -131,11 +123,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
                 local_cond=local_cond, global_cond=global_cond)
 
             # 3. compute previous image: x_t -> x_t-1
-            trajectory = scheduler.step(
-                model_output, t, trajectory, 
-                generator=generator,
-                **kwargs
-                ).prev_sample
+            trajectory = trajectory + dt * model_output
         
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
@@ -189,8 +177,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             cond_data, 
             cond_mask,
             local_cond=None,
-            global_cond=global_cond,
-            **self.kwargs)
+            global_cond=global_cond)
         
         # unnormalize prediction
         naction_pred = nsample
@@ -221,25 +208,24 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
 
         # run sampling from noise
         model = self.model
-        scheduler = self.noise_scheduler
 
         # Check if noise shape is correct
         assert noise.shape == (B, T, Da)
         trajectory = noise.to(device=device, dtype=dtype)
 
-        # set step values
-        scheduler.set_timesteps(self.num_inference_steps)
+        timesteps = torch.linspace(
+            1.0, 0.0, self.num_inference_steps + 1,
+            device=trajectory.device,
+            dtype=torch.float32)
+        dt = -1.0 / self.num_inference_steps
 
-        for t in scheduler.timesteps:
+        for t in timesteps[:-1]:
             # 1. predict model output
             model_output = model(trajectory, t,
                 local_cond=None, global_cond=obs_emb)
 
             # 2. compute previous image: x_t -> x_t-1
-            trajectory = scheduler.step(
-                model_output, t, trajectory,
-                **self.kwargs
-            ).prev_sample
+            trajectory = trajectory + dt * model_output
 
         # unnormalize prediction
         naction_pred = trajectory
@@ -311,18 +297,12 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         condition_mask = self.mask_generator(trajectory.shape)
 
         # Sample noise that we'll add to the images
-        noise = torch.randn(trajectory.shape, device=trajectory.device)
-        # Sample a random timestep for each image
-        if self.timesteps.device != trajectory.device:
-            self.timesteps = self.timesteps.to(trajectory.device)
-        timestep_idxs = torch.randint(
-            0, self.noise_scheduler.config.num_train_timesteps, 
-            (batch_size,), device=trajectory.device
-        ).long()
-        timesteps = self.timesteps[timestep_idxs]
-        # Add noise to the clean images by linear interpolation
-        noisy_trajectory = self.noise_scheduler.scale_noise(
-            trajectory, timesteps, noise)
+        noise = torch.randn_like(trajectory)
+        # Sample a random continuous flow time. t=1 is noise, t=0 is sample.
+        timesteps = torch.rand(
+            (batch_size,), device=trajectory.device, dtype=trajectory.dtype)
+        timesteps_b = timesteps[:, None, None]
+        noisy_trajectory = (1 - timesteps_b) * trajectory + timesteps_b * noise
 
         # apply conditioning
         noisy_trajectory[condition_mask] = cond_data[condition_mask]
