@@ -12,7 +12,7 @@ exp_name: "default"
 horizon: 32 # 16, 24, 32
 obs_step_indices: [0, 2] # the last index must be o_t
 n_obs_steps: ${eval:'len(${obs_step_indices})'}
-n_action_steps: 28
+n_action_steps: 24
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -28,10 +28,6 @@ policy:
   vib_hidden_dim: 256
 
   shape_meta: ${shape_meta}
-  
-  noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteScheduler
-    num_train_timesteps: 100
 
   obs_encoder:
     _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
@@ -63,9 +59,6 @@ policy:
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
-
-  # scheduler.step params
-  # predict_epsilon: True
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel

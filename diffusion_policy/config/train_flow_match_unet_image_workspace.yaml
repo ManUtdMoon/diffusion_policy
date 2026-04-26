@@ -22,10 +22,6 @@ policy:
   _target_: diffusion_policy.policy.flow_match_unet_image_policy.FlowMatchUnetImagePolicy
 
   shape_meta: ${shape_meta}
-  
-  noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteScheduler
-    num_train_timesteps: 100
 
   obs_encoder:
     _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
@@ -56,9 +52,6 @@ policy:
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
-
-  # scheduler.step params
-  # predict_epsilon: True
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
