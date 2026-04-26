@@ -24,7 +24,7 @@ res_policy:
   action_dim: ???
   actor_input_type: obs_sample
   hidden_dim: 256
-  log_std_min: -8.0
+  log_std_min: -10.0
   log_std_max: 2.0
   gamma: ${eval:"round(0.998**${n_action_steps}, 4)"}
   tau: 0.005
@@ -43,7 +43,7 @@ training:
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 3e-4
-  learning_start: 1000
+  learning_start: 500
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
