@@ -240,3 +240,84 @@ class ObsActionSeqWrapper(gym.Wrapper):
             return result
         else:
             raise RuntimeError('Unsupported space type')
+
+
+class SingleStepStackedObsWrapper(gym.Wrapper):
+    def __init__(self,
+            env,
+            n_obs_steps,
+            max_episode_steps=None,
+        ):
+        super().__init__(env)
+        self._observation_space = repeated_space(env.observation_space, n_obs_steps)
+        self.max_episode_steps = max_episode_steps
+        self.n_obs_steps = n_obs_steps
+
+        self.obs = deque(maxlen=n_obs_steps+1)
+        self.reward = list()
+        self.done = list()
+        self.info = defaultdict(lambda : deque(maxlen=n_obs_steps+1))
+
+    def reset(self):
+        obs = super().reset()
+
+        self.obs = deque([obs], maxlen=self.n_obs_steps+1)
+        self.reward = list()
+        self.done = list()
+        self.info = defaultdict(lambda : deque(maxlen=self.n_obs_steps+1))
+
+        obs = self._get_obs(self.n_obs_steps)
+        return obs
+
+    def step(self, action):
+        observation, reward, done, info = super().step(action)
+
+        self.obs.append(observation)
+        self.reward.append(reward)
+        if (self.max_episode_steps is not None) \
+            and (len(self.reward) >= self.max_episode_steps):
+            done = True
+        self.done.append(done)
+        self._add_info(info)
+
+        observation = self._get_obs(self.n_obs_steps)
+        info = dict_take_last_n(self.info, self.n_obs_steps)
+        return observation, reward, done, info
+
+    def _get_obs(self, n_steps=1):
+        """
+        Output (n_steps,) + obs_shape
+        """
+        assert(len(self.obs) > 0)
+        if isinstance(self.observation_space, spaces.Box):
+            return stack_last_n_obs(self.obs, n_steps)
+        elif isinstance(self.observation_space, spaces.Dict):
+            result = dict()
+            for key in self.observation_space.keys():
+                result[key] = stack_last_n_obs(
+                    [obs[key] for obs in self.obs],
+                    n_steps
+                )
+            return result
+        else:
+            raise RuntimeError('Unsupported space type')
+
+    def _add_info(self, info):
+        for key, value in info.items():
+            self.info[key].append(value)
+
+    def get_rewards(self):
+        return self.reward
+
+    def get_attr(self, name):
+        return getattr(self, name)
+
+    def run_dill_function(self, dill_fn):
+        fn = dill.loads(dill_fn)
+        return fn(self)
+
+    def get_infos(self):
+        result = dict()
+        for k, v in self.info.items():
+            result[k] = list(v)
+        return result

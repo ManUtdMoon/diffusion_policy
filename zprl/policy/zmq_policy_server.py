@@ -162,7 +162,7 @@ def run_policy_server(policy, bind_addr):
                     payload['obs'], lambda x: x.to(device=policy.device) if isinstance(x, torch.Tensor) else x)
                 with torch.no_grad():
                     action_dict = policy.predict_action(obs_dict)
-                keep_keys = ('action', 'naction', 'action_pred', 'naction_pred')
+                keep_keys = ('action', 'naction', 'action_pred', 'naction_pred', 'action_pred_all')
                 action_dict = {
                     k: v.detach().to('cpu') if isinstance(v, torch.Tensor) else v
                     for k, v in action_dict.items()
