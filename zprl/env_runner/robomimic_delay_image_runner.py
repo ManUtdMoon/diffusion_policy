@@ -51,6 +51,9 @@ class RobomimicDelayImageRunner(BaseImageRunner):
             past_action=False,
             abs_action=False,
             action_delay_steps=0,
+            rtc_mode=False,
+            prefix_attention_schedule='exp',
+            max_guidance_weight=5.0,
             action_pose_repr=None,
             tqdm_interval_sec=5.0,
             n_envs=None
@@ -230,6 +233,9 @@ class RobomimicDelayImageRunner(BaseImageRunner):
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self.action_delay_steps = action_delay_steps
+        self.rtc_mode = rtc_mode
+        self.prefix_attention_schedule = prefix_attention_schedule
+        self.max_guidance_weight = max_guidance_weight
         self.past_action = past_action
         self.max_steps = max_steps
         self.rotation_transformer = rotation_transformer
@@ -276,21 +282,43 @@ class RobomimicDelayImageRunner(BaseImageRunner):
                 leave=False, mininterval=self.tqdm_interval_sec)
 
             done = False
-            current_chunk = self._predict_action_chunk(policy, obs, device)
             d = self.action_delay_steps
             Ta = self.n_action_steps
+            current_chunk, nchunk = self._predict_action_chunk(policy, obs, device)
             exec_start = 0
             exec_end = Ta + d
             exec_idx = exec_start
             next_chunk = None
+            next_nchunk = None
+            prefix_attention_horizon = None
+            if self.rtc_mode:
+                if nchunk is None:
+                    raise RuntimeError("Policy result must include naction_pred_all for RTC eval.")
+                prefix_attention_horizon = nchunk.shape[1] - (Ta + d)
+                if prefix_attention_horizon < d:
+                    raise RuntimeError(
+                        f"Invalid RTC horizons: chunk_len={nchunk.shape[1]}, "
+                        f"execute_horizon={Ta + d}, action_delay_steps={d}.")
 
             while not done:
                 if (exec_idx == exec_start + Ta) and (next_chunk is None):
-                    next_chunk = self._predict_action_chunk(policy, obs, device)
+                    rtc_context = None
+                    if self.rtc_mode:
+                        rtc_context = {
+                            'prev_naction_chunk': nchunk,
+                            'inference_delay': self.action_delay_steps,
+                            'prefix_attention_horizon': prefix_attention_horizon,
+                            'prefix_attention_schedule': self.prefix_attention_schedule,
+                            'max_guidance_weight': self.max_guidance_weight,
+                        }
+                    next_chunk, next_nchunk = self._predict_action_chunk(
+                        policy, obs, device, rtc_context=rtc_context)
 
                 if exec_idx >= exec_end:
                     current_chunk = next_chunk
+                    nchunk = next_nchunk
                     next_chunk = None
+                    next_nchunk = None
                     exec_start = d
                     exec_end = d + Ta + d
                     exec_idx = exec_start
@@ -343,16 +371,23 @@ class RobomimicDelayImageRunner(BaseImageRunner):
             log_data[name] = value
 
         log_data['action_delay_steps'] = self.action_delay_steps
+        log_data['rtc_mode'] = self.rtc_mode
         return log_data
 
-    def _predict_action_chunk(self, policy, obs, device):
+    def _predict_action_chunk(self, policy, obs, device, rtc_context=None):
         np_obs_dict = dict(obs)
         obs_dict = dict_apply(np_obs_dict,
             lambda x: torch.from_numpy(x).to(
                 device=device))
 
         with torch.no_grad():
-            action_dict = policy.predict_action(obs_dict)
+            if rtc_context is None:
+                action_dict = policy.predict_action(obs_dict)
+            else:
+                rtc_context = dict_apply(
+                    rtc_context, lambda x: torch.from_numpy(x).to(device=device)
+                    if isinstance(x, np.ndarray) else x)
+                action_dict = policy.predict_action(obs_dict, rtc_context=rtc_context)
 
         np_action_dict = dict_apply(action_dict,
             lambda x: x.detach().to('cpu').numpy())
@@ -366,7 +401,8 @@ class RobomimicDelayImageRunner(BaseImageRunner):
             raise RuntimeError(
                 f"action_pred_all length {action.shape[1]} is shorter than "
                 f"required delay window {required_len}.")
-        return action
+        naction = np_action_dict.get('naction_pred_all', None)
+        return action, naction
 
     def undo_transform_action(self, action):
         raw_shape = action.shape

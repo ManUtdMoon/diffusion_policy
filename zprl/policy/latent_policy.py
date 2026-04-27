@@ -291,7 +291,8 @@ class SumPolicy:
 
     @torch.no_grad()
     def predict_action(self,
-            obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+            obs_dict: Dict[str, torch.Tensor],
+            rtc_context=None) -> Dict[str, torch.Tensor]:
         # 1. Get latent mean from base policy's encoders
         obs_emb = self.base_policy.encode_obs(obs_dict)
         z_mean, z_logvar = self.base_policy.vib_encoder(obs_emb)
@@ -307,7 +308,17 @@ class SumPolicy:
         modified_obs_emb = self.base_policy.vib_decoder(perturbed_z)
 
         # 4. Generate action from the new conditional embedding
-        result = self.base_policy.conditional_predict(modified_obs_emb)
+        if rtc_context is None:
+            result = self.base_policy.conditional_predict(modified_obs_emb)
+        else:
+            result = self.base_policy.conditional_predict_rtc(
+                modified_obs_emb,
+                prev_naction_chunk=rtc_context['prev_naction_chunk'],
+                inference_delay=rtc_context['inference_delay'],
+                prefix_attention_horizon=rtc_context['prefix_attention_horizon'],
+                prefix_attention_schedule=rtc_context.get('prefix_attention_schedule', 'exp'),
+                max_guidance_weight=rtc_context['max_guidance_weight'],
+            )
 
         return result
 

@@ -54,10 +54,12 @@ class RemoteImagePolicy:
     def close(self):
         self.socket.close(linger=0)
 
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor], rtc_context=None) -> Dict[str, torch.Tensor]:
         payload = {
             'obs': dict_apply(obs_dict, _to_cpu)
         }
+        if rtc_context is not None:
+            payload['rtc_context'] = dict_apply(rtc_context, _to_cpu)
         response = self._request('predict_action', payload)
         action_dict = response['action_dict']
         return dict_apply(action_dict, lambda x: _to_device(x, self.device))

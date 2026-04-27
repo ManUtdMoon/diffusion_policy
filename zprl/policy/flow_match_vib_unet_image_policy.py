@@ -1,6 +1,8 @@
-from typing import Dict
+from typing import Dict, Literal
+import math
 import torch
 import torch.nn.functional as F
+from torch.func import vjp
 from torch.func import functional_call
 from einops import rearrange, reduce
 
@@ -11,6 +13,35 @@ from zprl.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from zprl.model.diffusion.mask_generator import LowdimMaskGenerator
 from zprl.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
 from zprl.common.pytorch_util import dict_apply
+
+PrefixAttentionSchedule = Literal["linear", "exp", "ones", "zeros"]
+
+
+def get_prefix_weights_torch(
+        start: int,
+        end: int,
+        total: int,
+        schedule: PrefixAttentionSchedule,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+    start = min(start, end)
+    idx = torch.arange(total, device=device)
+
+    if schedule == "ones":
+        w = torch.ones(total, device=device, dtype=dtype)
+    elif schedule == "zeros":
+        w = (idx < start).to(dtype)
+    elif schedule in ("linear", "exp"):
+        w = torch.clamp((start - 1 - idx.to(dtype)) / (end - start + 1) + 1, 0, 1)
+        if schedule == "exp":
+            w = w * torch.expm1(w) / (math.e - 1)
+    else:
+        raise ValueError(f"Invalid schedule: {schedule}")
+
+    return torch.where(idx >= end, torch.zeros((), device=device, dtype=dtype), w)
+
 
 class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
     def __init__(self, 
@@ -194,8 +225,113 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             'naction': naction_pred[:,start:end],
             'naction_pred': naction_pred,
             'action_pred_all': action_pred[:,start:],  # B,H-To+1,Da
+            'naction_pred_all': naction_pred[:,start:],  # B,H-To+1,Da
         }
         return result
+
+    def conditional_sample_rtc(self,
+            global_cond: torch.Tensor,
+            prev_naction_chunk: torch.Tensor,
+            inference_delay: int,
+            prefix_attention_horizon: int,
+            prefix_attention_schedule: PrefixAttentionSchedule,
+            max_guidance_weight: float,
+            generator=None,
+            ) -> torch.Tensor:
+        B = global_cond.shape[0]
+        T = self.horizon
+        Da = self.action_dim
+        To = self.n_obs_steps
+        start = To - 1
+        future_len = T - start
+        device = self.device
+        dtype = self.dtype
+
+        if prev_naction_chunk.shape != (B, future_len, Da):
+            raise ValueError(
+                f"prev_naction_chunk must have shape {(B, future_len, Da)}, "
+                f"got {tuple(prev_naction_chunk.shape)}")
+
+        prev_naction_chunk = prev_naction_chunk.to(device=device, dtype=dtype)
+        prefix_full = torch.zeros((B, T, Da), device=device, dtype=dtype)
+        prefix_full[:, start:] = prev_naction_chunk
+        weights_future = get_prefix_weights_torch(
+            inference_delay,
+            prefix_attention_horizon,
+            future_len,
+            prefix_attention_schedule,
+            device=device,
+            dtype=dtype,
+        )
+        weights_full = torch.zeros(T, device=device, dtype=dtype)
+        weights_full[start:] = weights_future
+
+        trajectory = torch.randn(
+            size=(B, T, Da),
+            dtype=dtype,
+            device=device,
+            generator=generator)
+        dt = 1.0 / self.num_inference_steps
+        time = torch.ones((), device=device, dtype=dtype)
+        model = self.model
+
+        def pinv_corrected_velocity(obs_emb, x_t, y, t):
+            def denoiser(x):
+                v = model(x, t, local_cond=None, global_cond=obs_emb)
+                return x - v * t, v
+
+            x0, vjp_fn, v = vjp(denoiser, x_t.detach(), has_aux=True)
+            error = (y - x0) * weights_full[None, :, None]
+            pinv_correction = vjp_fn(error)[0]
+            inv_r2 = (t**2 + (1 - t) ** 2) / (t**2)
+            c = torch.nan_to_num(t / (1 - t), posinf=max_guidance_weight)
+            guidance_weight = torch.minimum(
+                c * inv_r2,
+                torch.as_tensor(max_guidance_weight, device=device, dtype=dtype))
+            return v.detach() - guidance_weight * pinv_correction.detach()
+
+        with torch.enable_grad():
+            for _ in range(self.num_inference_steps):
+                model_output = pinv_corrected_velocity(
+                    global_cond, trajectory, prefix_full, time)
+                trajectory = trajectory - dt * model_output
+                time = time - dt
+
+        return trajectory
+
+    def conditional_predict_rtc(self,
+            obs_emb: torch.Tensor,
+            prev_naction_chunk: torch.Tensor,
+            inference_delay: int,
+            prefix_attention_horizon: int,
+            prefix_attention_schedule: PrefixAttentionSchedule,
+            max_guidance_weight: float,
+            generator=None,
+            ) -> Dict[str, torch.Tensor]:
+        naction_pred = self.conditional_sample_rtc(
+            global_cond=obs_emb,
+            prev_naction_chunk=prev_naction_chunk,
+            inference_delay=inference_delay,
+            prefix_attention_horizon=prefix_attention_horizon,
+            prefix_attention_schedule=prefix_attention_schedule,
+            max_guidance_weight=max_guidance_weight,
+            generator=generator,
+        )
+        action_pred = self.normalizer['action'].unnormalize(naction_pred)
+
+        To = self.n_obs_steps
+        start = To - 1
+        end = start + self.n_action_steps
+        action = action_pred[:,start:end]
+
+        return {
+            'action': action,
+            'action_pred': action_pred,
+            'naction': naction_pred[:,start:end],
+            'naction_pred': naction_pred,
+            'action_pred_all': action_pred[:,start:],
+            'naction_pred_all': naction_pred[:,start:],
+        }
 
     def conditional_predict_from_noise(self, obs_emb: torch.Tensor, noise: torch.Tensor) -> Dict[str, torch.Tensor]:
         B = obs_emb.shape[0]
@@ -242,10 +378,12 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             'action_pred': action_pred,
             'naction': naction_pred[:,start:end],
             'naction_pred': naction_pred,
+            'action_pred_all': action_pred[:,start:],
+            'naction_pred_all': naction_pred[:,start:],
         }
         return result
 
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor], rtc_context=None) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
         result: must include "action" key
@@ -259,7 +397,17 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         modified_obs_emb, _, _, _ = self.vib_forward(obs_emb, deterministic=True)
         
         # 3. predict action
-        result = self.conditional_predict(modified_obs_emb)
+        if rtc_context is None:
+            result = self.conditional_predict(modified_obs_emb)
+        else:
+            result = self.conditional_predict_rtc(
+                modified_obs_emb,
+                prev_naction_chunk=rtc_context['prev_naction_chunk'],
+                inference_delay=rtc_context['inference_delay'],
+                prefix_attention_horizon=rtc_context['prefix_attention_horizon'],
+                prefix_attention_schedule=rtc_context.get('prefix_attention_schedule', 'exp'),
+                max_guidance_weight=rtc_context['max_guidance_weight'],
+            )
         
         # 4. append embeddings to result for debugging
         result['obs_emb'] = obs_emb

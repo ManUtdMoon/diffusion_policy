@@ -28,9 +28,20 @@ if not os.path.exists(DATASET_ROOT):
 @click.option('-c', '--checkpoint', required=True)
 @click.option('-o', '--output_dir', required=True)
 @click.option('-l', '--action_delay_steps', default=0, type=click.IntRange(0, 6))
+@click.option('--rtc', is_flag=True)
+@click.option('-s', '--prefix_attention_schedule', default='exp', type=click.Choice(['linear', 'exp', 'ones', 'zeros']))
+@click.option('-g', '--max_guidance_weight', default=5.0, type=float)
 @click.option('--server_addr', default='tcp://127.0.0.1:5555')
 @click.option('--timeout_ms', default=60000, type=int)
-def main(checkpoint, output_dir, action_delay_steps, server_addr, timeout_ms):
+def main(
+        checkpoint,
+        output_dir,
+        action_delay_steps,
+        rtc,
+        prefix_attention_schedule,
+        max_guidance_weight,
+        server_addr,
+        timeout_ms):
     if os.path.exists(output_dir):
         click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -82,6 +93,9 @@ def main(checkpoint, output_dir, action_delay_steps, server_addr, timeout_ms):
         past_action=runner_cfg.past_action,
         abs_action=runner_cfg.abs_action,
         action_delay_steps=action_delay_steps,
+        rtc_mode=rtc,
+        prefix_attention_schedule=prefix_attention_schedule,
+        max_guidance_weight=max_guidance_weight,
         tqdm_interval_sec=runner_cfg.tqdm_interval_sec,
         n_envs=runner_cfg.n_envs)
 
@@ -99,6 +113,9 @@ def main(checkpoint, output_dir, action_delay_steps, server_addr, timeout_ms):
             json_log[key] = value
     json_log['policy_server_addr'] = server_addr
     json_log['action_delay_steps'] = action_delay_steps
+    json_log['rtc_mode'] = rtc
+    json_log['prefix_attention_schedule'] = prefix_attention_schedule
+    json_log['max_guidance_weight'] = max_guidance_weight
     json_log['n_action_steps'] = int(OmegaConf.select(cfg, 'n_action_steps', default=runner_cfg.n_action_steps))
     json_log['n_obs_steps'] = int(OmegaConf.select(cfg, 'n_obs_steps', default=runner_cfg.n_obs_steps))
     out_path = os.path.join(output_dir, 'eval_log.json')

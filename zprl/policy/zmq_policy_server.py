@@ -160,9 +160,13 @@ def run_policy_server(policy, bind_addr):
             elif request_type == 'predict_action':
                 obs_dict = dict_apply(
                     payload['obs'], lambda x: x.to(device=policy.device) if isinstance(x, torch.Tensor) else x)
+                rtc_context = payload.get('rtc_context', None)
+                if rtc_context is not None:
+                    rtc_context = dict_apply(
+                        rtc_context, lambda x: x.to(device=policy.device) if isinstance(x, torch.Tensor) else x)
                 with torch.no_grad():
-                    action_dict = policy.predict_action(obs_dict)
-                keep_keys = ('action', 'naction', 'action_pred', 'naction_pred', 'action_pred_all')
+                    action_dict = policy.predict_action(obs_dict, rtc_context=rtc_context)
+                keep_keys = ('action', 'naction', 'action_pred', 'naction_pred', 'action_pred_all', 'naction_pred_all')
                 action_dict = {
                     k: v.detach().to('cpu') if isinstance(v, torch.Tensor) else v
                     for k, v in action_dict.items()
