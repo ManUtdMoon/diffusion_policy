@@ -253,6 +253,9 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
         MAXLEN = 40
         recent_done_successes = deque(maxlen=MAXLEN)
         recent_done_epi_len = deque(maxlen=MAXLEN)
+        steps_since_update = 0
+        steps_since_log = 0
+        steps_since_checkpoint = 0
         def get_recent_success_stats():
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
@@ -285,8 +288,37 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
             recent_done_successes = deque(payload.get('recent_done_successes', []), maxlen=MAXLEN)
             recent_done_epi_len = deque(payload.get('recent_done_epi_len', []), maxlen=MAXLEN)
             rb = payload.get('replay_buffer', rb)  # in case of no buffer saved
+            is_legacy_pre_update_ckpt = (
+                'steps_since_update' not in payload and self.global_update == 0
+            )
+            if 'steps_since_update' in payload:
+                steps_since_update = int(payload['steps_since_update'])
+            elif is_legacy_pre_update_ckpt:
+                # Backward compatibility for checkpoints written before this counter existed.
+                steps_since_update = int(self.global_step)
+            else:
+                steps_since_update = int(self.global_step % training_freq)
 
-            print(f"Resumed at global_step={self.global_step}")
+            if 'steps_since_log' in payload:
+                steps_since_log = int(payload['steps_since_log'])
+            elif is_legacy_pre_update_ckpt:
+                steps_since_log = int(self.global_step)
+            else:
+                steps_since_log = int(self.global_step % log_every)
+
+            if 'steps_since_checkpoint' in payload:
+                steps_since_checkpoint = int(payload['steps_since_checkpoint'])
+            elif is_legacy_pre_update_ckpt:
+                steps_since_checkpoint = int(self.global_step)
+            else:
+                steps_since_checkpoint = int(self.global_step % checkpoint_every)
+
+            print(
+                f"Resumed at global_step={self.global_step}, "
+                f"steps_since_update={steps_since_update}, "
+                f"steps_since_log={steps_since_log}, "
+                f"steps_since_checkpoint={steps_since_checkpoint}"
+            )
         else:
             input("No resume_from specified. Start training from scratch? Press Enter to continue...")
 
@@ -305,9 +337,6 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
 
         obs_z = reset_env_obs_z()
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
-        steps_since_update = 0
-        steps_since_log = self.global_step % log_every
-        steps_since_checkpoint = self.global_step % checkpoint_every
 
         with JsonLogger(log_path) as logger:
             try:
@@ -382,9 +411,9 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                                     if not in_warmup:
                                         break
 
-                                    # Warm-up reaches a collection window but skips
-                                    # update/log/ckpt. Start a fresh collection window.
-                                    steps_since_update = 0
+                                    # Warm-up suppresses update/log/ckpt, but keeps
+                                    # steps_since_update so training can start right
+                                    # after learning_start at the next episode end.
 
                                 # Either the update window is not due yet, or warm-up
                                 # suppresses training. In both cases reset immediately.
@@ -430,6 +459,8 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                                 alpha_loss.backward()
                                 alpha_opt.step()
                                 alpha = self.res_policy.log_alpha.exp().item()
+
+                    steps_since_update = 0
 
                     ## training metrics
                     stats = get_recent_success_stats()
@@ -477,6 +508,7 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                     # checkpointing
                     if steps_since_checkpoint >= checkpoint_every:
                         path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step-{self.global_step}.ckpt'
+                        steps_since_checkpoint = steps_since_checkpoint % checkpoint_every
 
                         # prepare payload in main thread to avoid race conditions on model/optimizers
                         # ReplayBuffer is NOT saved in periodic checkpoints to save time
@@ -491,14 +523,15 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                             'n_episode': self.n_episode,
                             'recent_done_successes': list(recent_done_successes),
                             'recent_done_epi_len': list(recent_done_epi_len),
+                            'steps_since_update': steps_since_update,
+                            'steps_since_log': steps_since_log,
+                            'steps_since_checkpoint': steps_since_checkpoint,
                             'replay_buffer': rb
                         }
                         self._save_checkpoint(path, payload)
-                        steps_since_checkpoint = steps_since_checkpoint % checkpoint_every
                         if self.checkpoint_thread is not None:
                             self.checkpoint_thread.join()
 
-                    steps_since_update = 0
                     obs_z = reset_env_obs_z()
 
             # catch all kinds of interrupts to ensure we save a final checkpoint with replay buffer
@@ -521,6 +554,9 @@ class TrainOnlineVibRealWorkspace(BaseWorkspace):
                     'n_episode': self.n_episode,
                     'recent_done_successes': list(recent_done_successes),
                     'recent_done_epi_len': list(recent_done_epi_len),
+                    'steps_since_update': steps_since_update,
+                    'steps_since_log': steps_since_log,
+                    'steps_since_checkpoint': steps_since_checkpoint,
                     'replay_buffer': rb # INCLUDE buffer
                 }
                 self._save_worker(path, payload, self.global_step)
