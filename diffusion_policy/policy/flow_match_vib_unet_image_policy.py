@@ -247,6 +247,8 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             'action_pred': action_pred,
             'naction': naction_pred[:,start:end],
             'naction_pred': naction_pred,
+            'action_pred_all': action_pred[:,start:],
+            'naction_pred_all': naction_pred[:,start:],
         }
         return result
 
@@ -295,6 +297,8 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             'action_pred': action_pred,
             'naction': naction_pred[:,start:end],
             'naction_pred': naction_pred,
+            'action_pred_all': action_pred[:,start:],
+            'naction_pred_all': naction_pred[:,start:],
         }
         return result
 
