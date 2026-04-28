@@ -12,7 +12,7 @@ from diffusion_policy.policy.remote_policy import RemoteImagePolicy
 
 class RealTimeChunkRuntime:
     """
-    Minimal no-RTC async chunk runtime.
+    Minimal async chunk runtime with optional RTC context.
 
     The runner owns the environment. This class owns chunk execution state and
     a background policy client used to request future action chunks.
@@ -25,7 +25,10 @@ class RealTimeChunkRuntime:
         min_exec_horizon=None,
         timeout_ms=60000,
         delay_buffer_size=10,
-        initial_delay_steps=2,
+        initial_delay_steps=5,
+        rtc=False,
+        prefix_attention_schedule="exp",
+        max_guidance_weight=5.0,
     ):
         self.server_addr = server_addr
         self.timeout_ms = timeout_ms
@@ -35,6 +38,9 @@ class RealTimeChunkRuntime:
         )
         self.initial_delay_steps = int(initial_delay_steps)
         self.delay_history = deque([self.initial_delay_steps], maxlen=int(delay_buffer_size))
+        self.rtc = bool(rtc)
+        self.prefix_attention_schedule = prefix_attention_schedule
+        self.max_guidance_weight = float(max_guidance_weight)
 
         self.request_queue = queue.Queue()
         self.response_queue = queue.Queue()
@@ -123,6 +129,8 @@ class RealTimeChunkRuntime:
             "request_exec_idx": self.exec_idx,
             "request_time": time.perf_counter(),
         }
+        if self.rtc:
+            request["rtc_context"] = self._make_rtc_context()
         self.request_queue.put(request)
 
     def _drain_responses(self):
@@ -177,9 +185,13 @@ class RealTimeChunkRuntime:
                 if request is None:
                     return
                 try:
+                    rtc_context = request.get("rtc_context", None)
+                    if rtc_context is not None:
+                        rtc_context = self._rtc_context_to_torch(rtc_context)
                     t0 = time.perf_counter()
                     action_dict = policy_client.predict_action(
-                        self._obs_to_torch(request["obs"])
+                        self._obs_to_torch(request["obs"]),
+                        rtc_context=rtc_context,
                     )
                     latency = time.perf_counter() - t0
                     chunk, nchunk = self._extract_chunks(action_dict)
@@ -206,6 +218,13 @@ class RealTimeChunkRuntime:
             if isinstance(x, np.ndarray) else x,
         )
 
+    def _rtc_context_to_torch(self, rtc_context):
+        return dict_apply(
+            rtc_context,
+            lambda x: torch.from_numpy(x).unsqueeze(0)
+            if isinstance(x, np.ndarray) else x,
+        )
+
     def _extract_chunks(self, action_dict):
         np_action_dict = dict_apply(
             action_dict,
@@ -218,4 +237,27 @@ class RealTimeChunkRuntime:
         nchunk = None
         if "naction_pred_all" in np_action_dict:
             nchunk = np_action_dict["naction_pred_all"].squeeze(0)
+            nchunk = nchunk.astype(np.float32)
         return chunk.astype(np.float32), nchunk
+
+    def _make_rtc_context(self):
+        if self.current_nchunk is None:
+            raise RuntimeError("RTC requires policy outputs to include naction_pred_all.")
+
+        d = int(max(self.delay_history))
+        future_len = int(self.current_nchunk.shape[0])
+        prefix_attention_horizon = future_len - int(self.exec_idx)
+        if prefix_attention_horizon < d:
+            raise RuntimeError(
+                "RTC prefix horizon is shorter than estimated inference delay: "
+                f"prefix_attention_horizon={prefix_attention_horizon}, "
+                f"inference_delay={d}, exec_idx={self.exec_idx}, future_len={future_len}."
+            )
+
+        return {
+            "prev_naction_chunk": self.current_nchunk.copy(),
+            "inference_delay": d,
+            "prefix_attention_horizon": prefix_attention_horizon,
+            "prefix_attention_schedule": self.prefix_attention_schedule,
+            "max_guidance_weight": self.max_guidance_weight,
+        }

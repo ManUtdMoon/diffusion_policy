@@ -22,6 +22,9 @@ class WalletRealtimeRunner(BaseImageRunner):
         min_exec_horizon=None,
         delay_buffer_size=6,
         timeout_ms=60000,
+        rtc=False,
+        prefix_attention_schedule="exp",
+        max_guidance_weight=5.0,
         tqdm_interval_sec=5.0,
     ):
         super().__init__(output_dir)
@@ -50,6 +53,9 @@ class WalletRealtimeRunner(BaseImageRunner):
         )
         self.delay_buffer_size = delay_buffer_size
         self.timeout_ms = timeout_ms
+        self.rtc = rtc
+        self.prefix_attention_schedule = prefix_attention_schedule
+        self.max_guidance_weight = max_guidance_weight
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self):
@@ -77,6 +83,9 @@ class WalletRealtimeRunner(BaseImageRunner):
                     min_exec_horizon=self.min_exec_horizon,
                     timeout_ms=self.timeout_ms,
                     delay_buffer_size=self.delay_buffer_size,
+                    rtc=self.rtc,
+                    prefix_attention_schedule=self.prefix_attention_schedule,
+                    max_guidance_weight=self.max_guidance_weight,
                 )
                 runtime.reset(self._make_obs_dict(obs))
 
