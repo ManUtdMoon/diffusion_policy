@@ -1,10 +1,11 @@
 """
-Usage (flip):
+Usage (wallet):
 python eval_sum_real.py \
-    -c data/outputs/<date>/<time>_train_online_vib_real_workspace_flip/checkpoints/latest.ckpt \
-    -o data/eval/flip/sum_real \
+    -c data/outputs/<date>/<time>_train_online_vib_real_workspace_wallet/checkpoints/latest.ckpt \
+    -o data/eval/wallet/sum_real \
     -d cuda:0 \
-    -t 16
+    -t 24 \
+    -s 10
 """
 
 import sys
@@ -28,6 +29,7 @@ import time
 from diffusion_policy.env_runner.flip_runner import FlipRunner
 from diffusion_policy.env_runner.juicing_runner import JuicingRunner
 from diffusion_policy.env_runner.box_runner import BoxRunner
+from diffusion_policy.env_runner.wallet_runner import WalletRunner
 from diffusion_policy.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 from diffusion_policy.policy.latent_policy import (
     ResiduePolicy as LatentResiduePolicy,
@@ -41,10 +43,10 @@ from diffusion_policy.policy.sum_policy import SumPolicy as ActionSumPolicy
 @click.option("-c", "--checkpoint", required=True, help="Online residual checkpoint path.")
 @click.option("-o", "--output_dir", required=True)
 @click.option("-d", "--device", default="cuda:0")
-@click.option("-t", "--n_action_steps", default=16, type=int, required=True)
+@click.option("-t", "--n_action_steps", default=24, type=int, required=True)
 @click.option("-n", "--eval_episodes", default=30, type=int, show_default=True)
-@click.option("-m", "--max_steps", default=250, type=int, show_default=True)
-@click.option("-s", "--num_inference_steps", default=5, type=int, show_default=True)
+@click.option("-m", "--max_steps", default=1000, type=int, show_default=True)
+@click.option("-s", "--num_inference_steps", default=10, type=int, show_default=True)
 def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_steps, num_inference_steps):
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(output_dir, timestamp)
@@ -54,7 +56,6 @@ def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_step
     payload = torch.load(open(checkpoint, "rb"), pickle_module=dill)
     cfg = payload["cfg"]
     res_policy_state_dict = payload["res_policy"]
-    To = int(cfg.n_obs_steps)
     Ta = int(n_action_steps)
 
     print(f"load RL ckpt @ step = {payload['global_step']} from {checkpoint}")
@@ -69,6 +70,10 @@ def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_step
     base_ckpt = cfg.online_task.base_ckpt
     base_payload = torch.load(open(base_ckpt, "rb"), pickle_module=dill)
     base_cfg = base_payload["cfg"]
+    To = int(base_cfg.n_obs_steps)
+    obs_step_indices = getattr(base_cfg, "obs_step_indices", None)
+    if obs_step_indices is not None:
+        obs_step_indices = list(obs_step_indices)
 
     base_task_name = base_cfg.task_name
     online_task_name = cfg.task_name
@@ -79,7 +84,15 @@ def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_step
     # keep action horizon consistent with eval setting
     base_cfg.n_action_steps = Ta
     base_cfg.policy.n_action_steps = Ta
+    base_cfg.policy.num_inference_steps = num_inference_steps
     base_cfg.task.dataset.pad_after = Ta - 1
+    if obs_step_indices is not None:
+        print(
+            "Using sparse obs history from base checkpoint: "
+            f"obs_step_indices={obs_step_indices}, "
+            f"env_n_obs_steps={max(obs_step_indices) + 1}, "
+            f"policy_n_obs_steps={To}"
+        )
 
     base_policy: FlowMatchVibUnetImagePolicy = hydra.utils.instantiate(base_cfg.policy)
     base_model_state = base_payload["state_dicts"]["ema_model"]
@@ -137,18 +150,46 @@ def main(checkpoint, output_dir, device, n_action_steps, eval_episodes, max_step
     res_policy.to(device)
     sum_policy.eval()
 
-    # 3) run real-task eval (flip)
+    # 3) run real-task eval
     mode = base_cfg.task.dataset.get("mode", None)
     key_epi_init = base_cfg.task.dataset.get("key_epi_init", None)
-    env_runner = BoxRunner(
-        output_dir=output_dir,
-        eval_episodes=eval_episodes,
-        max_steps=max_steps,
-        n_obs_steps=To,
-        n_action_steps=Ta,
-        # mode=mode,
-        # key_epi_init=key_epi_init,
-    )
+    if online_task_name == "wallet":
+        env_runner = WalletRunner(
+            output_dir=output_dir,
+            eval_episodes=eval_episodes,
+            max_steps=max_steps,
+            n_obs_steps=To,
+            obs_step_indices=obs_step_indices,
+            n_action_steps=Ta,
+        )
+    elif online_task_name == "box":
+        env_runner = BoxRunner(
+            output_dir=output_dir,
+            eval_episodes=eval_episodes,
+            max_steps=max_steps,
+            n_obs_steps=To,
+            n_action_steps=Ta,
+        )
+    elif online_task_name == "flip":
+        env_runner = FlipRunner(
+            output_dir=output_dir,
+            eval_episodes=eval_episodes,
+            max_steps=max_steps,
+            n_obs_steps=To,
+            n_action_steps=Ta,
+            mode=mode,
+            key_epi_init=key_epi_init,
+        )
+    elif online_task_name == "juicing_s1":
+        env_runner = JuicingRunner(
+            output_dir=output_dir,
+            eval_episodes=eval_episodes,
+            max_steps=max_steps,
+            n_obs_steps=To,
+            n_action_steps=Ta,
+        )
+    else:
+        raise ValueError(f"Unsupported real-world task: {online_task_name}")
     runner_log = env_runner.run(sum_policy)
 
     # 4) dump log to json

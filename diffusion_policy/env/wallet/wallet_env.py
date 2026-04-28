@@ -189,16 +189,28 @@ class WalletEnv:
         # post-process
         reward = 0.0
         is_success = False
+        label = None
         if self.done:
-            user_input = input("\nEpisode ended. [0-9]=success, [a-z]=failure.").strip()
+            user_input = input(
+                "\nEpisode ended. [0-9]=success, [a-z]=failure, +/-=negative."
+            ).strip()
             if user_input:
                 label = user_input[-1]
 
-            is_success = label.isdigit()
-            reward = 1.0 if is_success else 0.0
-            print(f"{'Success' if is_success else 'Failure'} recorded!")
+            if label in ["+", "-"]:
+                is_success = False
+                reward = -0.5
+                print("Negative failure recorded!")
+            else:
+                is_success = bool(label is not None and label.isdigit())
+                reward = 1.0 if is_success else 0.0
+                print(f"{'Success' if is_success else 'Failure'} recorded!")
 
-        return obs, reward, self.done, {"is_success": is_success, "timeout": timeout}
+        return obs, reward, self.done, {
+            "is_success": is_success,
+            "timeout": timeout,
+            "label": label,
+        }
 
     def terminate(self, is_done):
         '''

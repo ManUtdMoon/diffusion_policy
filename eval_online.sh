@@ -3,10 +3,10 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
 python eval_sum_real.py \
-    -c data/outputs/box_zprl/2026.03.09/14.23.44_train_online_vib_real_workspace_box/checkpoints/latest.ckpt \
-    -o data/eval/box/robust \
+    -c data/outputs/2026.04.28/12.06.34_train_online_vib_real_workspace_wallet/checkpoints/latest.ckpt \
+    -o data/eval/wallet/test \
     -d cuda:0 \
-    -t 16 \
-    -n 10 \
-    -m 600 \
-    -s 2
+    -t 24 \
+    -n 20 \
+    -m 1000 \
+    -s 10
