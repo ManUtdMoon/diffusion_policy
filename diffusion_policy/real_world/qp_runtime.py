@@ -5,6 +5,8 @@ from collections import deque
 
 import numpy as np
 import torch
+from qpsolvers import solve_qp
+from scipy import sparse
 
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.policy.remote_policy import RemoteImagePolicy
@@ -21,9 +23,10 @@ class QpChunkRuntime:
     The actual position QP solve is intentionally not implemented yet.
     """
 
-    LAMBDA_SMOOTH = 1.0
+    LAMBDA_SMOOTH = 0.5
     LAMBDA_OLD = 1.0
     LAMBDA_NEW = 1.0
+    QP_SOLVER = "osqp"
 
     def __init__(
         self,
@@ -241,18 +244,43 @@ class QpChunkRuntime:
 
     def _solve_position_qp(self, old_pos_padded, new_pos, weights_old):
         h, pos_dim = new_pos.shape
-        old = old_pos_padded.reshape(h * pos_dim)
-        new = new_pos.reshape(h * pos_dim)
+        old = old_pos_padded.astype(np.float64).reshape(h * pos_dim)
+        new = new_pos.astype(np.float64).reshape(h * pos_dim)
         w_old = np.repeat(weights_old, pos_dim)
         w_new = 1.0 - w_old
 
         old_weight = self.LAMBDA_OLD * w_old
         new_weight = self.LAMBDA_NEW * w_new
-        denom = old_weight + new_weight
-        if np.any(denom <= 0):
+        diag = old_weight + new_weight
+        if np.any(diag <= 0):
             raise RuntimeError("RTG position solve has zero total weight.")
 
-        position_chunk = (old_weight * old + new_weight * new) / denom
+        b = old_weight * old + new_weight * new
+        p_dev = sparse.diags(2.0 * diag, format="csc")
+        q = (-2.0 * b).astype(np.float64)
+
+        if h >= 3 and self.LAMBDA_SMOOTH > 0:
+            d2_time = sparse.diags(
+                diagonals=[
+                    np.ones(h - 2, dtype=np.float64),
+                    -2.0 * np.ones(h - 2, dtype=np.float64),
+                    np.ones(h - 2, dtype=np.float64),
+                ],
+                offsets=[0, 1, 2],
+                shape=(h - 2, h),
+                format="csc",
+            )
+            d2 = sparse.kron(d2_time, sparse.eye(pos_dim, format="csc"), format="csc")
+            p_smooth = 2.0 * self.LAMBDA_SMOOTH * (d2.T @ d2)
+            p = p_dev + p_smooth
+        else:
+            p = p_dev
+
+        p = ((p + p.T) * 0.5).tocsc()
+        position_chunk = solve_qp(p, q, solver=self.QP_SOLVER)
+        if position_chunk is None:
+            raise RuntimeError(f"RTG position QP failed with solver={self.QP_SOLVER}.")
+
         return position_chunk.reshape(h, pos_dim).astype(np.float32)
 
     def _make_rtg_weights(self, h, s, d):

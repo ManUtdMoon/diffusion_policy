@@ -20,7 +20,7 @@ from diffusion_policy.env.wallet.robotiq_wrapper import (
 )
 
 
-XARM_MIN_Z_MM = 258.0  # change to real tcp, before: 328.0 mm, delta = -70.0 mm
+XARM_MIN_Z_MM = 257.0  # change to real tcp, before: 328.0 mm, delta = -70.0 mm
 
 is_done = False
 
