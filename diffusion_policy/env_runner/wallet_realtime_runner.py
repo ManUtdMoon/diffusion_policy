@@ -22,10 +22,8 @@ class WalletRealtimeRunner(BaseImageRunner):
         min_exec_horizon=None,
         delay_buffer_size=6,
         timeout_ms=60000,
-        rtc=False,
-        prefix_attention_schedule="exp",
-        max_guidance_weight=5.0,
-        prior_data_std=1.0,
+        runtime_cls=RealTimeChunkRuntime,
+        runtime_kwargs=None,
         tqdm_interval_sec=5.0,
     ):
         super().__init__(output_dir)
@@ -54,10 +52,10 @@ class WalletRealtimeRunner(BaseImageRunner):
         )
         self.delay_buffer_size = delay_buffer_size
         self.timeout_ms = timeout_ms
-        self.rtc = rtc
-        self.prefix_attention_schedule = prefix_attention_schedule
-        self.max_guidance_weight = max_guidance_weight
-        self.prior_data_std = prior_data_std
+        self.runtime_cls = runtime_cls
+        if runtime_kwargs is None:
+            runtime_kwargs = {}
+        self.runtime_kwargs = dict(runtime_kwargs)
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self):
@@ -79,16 +77,13 @@ class WalletRealtimeRunner(BaseImageRunner):
         try:
             while completed_episodes < self.eval_episodes:
                 obs = env.reset()
-                runtime = RealTimeChunkRuntime(
+                runtime = self.runtime_cls(
                     server_addr=self.server_addr,
                     n_action_steps=self.n_action_steps,
                     min_exec_horizon=self.min_exec_horizon,
                     timeout_ms=self.timeout_ms,
                     delay_buffer_size=self.delay_buffer_size,
-                    rtc=self.rtc,
-                    prefix_attention_schedule=self.prefix_attention_schedule,
-                    max_guidance_weight=self.max_guidance_weight,
-                    prior_data_std=self.prior_data_std,
+                    **self.runtime_kwargs,
                 )
                 runtime.reset(self._make_obs_dict(obs))
 
@@ -134,6 +129,7 @@ class WalletRealtimeRunner(BaseImageRunner):
                 env.reset_end()
                 pbar.update(1)
         finally:
+            env.reset()
             pbar.close()
 
         log_data = dict()

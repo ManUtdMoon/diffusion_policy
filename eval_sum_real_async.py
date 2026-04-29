@@ -5,8 +5,7 @@ python eval_sum_real_async.py \
     -o data/eval/wallet/sum_real_async \
     -t 24 \
     --server_addr tcp://127.0.0.1:5555 \
-    --rtc \
-    --prior_data_std 0.2
+    --runtime_method rtc
 """
 
 import sys
@@ -26,6 +25,18 @@ import torch
 import wandb
 
 
+RTC_KWARGS = {
+    "rtc": True,
+    "prefix_attention_schedule": "exp",
+    "max_guidance_weight": 10.0,
+    "prior_data_std": 0.5,
+}
+
+QP_KWARGS = {
+    "qp_overlap_decay": 1.0,
+}
+
+
 @click.command()
 @click.option("-c", "--checkpoint", required=True, help="Online residual checkpoint path.")
 @click.option("-o", "--output_dir", required=True)
@@ -34,17 +45,14 @@ import wandb
 @click.option("-m", "--max_steps", default=1000, type=int, show_default=True)
 @click.option("--server_addr", default="tcp://127.0.0.1:5555", show_default=True)
 @click.option("--timeout_ms", default=60000, type=int, show_default=True)
-@click.option("--min_exec_horizon", default=16, type=int)
+@click.option("--min_exec_horizon", default=20, type=int)
 @click.option("--delay_buffer_size", default=6, type=int, show_default=True)
-@click.option("--rtc", is_flag=True, help="Enable RTC pinv guidance for async requests.")
 @click.option(
-    "--prefix_attention_schedule",
-    default="exp",
-    type=click.Choice(["linear", "exp", "ones", "zeros"]),
+    "--runtime_method",
+    default="naive_async",
+    type=click.Choice(["naive_async", "rtc", "qp"]),
     show_default=True,
 )
-@click.option("--max_guidance_weight", default=10.0, type=float, show_default=True)
-@click.option("--prior_data_std", default=0.5, type=float, show_default=True)
 def main(
     checkpoint,
     output_dir,
@@ -55,10 +63,7 @@ def main(
     timeout_ms,
     min_exec_horizon,
     delay_buffer_size,
-    rtc,
-    prefix_attention_schedule,
-    max_guidance_weight,
-    prior_data_std,
+    runtime_method,
 ):
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(output_dir, timestamp)
@@ -93,6 +98,17 @@ def main(
         )
 
     from diffusion_policy.env_runner.wallet_realtime_runner import WalletRealtimeRunner
+    from diffusion_policy.real_world.real_time_chunk_runtime import RealTimeChunkRuntime
+
+    runtime_cls = RealTimeChunkRuntime
+    runtime_kwargs = {}
+    if runtime_method == "rtc":
+        runtime_kwargs = dict(RTC_KWARGS)
+    elif runtime_method == "qp":
+        from diffusion_policy.real_world.qp_runtime import QpChunkRuntime
+
+        runtime_cls = QpChunkRuntime
+        runtime_kwargs = dict(QP_KWARGS)
 
     env_runner = WalletRealtimeRunner(
         output_dir=output_dir,
@@ -105,10 +121,8 @@ def main(
         min_exec_horizon=min_exec_horizon,
         delay_buffer_size=delay_buffer_size,
         timeout_ms=timeout_ms,
-        rtc=rtc,
-        prefix_attention_schedule=prefix_attention_schedule,
-        max_guidance_weight=max_guidance_weight,
-        prior_data_std=prior_data_std,
+        runtime_cls=runtime_cls,
+        runtime_kwargs=runtime_kwargs,
     )
     runner_log = env_runner.run()
 
@@ -123,10 +137,8 @@ def main(
     json_log["n_obs_steps"] = To
     json_log["min_exec_horizon"] = min_exec_horizon if min_exec_horizon is not None else Ta
     json_log["delay_buffer_size"] = delay_buffer_size
-    json_log["rtc"] = rtc
-    json_log["prefix_attention_schedule"] = prefix_attention_schedule
-    json_log["max_guidance_weight"] = max_guidance_weight
-    json_log["prior_data_std"] = prior_data_std
+    json_log["runtime_method"] = runtime_method
+    json_log["runtime_kwargs"] = runtime_kwargs
 
     out_path = os.path.join(output_dir, "eval_log.json")
     json.dump(json_log, open(out_path, "w"), indent=2, sort_keys=True)
