@@ -323,6 +323,7 @@ class SumPolicy:
                 prefix_attention_horizon=rtc_context['prefix_attention_horizon'],
                 prefix_attention_schedule=rtc_context['prefix_attention_schedule'],
                 max_guidance_weight=rtc_context['max_guidance_weight'],
+                prior_data_std=rtc_context['prior_data_std'],
             )
 
         return result

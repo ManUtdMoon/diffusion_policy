@@ -29,6 +29,7 @@ class RealTimeChunkRuntime:
         rtc=False,
         prefix_attention_schedule="exp",
         max_guidance_weight=5.0,
+        prior_data_std=1.0,
     ):
         self.server_addr = server_addr
         self.timeout_ms = timeout_ms
@@ -41,6 +42,7 @@ class RealTimeChunkRuntime:
         self.rtc = bool(rtc)
         self.prefix_attention_schedule = prefix_attention_schedule
         self.max_guidance_weight = float(max_guidance_weight)
+        self.prior_data_std = float(prior_data_std)
 
         self.request_queue = queue.Queue()
         self.response_queue = queue.Queue()
@@ -260,4 +262,5 @@ class RealTimeChunkRuntime:
             "prefix_attention_horizon": prefix_attention_horizon,
             "prefix_attention_schedule": self.prefix_attention_schedule,
             "max_guidance_weight": self.max_guidance_weight,
+            "prior_data_std": self.prior_data_std,
         }

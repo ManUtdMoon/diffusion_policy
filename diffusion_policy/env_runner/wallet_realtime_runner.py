@@ -25,6 +25,7 @@ class WalletRealtimeRunner(BaseImageRunner):
         rtc=False,
         prefix_attention_schedule="exp",
         max_guidance_weight=5.0,
+        prior_data_std=1.0,
         tqdm_interval_sec=5.0,
     ):
         super().__init__(output_dir)
@@ -56,6 +57,7 @@ class WalletRealtimeRunner(BaseImageRunner):
         self.rtc = rtc
         self.prefix_attention_schedule = prefix_attention_schedule
         self.max_guidance_weight = max_guidance_weight
+        self.prior_data_std = prior_data_std
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self):
@@ -86,6 +88,7 @@ class WalletRealtimeRunner(BaseImageRunner):
                     rtc=self.rtc,
                     prefix_attention_schedule=self.prefix_attention_schedule,
                     max_guidance_weight=self.max_guidance_weight,
+                    prior_data_std=self.prior_data_std,
                 )
                 runtime.reset(self._make_obs_dict(obs))
 

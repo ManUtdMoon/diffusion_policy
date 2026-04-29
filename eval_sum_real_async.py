@@ -5,7 +5,8 @@ python eval_sum_real_async.py \
     -o data/eval/wallet/sum_real_async \
     -t 24 \
     --server_addr tcp://127.0.0.1:5555 \
-    --rtc
+    --rtc \
+    --prior_data_std 0.2
 """
 
 import sys
@@ -42,7 +43,8 @@ import wandb
     type=click.Choice(["linear", "exp", "ones", "zeros"]),
     show_default=True,
 )
-@click.option("--max_guidance_weight", default=5.0, type=float, show_default=True)
+@click.option("--max_guidance_weight", default=10.0, type=float, show_default=True)
+@click.option("--prior_data_std", default=0.5, type=float, show_default=True)
 def main(
     checkpoint,
     output_dir,
@@ -56,6 +58,7 @@ def main(
     rtc,
     prefix_attention_schedule,
     max_guidance_weight,
+    prior_data_std,
 ):
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(output_dir, timestamp)
@@ -105,6 +108,7 @@ def main(
         rtc=rtc,
         prefix_attention_schedule=prefix_attention_schedule,
         max_guidance_weight=max_guidance_weight,
+        prior_data_std=prior_data_std,
     )
     runner_log = env_runner.run()
 
@@ -122,6 +126,7 @@ def main(
     json_log["rtc"] = rtc
     json_log["prefix_attention_schedule"] = prefix_attention_schedule
     json_log["max_guidance_weight"] = max_guidance_weight
+    json_log["prior_data_std"] = prior_data_std
 
     out_path = os.path.join(output_dir, "eval_log.json")
     json.dump(json_log, open(out_path, "w"), indent=2, sort_keys=True)

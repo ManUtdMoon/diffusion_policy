@@ -289,6 +289,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             prefix_attention_horizon: int,
             prefix_attention_schedule: PrefixAttentionSchedule,
             max_guidance_weight: float,
+            prior_data_std: float,
             generator=None,
             ) -> torch.Tensor:
         B = global_cond.shape[0]
@@ -335,7 +336,8 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             x0, vjp_fn, v = vjp(denoiser, x_t.detach(), has_aux=True)
             error = (y - x0) * weights_full[None, :, None]
             pinv_correction = vjp_fn(error)[0]
-            inv_r2 = (t**2 + (1 - t) ** 2) / (t**2)
+            sigma2 = prior_data_std ** 2
+            inv_r2 = (t**2 + sigma2 * (1 - t) ** 2) / (t**2 * sigma2)
             c = torch.nan_to_num(t / (1 - t), posinf=max_guidance_weight)
             guidance_weight = torch.minimum(
                 c * inv_r2,
@@ -359,6 +361,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             prefix_attention_horizon: int,
             prefix_attention_schedule: PrefixAttentionSchedule,
             max_guidance_weight: float,
+            prior_data_std: float,
             generator=None,
             ) -> Dict[str, torch.Tensor]:
         naction_pred = self.conditional_sample_rtc(
@@ -368,6 +371,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             prefix_attention_horizon=prefix_attention_horizon,
             prefix_attention_schedule=prefix_attention_schedule,
             max_guidance_weight=max_guidance_weight,
+            prior_data_std=prior_data_std,
             generator=generator,
         )
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
@@ -463,6 +467,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
                 prefix_attention_horizon=rtc_context['prefix_attention_horizon'],
                 prefix_attention_schedule=rtc_context['prefix_attention_schedule'],
                 max_guidance_weight=rtc_context['max_guidance_weight'],
+                prior_data_std=rtc_context['prior_data_std'],
             )
         
         # 4. append embeddings to result for debugging
