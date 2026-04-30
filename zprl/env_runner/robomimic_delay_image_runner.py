@@ -54,6 +54,7 @@ class RobomimicDelayImageRunner(BaseImageRunner):
             rtc_mode=False,
             prefix_attention_schedule='exp',
             max_guidance_weight=5.0,
+            sigma=1.0,
             action_pose_repr=None,
             tqdm_interval_sec=5.0,
             n_envs=None
@@ -236,6 +237,7 @@ class RobomimicDelayImageRunner(BaseImageRunner):
         self.rtc_mode = rtc_mode
         self.prefix_attention_schedule = prefix_attention_schedule
         self.max_guidance_weight = max_guidance_weight
+        self.sigma = sigma
         self.past_action = past_action
         self.max_steps = max_steps
         self.rotation_transformer = rotation_transformer
@@ -310,6 +312,7 @@ class RobomimicDelayImageRunner(BaseImageRunner):
                             'prefix_attention_horizon': prefix_attention_horizon,
                             'prefix_attention_schedule': self.prefix_attention_schedule,
                             'max_guidance_weight': self.max_guidance_weight,
+                            'sigma': self.sigma,
                         }
                     next_chunk, next_nchunk = self._predict_action_chunk(
                         policy, obs, device, rtc_context=rtc_context)
@@ -372,6 +375,7 @@ class RobomimicDelayImageRunner(BaseImageRunner):
 
         log_data['action_delay_steps'] = self.action_delay_steps
         log_data['rtc_mode'] = self.rtc_mode
+        log_data['sigma'] = self.sigma
         return log_data
 
     def _predict_action_chunk(self, policy, obs, device, rtc_context=None):

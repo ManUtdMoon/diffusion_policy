@@ -236,6 +236,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             prefix_attention_horizon: int,
             prefix_attention_schedule: PrefixAttentionSchedule,
             max_guidance_weight: float,
+            sigma: float = 1.0,
             generator=None,
             ) -> torch.Tensor:
         B = global_cond.shape[0]
@@ -251,6 +252,8 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             raise ValueError(
                 f"prev_naction_chunk must have shape {(B, future_len, Da)}, "
                 f"got {tuple(prev_naction_chunk.shape)}")
+        if sigma <= 0:
+            raise ValueError(f"sigma must be positive, got {sigma}.")
 
         prev_naction_chunk = prev_naction_chunk.to(device=device, dtype=dtype)
         prefix_full = torch.zeros((B, T, Da), device=device, dtype=dtype)
@@ -283,7 +286,8 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             x0, vjp_fn, v = vjp(denoiser, x_t.detach(), has_aux=True)
             error = (y - x0) * weights_full[None, :, None]
             pinv_correction = vjp_fn(error)[0]
-            inv_r2 = (t**2 + (1 - t) ** 2) / (t**2)
+            sigma2 = sigma ** 2
+            inv_r2 = (t**2 + sigma2 * (1 - t) ** 2) / (t**2 * sigma2)
             c = torch.nan_to_num(t / (1 - t), posinf=max_guidance_weight)
             guidance_weight = torch.minimum(
                 c * inv_r2,
@@ -306,6 +310,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             prefix_attention_horizon: int,
             prefix_attention_schedule: PrefixAttentionSchedule,
             max_guidance_weight: float,
+            sigma: float = 1.0,
             generator=None,
             ) -> Dict[str, torch.Tensor]:
         naction_pred = self.conditional_sample_rtc(
@@ -315,6 +320,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             prefix_attention_horizon=prefix_attention_horizon,
             prefix_attention_schedule=prefix_attention_schedule,
             max_guidance_weight=max_guidance_weight,
+            sigma=sigma,
             generator=generator,
         )
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
@@ -407,6 +413,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
                 prefix_attention_horizon=rtc_context['prefix_attention_horizon'],
                 prefix_attention_schedule=rtc_context.get('prefix_attention_schedule', 'exp'),
                 max_guidance_weight=rtc_context['max_guidance_weight'],
+                sigma=rtc_context.get('sigma', 1.0),
             )
         
         # 4. append embeddings to result for debugging

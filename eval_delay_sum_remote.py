@@ -31,6 +31,7 @@ if not os.path.exists(DATASET_ROOT):
 @click.option('--rtc', is_flag=True)
 @click.option('-s', '--prefix_attention_schedule', default='exp', type=click.Choice(['linear', 'exp', 'ones', 'zeros']))
 @click.option('-g', '--max_guidance_weight', default=5.0, type=float)
+@click.option('--sigma', default=1.0, type=click.FloatRange(min=0.0, min_open=True))
 @click.option('--server_addr', default='tcp://127.0.0.1:5555')
 @click.option('--timeout_ms', default=60000, type=int)
 def main(
@@ -40,6 +41,7 @@ def main(
         rtc,
         prefix_attention_schedule,
         max_guidance_weight,
+        sigma,
         server_addr,
         timeout_ms):
     if os.path.exists(output_dir):
@@ -96,6 +98,7 @@ def main(
         rtc_mode=rtc,
         prefix_attention_schedule=prefix_attention_schedule,
         max_guidance_weight=max_guidance_weight,
+        sigma=sigma,
         tqdm_interval_sec=runner_cfg.tqdm_interval_sec,
         n_envs=runner_cfg.n_envs)
 
@@ -116,6 +119,7 @@ def main(
     json_log['rtc_mode'] = rtc
     json_log['prefix_attention_schedule'] = prefix_attention_schedule
     json_log['max_guidance_weight'] = max_guidance_weight
+    json_log['sigma'] = sigma
     json_log['n_action_steps'] = int(OmegaConf.select(cfg, 'n_action_steps', default=runner_cfg.n_action_steps))
     json_log['n_obs_steps'] = int(OmegaConf.select(cfg, 'n_obs_steps', default=runner_cfg.n_obs_steps))
     out_path = os.path.join(output_dir, 'eval_log.json')
