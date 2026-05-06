@@ -2,7 +2,7 @@
 import argparse
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import dill
 import torch
@@ -11,7 +11,7 @@ import torch
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Recursively scan .ckpt files under one or more directories, read "
+            "Scan workspace/checkpoints/*.ckpt under one or more directories, read "
             "global_step / recent_done_success(es) / recent_done_epi_len, and "
             "export mean successful episode length vs. global_step."
         )
@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
         "input_dirs",
         nargs="+",
         type=Path,
-        help="One or more root directories to search recursively for .ckpt files.",
+        help="One or more root directories to search for workspace/checkpoints/*.ckpt files.",
     )
     parser.add_argument(
         "--output",
@@ -31,8 +31,46 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def find_ckpt_files(input_dirs: Iterable[Path]) -> List[Path]:
+def read_existing_rows(output_path: Path) -> Tuple[List[Dict], Optional[int]]:
+    output_path = output_path.expanduser().resolve()
+    if not output_path.exists():
+        return [], None
+
+    rows = []
+    with output_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            rows.append(
+                {
+                    "global_step": int(parts[0]),
+                    "mean_success_epi_len": float(parts[1]),
+                    "mean_num_success": float(parts[2]),
+                }
+            )
+
+    if not rows:
+        return [], None
+    return rows, rows[-1]["global_step"]
+
+
+def read_workspace_global_step(checkpoints_dir: Path) -> Optional[int]:
+    step_path = checkpoints_dir / "global_step.txt"
+    if not step_path.exists():
+        return None
+    text = step_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return None
+    return int(text)
+
+
+def find_ckpt_files(input_dirs: Iterable[Path], min_global_step: Optional[int] = None) -> Tuple[List[Path], int]:
     ckpt_paths: List[Path] = []
+    skipped_workspaces = 0
     for input_dir in input_dirs:
         input_dir = input_dir.expanduser().resolve()
         if not input_dir.exists():
@@ -40,15 +78,28 @@ def find_ckpt_files(input_dirs: Iterable[Path]) -> List[Path]:
         if not input_dir.is_dir():
             raise NotADirectoryError(f"Input path is not a directory: {input_dir}")
 
-        workspace_dirs = sorted(path for path in input_dir.iterdir() if path.is_dir())
-        for workspace_dir in workspace_dirs:
-            checkpoints_dir = workspace_dir / "checkpoints"
+        checkpoints_dirs = set()
+        if input_dir.name == "checkpoints":
+            checkpoints_dirs.add(input_dir)
+        if (input_dir / "checkpoints").is_dir():
+            checkpoints_dirs.add(input_dir / "checkpoints")
+        checkpoints_dirs.update(path for path in input_dir.rglob("checkpoints") if path.is_dir())
+
+        for checkpoints_dir in sorted(checkpoints_dirs):
             if not checkpoints_dir.is_dir():
                 continue
+            workspace_global_step = read_workspace_global_step(checkpoints_dir)
+            if (
+                min_global_step is not None
+                and workspace_global_step is not None
+                and workspace_global_step <= min_global_step
+            ):
+                skipped_workspaces += 1
+                continue
             ckpt_paths.extend(sorted(checkpoints_dir.glob("*.ckpt")))
-    if not ckpt_paths:
+    if not ckpt_paths and min_global_step is None:
         raise FileNotFoundError("No .ckpt files found.")
-    return ckpt_paths
+    return ckpt_paths, skipped_workspaces
 
 
 def load_ckpt_row(ckpt_path: Path) -> Dict:
@@ -126,13 +177,25 @@ def write_output(output_path: Path, rows: List[Dict]) -> None:
 
 def main() -> None:
     args = parse_args()
-    ckpt_paths = find_ckpt_files(args.input_dirs)
-    rows = [load_ckpt_row(ckpt_path) for ckpt_path in ckpt_paths]
-    rows = aggregate_rows(rows)
+    existing_rows, last_output_step = read_existing_rows(args.output)
+    ckpt_paths, skipped_workspaces = find_ckpt_files(
+        args.input_dirs,
+        min_global_step=last_output_step,
+    )
+    new_rows = []
+    for ckpt_path in ckpt_paths:
+        row = load_ckpt_row(ckpt_path)
+        if last_output_step is not None and row["global_step"] <= last_output_step:
+            continue
+        new_rows.append(row)
+    new_rows = aggregate_rows(new_rows)
+    rows = existing_rows + new_rows
     write_output(args.output, rows)
 
+    print(f"Last output step: {last_output_step}")
+    print(f"Skipped workspaces: {skipped_workspaces}")
     print(f"Scanned ckpts: {len(ckpt_paths)}")
-    print(f"Written rows: {len(rows)}")
+    print(f"Written rows: {len(rows)} ({len(new_rows)} new)")
     print(f"Saved to: {args.output.expanduser().resolve()}")
 
 
