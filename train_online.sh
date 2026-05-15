@@ -8,5 +8,5 @@ python train.py \
     online_task=wallet \
     online_task.base_ckpt="data/outputs/2026.04.25/19.31.07_train_flow_match_vib_unet_image_ddp_wallet/checkpoints/latest.ckpt" \
     logging.mode="offline" \
-    training.resume_from="data/outputs/2026.04.28/12.06.34_train_online_vib_real_workspace_wallet/checkpoints/latest.ckpt" \
+    training.resume_from="data/outputs/2026.05.11/10.31.41_train_online_vib_real_workspace_wallet/checkpoints/step-23560.ckpt" \
     training.res_scale=0.15

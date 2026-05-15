@@ -105,7 +105,7 @@ class WalletRunner(BaseImageRunner):
 
                 actual_step_count += 1
                 episode_done = done
-                print("Chunk freq:", 1 / (time.time() - time_frame))
+                # print("Chunk freq:", 1 / (time.time() - time_frame))
 
             time_end = time.time()
             print("Avg chunk freq: ", actual_step_count / (time_end - time_start))
@@ -127,7 +127,7 @@ class WalletRunner(BaseImageRunner):
                 print(f"Epi length till now: {sum(all_epi_len) / len(all_epi_len)}")
 
             env.reset_end()
-            input("Wait for resetting workspace")
+            # input("Wait for resetting workspace")
             pbar.update(1)
 
         pbar.close()

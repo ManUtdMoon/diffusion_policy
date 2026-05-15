@@ -4,16 +4,25 @@ from pathlib import Path
 from typing import Dict
 
 import matplotlib as mpl
+import matplotlib.font_manager as font_manager
 import matplotlib.pyplot as plt
 import pandas as pd
 
+CAMBRIA_FONT_PATH = Path(__file__).resolve().parents[1] / "data" / "cambria.ttc"
+font_manager.fontManager.addfont(CAMBRIA_FONT_PATH)
+CAMBRIA_FONT_NAME = font_manager.FontProperties(fname=CAMBRIA_FONT_PATH).get_name()
+
 mpl.rcParams["font.family"] = "Arial"
 mpl.rcParams["font.sans-serif"] = ["Arial"]
+mpl.rcParams["mathtext.fontset"] = "custom"
+mpl.rcParams["mathtext.rm"] = CAMBRIA_FONT_NAME
+mpl.rcParams["mathtext.it"] = f"{CAMBRIA_FONT_NAME}:italic"
+mpl.rcParams["mathtext.bf"] = f"{CAMBRIA_FONT_NAME}:bold"
 mpl.rcParams["pdf.fonttype"] = 42
 mpl.rcParams["ps.fonttype"] = 42
 
 METHOD_COLORS = {
-    "ZPRL": "#E63983",
+    "ZPRL": "#c66a42",
     "Po-dec": "#56B4E9",
 }
 METHOD_MARKERS = {
@@ -41,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-ratio",
         type=float,
-        default=16.0,
+        default=24.0,
         help="Env step conversion ratio for chunk step (default: 16).",
     )
     parser.add_argument(
@@ -114,6 +123,8 @@ def main() -> None:
         TITLE = "Place Orange"
     elif "box" in eval_dir.name.lower():
         TITLE = "Open Box"
+    elif "wallet" in eval_dir.name.lower():
+        TITLE = "Insert Bills"
     else:
         raise ValueError("Unrecognized task. Only accept 'flip', 'juicing', or 'box'.")
 
@@ -144,12 +155,13 @@ def main() -> None:
             label=method,
             color=color,
         )
-    ax.set_xlabel(r"Env steps ($\times 10^3$)")
-    ax.set_ylabel("Success Rate")
-    ax.set_ylim(top=1.0)
-    ax.set_title(TITLE)
+    ax.set_xlabel(r"Env steps ($\times 10^3$)", fontsize=14)
+    ax.set_ylabel("Success Rate", fontsize=14)
+    # ax.set_ylim(top=1.0)
+    ax.set_title(TITLE, fontsize=14)
+    ax.tick_params(axis="both", labelsize=14)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best")
+    # ax.legend(loc="best")
     fig.tight_layout()
     sr_out = output_dir / f"online_eval_sr_sm{args.smooth_window}.pdf"
     fig.savefig(sr_out, dpi=200)
@@ -169,11 +181,12 @@ def main() -> None:
             label=method,
             color=color,
         )
-    ax.set_xlabel(r"Env steps ($\times 10^3$)")
-    ax.set_ylabel("Episode Length")
-    ax.set_title(TITLE)
+    ax.set_xlabel(r"Env steps ($\times 10^3$)", fontsize=14)
+    ax.set_ylabel("Episode Length", fontsize=14)
+    ax.set_title(TITLE, fontsize=14)
+    ax.tick_params(axis="both", labelsize=14)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best")
+    # ax.legend(loc="best")
     fig.tight_layout()
     epi_out = output_dir / f"online_eval_epi_len_sm{args.smooth_window}.pdf"
     fig.savefig(epi_out, dpi=200)
