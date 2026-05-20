@@ -176,5 +176,18 @@ Our code base is built on the following repositories and the structure of this R
 - [Policy Decorator](https://github.com/tongzhoumu/policy_decorator): our online workspace basically follows what policy decorator does. We make some optimization (such as next observation pre-encoding) to accelerate training.
 - [SOE](https://github.com/EricJin2002/SOE): We borrow the idea of introducing VIB module into imitation policies to realize in-manifold exploration from SOE.
 
+## Citation
+If you find this repository useful, please consider citing our paper:
+```bibtex
+@misc{yu2026zprl,
+      title={Beyond Action Residuals: Real-World Robot Policy Steering via Bottleneck Latent Reinforcement Learning},
+      author={Dongjie Yu and Kun Lei and Zhennan Jiang and Jia Pan and Huazhe Xu},
+      year={2026},
+      eprint={2605.19919},
+      archivePrefix={arXiv},
+      url={https://arxiv.org/abs/2605.19919},
+}
+```
+
 ## Contact
 Feel free to contact [Dongjie Yu](mailto:djyu@connect.hku.hk) if you have any questions about the paper or the code base.
