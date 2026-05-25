@@ -4,7 +4,7 @@ import logging
 import torch
 import torch.nn as nn
 import torchvision
-from zprl.model.vision.crop_randomizer import CropRandomizer, CropRandomizerV2
+from zprl.model.vision.crop_randomizer import CropRandomizerV3
 from zprl.model.common.module_attr_mixin import ModuleAttrMixin
 from zprl.common.pytorch_util import dict_apply, replace_submodules
 
@@ -93,7 +93,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                     else:
                         h, w = crop_shape
                     if random_crop:
-                        this_randomizer = CropRandomizerV2(
+                        this_randomizer = CropRandomizerV3(
                             input_shape=input_shape,
                             crop_height=h,
                             crop_width=w,
