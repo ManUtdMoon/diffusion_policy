@@ -268,6 +268,96 @@ class TimmPooling(nn.Module):
         return x
 
 
+class TokenAttentionPooling(nn.Module):
+    def __init__(self, embed_dim=768, hidden_dim=256):
+        super(TokenAttentionPooling, self).__init__()
+        self.attention_scorer = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 1)
+        )
+
+    def forward(self, patch_tokens):
+        scores = self.attention_scorer(patch_tokens)
+        weights = F.softmax(scores, dim=1)
+        weighted_features = torch.sum(patch_tokens * weights, dim=1)
+        return weighted_features
+
+
+class VitPooling(nn.Module):
+    def __init__(self, model_name, input_shape, pretrained=False, **kwargs):
+        super(VitPooling, self).__init__()
+        assert (
+            len(input_shape) == 3
+        ), "[error] input shape of vit model should be (C, H, W)"
+
+        self.backbone = timm.create_model(
+            model_name,
+            pretrained=pretrained,
+            in_chans=input_shape[0]
+        )
+
+        num_prefix_tokens = kwargs.get(
+            "num_prefix_tokens", getattr(self.backbone, "num_prefix_tokens", 1)
+        )
+        self.num_prefix_tokens = num_prefix_tokens
+
+        x = torch.zeros(1, *input_shape)
+        y = self.backbone.forward_features(x)
+        output_shape = y.shape
+        assert (
+            len(output_shape) == 3
+        ), "[error] output shape of vit model should be (B, N, C)"
+
+        embed_dim = output_shape[-1]
+        pooling_type = kwargs.get('pooling_type', 'token_attention')
+        bottleneck_dim = kwargs.get("bottleneck_dim", None)
+        if pooling_type == 'token_attention':
+            hidden_dim = kwargs.get("hidden_dim", 256)
+            self.pooling = TokenAttentionPooling(
+                embed_dim=embed_dim,
+                hidden_dim=hidden_dim
+            )
+        elif pooling_type == 'mean_patch':
+            self.pooling = nn.Identity()
+        elif pooling_type == 'cls':
+            self.pooling = nn.Identity()
+        else:
+            raise ValueError(
+                f"Unsupported pooling type: {pooling_type}. "
+                "Supported types: token_attention, mean_patch, cls."
+            )
+        self.pooling_type = pooling_type
+
+        self.bottleneck = nn.Identity()
+        if bottleneck_dim is not None:
+            self.bottleneck = nn.Sequential(
+                nn.Linear(embed_dim, bottleneck_dim),
+                nn.LayerNorm(bottleneck_dim),
+                nn.Tanh()
+            )
+
+        self.output_shape = self.forward(x).shape[-1]
+
+    def _patch_tokens(self, x):
+        if self.num_prefix_tokens > 0:
+            x = x[:, self.num_prefix_tokens:]
+        return x
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)
+        if self.pooling_type == 'cls':
+            x = x[:, 0]
+        else:
+            x = self._patch_tokens(x)
+            if self.pooling_type == 'mean_patch':
+                x = x.mean(dim=1)
+            else:
+                x = self.pooling(x)
+        x = self.bottleneck(x)
+        return x
+
+
 if __name__ == "__main__":
     # Test Resnet w/ Spatial Projection
     input_shape = (3, 120, 160)
@@ -324,3 +414,15 @@ if __name__ == "__main__":
     output = model5(sample)
     print(output.shape, model5.output_shape)
     # Expected output shape: (16, 256) for Timm efficientnet pooling
+
+    # Test dinov3
+    input_shape = (3, 240, 240)
+    sample = torch.randn(16, *input_shape)
+    pooling_kwargs = {
+        "pooling_type": "cls",
+        "hidden_dim": 256,
+        "bottleneck_dim": None,
+    }
+    model6 = VitPooling("vit_small_patch16_dinov3.lvd1689m", input_shape, pretrained=True, **pooling_kwargs)
+    output = model6(sample)
+    print(output.shape, model6.output_shape)
