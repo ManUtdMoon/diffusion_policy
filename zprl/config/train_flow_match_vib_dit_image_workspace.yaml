@@ -21,14 +21,10 @@ policy:
   vib_latent_dim: 16
   vib_alpha: 1.0
   vib_beta: 1.5e-4
-  vib_recon: 0.0
+  vib_recon: 0.01
   vib_hidden_dim: 256
 
   shape_meta: ${shape_meta}
-
-  noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteScheduler
-    num_train_timesteps: 100
 
   obs_encoder:
     _target_: zprl.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
@@ -52,7 +48,7 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 2
+  num_inference_steps: 5
   num_blocks: 6
   hidden_dim: 384
   time_dim: 128
@@ -92,12 +88,14 @@ optimizer:
 
 training:
   device: "cuda:0"
-  seed: 42
+  seed: 0
   debug: False
   resume: True
   # optimization
-  lr_scheduler: cosine
+  lr_scheduler: cosine_with_min_lr
   lr_warmup_steps: 100
+  lr_scheduler_kwargs:
+    min_lr_ratio: 0.0
   num_epochs: 1001
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
@@ -130,7 +128,7 @@ checkpoint:
     monitor_key: test_mean_score
     mode: max
     k: 2
-    format_str: 'epoch={epoch:04d}-score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch_{epoch:04d}-score_{test_mean_score:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

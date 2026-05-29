@@ -1,7 +1,7 @@
 from typing import Dict
 import torch
 import torch.nn.functional as F
-from diffusers.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
+from torch.func import functional_call
 
 from zprl.model.common.normalizer import LinearNormalizer
 from zprl.policy.base_image_policy import BaseImagePolicy
@@ -13,7 +13,6 @@ from zprl.common.pytorch_util import dict_apply
 class FlowMatchVibDitImagePolicy(BaseImagePolicy):
     def __init__(self,
             shape_meta: dict,
-            noise_scheduler: FlowMatchEulerDiscreteScheduler,
             obs_encoder: MultiImageObsEncoder,
             horizon,
             n_action_steps,
@@ -32,9 +31,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
             vib_alpha=2.0,
             vib_beta=1e-3,
             vib_recon=0.1,
-            vib_hidden_dim=256,
-            # parameters passed to step
-            **kwargs):
+            vib_hidden_dim=256):
         super().__init__()
 
         # parse shapes
@@ -76,15 +73,12 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
             hidden_dim=vib_hidden_dim,
         )
 
-        self.noise_scheduler = noise_scheduler
         self.normalizer = LinearNormalizer()
         self.horizon = horizon
         self.obs_feature_dim = obs_feature_dim
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
-        self.kwargs = kwargs
-
         self.vib_alpha = vib_alpha
         self.vib_beta = vib_beta
         self.vib_recon = vib_recon
@@ -95,18 +89,14 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         )
         self.num_inference_steps = num_inference_steps
 
-        self.timesteps = self.noise_scheduler.timesteps.clone()
 
     # ========= inference  ============
     def conditional_sample(self,
             condition_data,
             global_cond=None,
-            generator=None,
-            # keyword arguments to scheduler.step
-            **kwargs
+            generator=None
             ):
         model = self.model
-        scheduler = self.noise_scheduler
 
         trajectory = torch.randn(
             size=condition_data.shape,
@@ -115,13 +105,15 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
             generator=generator,
         )
 
-        scheduler.set_timesteps(self.num_inference_steps)
+        timesteps = torch.linspace(
+            1.0, 0.0, self.num_inference_steps + 1,
+            device=trajectory.device,
+            dtype=torch.float32)
+        dt = -1.0 / self.num_inference_steps
 
-        for t in scheduler.timesteps:
+        for t in timesteps[:-1]:
             model_output = model(trajectory, t, global_cond)
-            trajectory = scheduler.step(
-                model_output, t, trajectory, generator=generator, **kwargs
-            ).prev_sample
+            trajectory = trajectory + dt * model_output
 
         return trajectory
 
@@ -163,7 +155,6 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         nsample = self.conditional_sample(
             cond_data,
             global_cond=global_cond,
-            **self.kwargs,
         )
 
         naction_pred = nsample
@@ -194,6 +185,9 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
     def set_normalizer(self, normalizer: LinearNormalizer):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
+    def forward(self, batch):
+        return self.compute_loss(batch)
+
     def compute_loss(self, batch):
         nobs = self.normalizer.normalize(batch["obs"])
         nactions = self.normalizer["action"].normalize(batch["action"])
@@ -207,20 +201,11 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         nobs_features = self.obs_encoder(this_nobs)
         global_cond = nobs_features.reshape(batch_size, -1)
 
-        noise = torch.randn(trajectory.shape, device=trajectory.device)
-        bsz = trajectory.shape[0]
-
-        if self.timesteps.device != trajectory.device:
-            self.timesteps = self.timesteps.to(trajectory.device)
-        timestep_idxs = torch.randint(
-            0,
-            self.noise_scheduler.config.num_train_timesteps,
-            (bsz,),
-            device=trajectory.device,
-        ).long()
-        timesteps = self.timesteps[timestep_idxs]
-
-        noisy_trajectory = self.noise_scheduler.scale_noise(trajectory, timesteps, noise)
+        noise = torch.randn_like(trajectory)
+        timesteps = torch.rand(
+            (batch_size,), device=trajectory.device, dtype=trajectory.dtype)
+        timesteps_b = timesteps[:, None, None]
+        noisy_trajectory = (1 - timesteps_b) * trajectory + timesteps_b * noise
         target = noise - trajectory
 
         # Decouple IL and VIB training; VIB should not update obs encoder.
@@ -231,19 +216,34 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         pred_il = self.model(noisy_trajectory, timesteps, global_cond)
         il_loss = F.mse_loss(pred_il, target)
 
-        # vib loss
         vib_kl_loss = -0.5 * torch.mean(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
 
-        pred_vib_il = self.model(noisy_trajectory, timesteps, modified_global_cond)
+        frozen_model_params = {
+            key: value.detach() for key, value in self.model.named_parameters()
+        }
+        frozen_model_buffers = {
+            key: value.detach() for key, value in self.model.named_buffers()
+        }
+        pred_vib_il = functional_call(
+            self.model,
+            (frozen_model_params, frozen_model_buffers),
+            (noisy_trajectory, timesteps, modified_global_cond)
+        )
         vib_il_loss = F.mse_loss(pred_vib_il, target)
+        vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())
 
-        loss = il_loss
-        vib_loss = vib_il_loss + self.vib_beta * vib_kl_loss
+        vib_loss = (
+            vib_il_loss
+            + self.vib_beta * vib_kl_loss
+            + self.vib_recon * vib_recon_loss
+        )
+        loss = il_loss + vib_loss
 
         with torch.no_grad():
             delta_rms = (modified_global_cond - global_cond).pow(2).mean().sqrt()
             base_rms = global_cond.pow(2).mean().sqrt()
             info = {
+                "il_loss": il_loss.item(),
                 "vib_loss": vib_loss.item(),
                 "vib_il_loss": vib_il_loss.item(),
                 "vib_kl_loss": vib_kl_loss.item(),
@@ -252,6 +252,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
                 "z_mean_rms": z_mean.pow(2).mean().sqrt().item(),
                 "z_std_rms": (z_logvar * 0.5).exp().pow(2).mean().sqrt().item(),
                 "z_rms": z.pow(2).mean().sqrt().item(),
+                "vib_recon_loss": vib_recon_loss.item(),
             }
 
-        return loss, vib_loss, info
+        return loss, info

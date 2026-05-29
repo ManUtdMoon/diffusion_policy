@@ -16,7 +16,6 @@ if __name__ == "__main__":
 import copy
 import logging
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -41,14 +40,14 @@ def _modulate(x, scale, shift):
 
 
 class _TimeNetwork(nn.Module):
-    def __init__(self, time_dim, out_dim, learnable_w=False):
+    def __init__(self, time_dim, out_dim, min_period=4e-3, max_period=4.0):
         assert time_dim % 2 == 0, "time_dim must be even!"
         half_dim = int(time_dim // 2)
         super().__init__()
 
-        w = np.log(10000) / (half_dim - 1)
-        w = torch.exp(torch.arange(half_dim) * -w).float()
-        self.register_parameter("w", nn.Parameter(w, requires_grad=learnable_w))
+        fraction = torch.linspace(0.0, 1.0, half_dim)
+        period = min_period * (max_period / min_period) ** fraction
+        self.register_buffer("inv_period", 1.0 / period)
 
         self.out_net = nn.Sequential(
             nn.Linear(time_dim, out_dim), nn.SiLU(), nn.Linear(out_dim, out_dim)
@@ -56,7 +55,8 @@ class _TimeNetwork(nn.Module):
 
     def forward(self, x):
         assert len(x.shape) == 1, f"assumes 1d input timestep array, got {x.shape}"
-        x = x[:, None] * self.w[None]
+        x = x.float()
+        x = x[:, None] * self.inv_period[None] * (2 * torch.pi)
         x = torch.cat((torch.cos(x), torch.sin(x)), dim=1)
         return self.out_net(x)
 
@@ -238,7 +238,7 @@ class DiTNoiseNet(nn.Module):
         timesteps = timestep
         if not torch.is_tensor(timesteps):
             # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
-            timesteps = torch.tensor([timesteps], dtype=torch.long, device=sample.device)
+            timesteps = torch.tensor([timesteps], dtype=torch.float32, device=sample.device)
         elif torch.is_tensor(timesteps) and len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML

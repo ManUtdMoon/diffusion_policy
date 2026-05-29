@@ -1,8 +1,6 @@
 from typing import Dict
 import torch
 import torch.nn.functional as F
-from diffusers.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
-
 from zprl.model.common.normalizer import LinearNormalizer
 from zprl.policy.base_image_policy import BaseImagePolicy
 from zprl.model.diffusion.dit import DiTNoiseNet
@@ -12,7 +10,6 @@ from zprl.common.pytorch_util import dict_apply
 class FlowMatchDitImagePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
-            noise_scheduler: FlowMatchEulerDiscreteScheduler,
             obs_encoder: MultiImageObsEncoder,
             horizon, 
             n_action_steps, 
@@ -25,9 +22,7 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
             dropout=0.1,
             dim_feedforward=2048,
             nhead=8,
-            activation="gelu",
-            # parameters passed to step
-            **kwargs):
+            activation="gelu"):
         super().__init__()
 
         # parse shapes
@@ -56,30 +51,23 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
 
         self.obs_encoder = obs_encoder
         self.model = model
-        self.noise_scheduler = noise_scheduler
         self.normalizer = LinearNormalizer()
         self.horizon = horizon
         self.obs_feature_dim = obs_feature_dim
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
-        self.kwargs = kwargs
-
         assert num_inference_steps is not None, "num_inference_steps must be specified for FlowMatchDitImagePolicy"
         self.num_inference_steps = num_inference_steps
 
-        self.timesteps = self.noise_scheduler.timesteps.clone()
     
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data,
             global_cond=None,
-            generator=None,
-            # keyword arguments to scheduler.step
-            **kwargs
+            generator=None
             ):
         model = self.model
-        scheduler = self.noise_scheduler
 
         trajectory = torch.randn(
             size=condition_data.shape, 
@@ -87,19 +75,18 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
             device=condition_data.device,
             generator=generator)
     
-        # set step values
-        scheduler.set_timesteps(self.num_inference_steps)
+        timesteps = torch.linspace(
+            1.0, 0.0, self.num_inference_steps + 1,
+            device=trajectory.device,
+            dtype=torch.float32)
+        dt = -1.0 / self.num_inference_steps
 
-        for t in scheduler.timesteps:
+        for t in timesteps[:-1]:
             # 1. predict model output
             model_output = model(trajectory, t, global_cond)
 
             # 2. compute previous image: x_t -> x_t-1
-            trajectory = scheduler.step(
-                model_output, t, trajectory, 
-                generator=generator,
-                **kwargs
-                ).prev_sample       
+            trajectory = trajectory + dt * model_output
 
         return trajectory
     
@@ -130,8 +117,7 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         # run sampling
         nsample = self.conditional_sample(
             cond_data,
-            global_cond=global_cond,
-            **self.kwargs)
+            global_cond=global_cond)
         
         # unnormalize prediction
         naction_pred = nsample
@@ -180,8 +166,7 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         # run sampling
         nsample = self.conditional_sample(
             cond_data, 
-            global_cond=global_cond,
-            **self.kwargs)
+            global_cond=global_cond)
         
         # unnormalize prediction
         naction_pred = nsample[..., :Da]
@@ -205,6 +190,9 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
     def set_normalizer(self, normalizer: LinearNormalizer):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
+    def forward(self, batch):
+        return self.compute_loss(batch)
+
     def compute_loss(self, batch):
         # normalize input
         nobs = self.normalizer.normalize(batch['obs'])
@@ -222,20 +210,12 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         global_cond = nobs_features.reshape(batch_size, -1)
 
         # Sample noise that we'll add to the images
-        noise = torch.randn(trajectory.shape, device=trajectory.device)
-        bsz = trajectory.shape[0]
-        # Sample a random timestep for each image
-        if self.timesteps.device != trajectory.device:
-            self.timesteps = self.timesteps.to(trajectory.device)
-        timestep_idxs = torch.randint(
-            0, self.noise_scheduler.config.num_train_timesteps, 
-            (bsz,), device=trajectory.device
-        ).long()
-        timesteps = self.timesteps[timestep_idxs]
-        # Add noise to the clean images by linear interpolation
-        # (this is the forward flow process)
-        noisy_trajectory = self.noise_scheduler.scale_noise(
-            trajectory, timesteps, noise)
+        noise = torch.randn_like(trajectory)
+        # Sample a random continuous flow time. t=1 is noise, t=0 is sample.
+        timesteps = torch.rand(
+            (batch_size,), device=trajectory.device, dtype=trajectory.dtype)
+        timesteps_b = timesteps[:, None, None]
+        noisy_trajectory = (1 - timesteps_b) * trajectory + timesteps_b * noise
 
         # Predict the velocity field: from sample to noise
         pred = self.model(noisy_trajectory, timesteps, global_cond)

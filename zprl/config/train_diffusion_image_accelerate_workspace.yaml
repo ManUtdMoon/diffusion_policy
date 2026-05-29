@@ -1,0 +1,16 @@
+defaults:
+  - train_flow_match_dit_image_workspace
+  - _self_
+
+name: train_diffusion_image_accelerate
+_target_: zprl.workspace.train_diffusion_image_accelerate_workspace.TrainDiffusionImageAccelerateWorkspace
+
+dataloader:
+  num_workers: 6
+
+val_dataloader:
+  num_workers: 2
+
+training:
+  mixed_precision: "no"
+  ddp_find_unused_parameters: True
