@@ -1,8 +1,8 @@
 defaults:
-  - train_flow_match_vib_unet_image_workspace
+  - train_flow_match_vib_dit_image_workspace
   - _self_
 
-name: train_flow_match_vib_unet_image_accelerate
+name: train_flow_match_vib_image_accelerate
 _target_: zprl.workspace.train_flow_match_vib_unet_image_accelerate_workspace.TrainFlowMatchVibUnetImageAccelerateWorkspace
 
 dataloader:

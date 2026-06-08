@@ -10,6 +10,7 @@ from zprl.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from zprl.model.diffusion.mask_generator import LowdimMaskGenerator
 from zprl.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
 from zprl.common.pytorch_util import dict_apply
+from zprl.policy.prev_action_util import append_prev_action_cond, get_prev_action_cond, split_prev_action
 
 class FlowMatchUnetImagePolicy(BaseImagePolicy):
     def __init__(self, 
@@ -25,6 +26,7 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
             kernel_size=5,
             n_groups=8,
             cond_predict_scale=True,
+            n_prev_action_steps=0,
             ):
         super().__init__()
 
@@ -34,13 +36,15 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         action_dim = action_shape[0]
         # get feature dim
         obs_feature_dim = obs_encoder.output_shape()[0]
+        prev_action_cond_dim = int(n_prev_action_steps) * action_dim
+        assert (n_prev_action_steps <= 0) or obs_as_global_cond
 
         # create diffusion model
         input_dim = action_dim + obs_feature_dim
         global_cond_dim = None
         if obs_as_global_cond:
             input_dim = action_dim
-            global_cond_dim = obs_feature_dim * n_obs_steps
+            global_cond_dim = obs_feature_dim * n_obs_steps + prev_action_cond_dim
 
         model = ConditionalUnet1D(
             input_dim=input_dim,
@@ -68,12 +72,14 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
+        self.n_prev_action_steps = n_prev_action_steps
         self.obs_as_global_cond = obs_as_global_cond
 
         if num_inference_steps is None:
             num_inference_steps = 100
         self.num_inference_steps = num_inference_steps
     
+
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data, condition_mask,
@@ -111,12 +117,15 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         return trajectory
     
     def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(obs_dict)
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
         nobs = self.normalizer.normalize(obs_dict)
         B, To = next(iter(nobs.values())).shape[:2]
         batched_nobs = dict_apply(
             nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
         obs_emb = self.obs_encoder(batched_nobs) # (B*To, do)
         obs_emb = obs_emb.reshape(B, -1) # (B, Do=To*do)
+        obs_emb = append_prev_action_cond(obs_emb, prev_action_cond)
         return obs_emb
     
     def conditional_predict(self, obs_emb: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -167,6 +176,8 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         """
         assert 'past_action' not in obs_dict # not implemented yet
         # normalize input
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(obs_dict)
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
         nobs = self.normalizer.normalize(obs_dict)
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
@@ -188,6 +199,7 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(B, -1)
+            global_cond = append_prev_action_cond(global_cond, prev_action_cond)
             # empty data for action
             cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
             cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
@@ -237,7 +249,9 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
     def compute_loss(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
-        nobs = self.normalizer.normalize(batch['obs'])
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(batch['obs'])
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
+        nobs = self.normalizer.normalize(obs_dict)
         nactions = self.normalizer['action'].normalize(batch['action'])
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
@@ -254,6 +268,7 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(batch_size, -1)
+            global_cond = append_prev_action_cond(global_cond, prev_action_cond)
         else:
             # reshape B, T, ... to B*T
             this_nobs = dict_apply(nobs, lambda x: x.reshape(-1, *x.shape[2:]))

@@ -39,14 +39,16 @@ def create_image_sequence_sampler(
         pad_before: int,
         pad_after: int,
         train_mask: np.ndarray,
-        key_first_k: Dict[str, int]):
+        key_first_k: Dict[str, int],
+        prev_action_length: int = 0):
     return SequenceSampler(
         replay_buffer=replay_buffer,
         sequence_length=horizon,
         pad_before=pad_before,
         pad_after=pad_after,
         episode_mask=train_mask,
-        key_first_k=key_first_k)
+        key_first_k=key_first_k,
+        prev_action_length=prev_action_length)
 
 
 def create_train_val_mask(replay_buffer: ReplayBuffer, val_ratio: float, seed: int):

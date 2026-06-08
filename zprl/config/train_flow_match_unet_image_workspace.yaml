@@ -14,6 +14,7 @@ n_obs_steps: 1
 n_action_steps: 4
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
+n_prev_action_steps: 4
 past_action_visible: False
 keypoint_visible_rate: 1.0
 obs_as_global_cond: True
@@ -45,6 +46,7 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
+  n_prev_action_steps: ${n_prev_action_steps}
   num_inference_steps: 2
   obs_as_global_cond: ${obs_as_global_cond}
   diffusion_step_embed_dim: 128

@@ -9,6 +9,7 @@ from zprl.model.diffusion.dit import DiTNoiseNet
 from zprl.model.vib import VIBDecoder, VIBEncoder
 from zprl.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
 from zprl.common.pytorch_util import dict_apply
+from zprl.policy.prev_action_util import append_prev_action_cond, get_prev_action_cond, split_prev_action
 
 class FlowMatchVibDitImagePolicy(BaseImagePolicy):
     def __init__(self,
@@ -31,7 +32,8 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
             vib_alpha=2.0,
             vib_beta=1e-3,
             vib_recon=0.1,
-            vib_hidden_dim=256):
+            vib_hidden_dim=256,
+            n_prev_action_steps=0):
         super().__init__()
 
         # parse shapes
@@ -40,15 +42,17 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         action_dim = action_shape[0]
         # get feature dim
         obs_feature_dim = obs_encoder.output_shape()[0]
+        obs_cond_dim = obs_feature_dim * n_obs_steps
+        prev_action_cond_dim = int(n_prev_action_steps) * action_dim
+        model_cond_dim = obs_cond_dim + prev_action_cond_dim
 
         # create diffusion model
         input_dim = action_dim
-        cond_dim = obs_feature_dim * n_obs_steps
 
         model = DiTNoiseNet(
             input_dim=input_dim,
             input_length=horizon,
-            cond_dim=cond_dim,
+            cond_dim=model_cond_dim,
             time_dim=time_dim,
             hidden_dim=hidden_dim,
             num_blocks=num_blocks,
@@ -62,14 +66,14 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         self.model = model
 
         self.vib_encoder = VIBEncoder(
-            input_dim=cond_dim,
+            input_dim=obs_cond_dim,
             latent_dim=vib_latent_dim,
             hidden_dim=vib_hidden_dim,
             alpha=vib_alpha,
         )
         self.vib_decoder = VIBDecoder(
             latent_dim=vib_latent_dim,
-            output_dim=cond_dim,
+            output_dim=obs_cond_dim,
             hidden_dim=vib_hidden_dim,
         )
 
@@ -79,6 +83,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
+        self.n_prev_action_steps = n_prev_action_steps
         self.vib_alpha = vib_alpha
         self.vib_beta = vib_beta
         self.vib_recon = vib_recon
@@ -88,6 +93,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
             "num_inference_steps must be specified for FlowMatchVibDitImagePolicy"
         )
         self.num_inference_steps = num_inference_steps
+
 
 
     # ========= inference  ============
@@ -118,6 +124,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         return trajectory
 
     def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        obs_dict, _, _ = split_prev_action(obs_dict)
         nobs = self.normalizer.normalize(obs_dict)
         B, To = next(iter(nobs.values())).shape[:2]
         batched_nobs = dict_apply(
@@ -173,10 +180,13 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         return result
 
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        _, prev_action, prev_action_valid_mask = split_prev_action(obs_dict)
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
         obs_emb = self.encode_obs(obs_dict)
         modified_obs_emb, _, _, _ = self.vib_forward(obs_emb, deterministic=True)
+        model_global_cond = append_prev_action_cond(modified_obs_emb, prev_action_cond)
 
-        result = self.conditional_predict(modified_obs_emb)
+        result = self.conditional_predict(model_global_cond)
         result["obs_emb"] = obs_emb
         result["modified_obs_emb"] = modified_obs_emb
         return result
@@ -189,7 +199,9 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         return self.compute_loss(batch)
 
     def compute_loss(self, batch):
-        nobs = self.normalizer.normalize(batch["obs"])
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(batch["obs"])
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
+        nobs = self.normalizer.normalize(obs_dict)
         nactions = self.normalizer["action"].normalize(batch["action"])
         batch_size = nactions.shape[0]
 
@@ -200,6 +212,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         )
         nobs_features = self.obs_encoder(this_nobs)
         global_cond = nobs_features.reshape(batch_size, -1)
+        model_global_cond = append_prev_action_cond(global_cond, prev_action_cond)
 
         noise = torch.randn_like(trajectory)
         timesteps = torch.rand(
@@ -213,7 +226,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
             global_cond.detach(), deterministic=False
         )
 
-        pred_il = self.model(noisy_trajectory, timesteps, global_cond)
+        pred_il = self.model(noisy_trajectory, timesteps, model_global_cond)
         il_loss = F.mse_loss(pred_il, target)
 
         vib_kl_loss = -0.5 * torch.mean(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
@@ -227,7 +240,7 @@ class FlowMatchVibDitImagePolicy(BaseImagePolicy):
         pred_vib_il = functional_call(
             self.model,
             (frozen_model_params, frozen_model_buffers),
-            (noisy_trajectory, timesteps, modified_global_cond)
+            (noisy_trajectory, timesteps, append_prev_action_cond(modified_global_cond, prev_action_cond))
         )
         vib_il_loss = F.mse_loss(pred_vib_il, target)
         vib_recon_loss = F.mse_loss(modified_global_cond, global_cond.detach())

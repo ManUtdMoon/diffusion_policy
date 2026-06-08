@@ -83,6 +83,7 @@ class SequenceSampler:
         keys=None,
         key_first_k=dict(),
         episode_mask: Optional[np.ndarray]=None,
+        prev_action_length:int=0,
         ):
         """
         key_first_k: dict str: int
@@ -112,6 +113,8 @@ class SequenceSampler:
         self.indices = indices 
         self.keys = list(keys) # prevent OmegaConf list performance problem
         self.sequence_length = sequence_length
+        self.prev_action_length = prev_action_length
+        self.episode_ends = episode_ends
         self.replay_buffer = replay_buffer
         self.key_first_k = key_first_k
     
@@ -175,3 +178,35 @@ class SequenceSampler:
             for key in keys:
                 result[key][batch_offset] = sample[key]
         return result
+
+    def sample_prev_action(self, idx, action_start_offset=0):
+        if self.prev_action_length <= 0:
+            raise RuntimeError('prev_action_length is not configured')
+
+        action_arr = self.replay_buffer['action']
+        buffer_start_idx, _, sample_start_idx, _ = self.indices[idx]
+        logical_start_idx = buffer_start_idx - sample_start_idx
+        action_start_idx = logical_start_idx + action_start_offset
+
+        episode_idx = np.searchsorted(self.episode_ends, buffer_start_idx, side='right')
+        episode_start_idx = 0
+        if episode_idx > 0:
+            episode_start_idx = self.episode_ends[episode_idx - 1]
+        episode_end_idx = self.episode_ends[episode_idx]
+
+        valid_start_idx = max(action_start_idx - self.prev_action_length, episode_start_idx)
+        valid_end_idx = min(max(action_start_idx, episode_start_idx), episode_end_idx)
+        valid_length = max(valid_end_idx - valid_start_idx, 0)
+        sample_start_idx = self.prev_action_length - valid_length
+        sample_end_idx = self.prev_action_length
+
+        result = np.zeros(
+            (self.prev_action_length,) + action_arr.shape[1:],
+            dtype=action_arr.dtype)
+        valid_mask = np.zeros((self.prev_action_length,), dtype=np.float32)
+
+        if valid_end_idx > valid_start_idx:
+            result[sample_start_idx:sample_end_idx] = action_arr[valid_start_idx:valid_end_idx]
+            valid_mask[sample_start_idx:sample_end_idx] = 1.0
+
+        return result, valid_mask

@@ -13,6 +13,7 @@ from zprl.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from zprl.model.diffusion.mask_generator import LowdimMaskGenerator
 from zprl.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
 from zprl.common.pytorch_util import dict_apply
+from zprl.policy.prev_action_util import append_prev_action_cond, get_prev_action_cond, split_prev_action
 
 PrefixAttentionSchedule = Literal["linear", "exp", "ones", "zeros"]
 
@@ -61,7 +62,8 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             vib_alpha=2.0,
             vib_beta=1e-3,
             vib_recon=0.1,
-            vib_hidden_dim=256):
+            vib_hidden_dim=256,
+            n_prev_action_steps=0):
         super().__init__()
 
         # parse shapes
@@ -70,16 +72,18 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         action_dim = action_shape[0]
         # get feature dim
         obs_feature_dim = obs_encoder.output_shape()[0]
+        obs_cond_dim = obs_feature_dim * n_obs_steps
+        prev_action_cond_dim = int(n_prev_action_steps) * action_dim
+        model_global_cond_dim = obs_cond_dim + prev_action_cond_dim
 
         # create diffusion model
         assert obs_as_global_cond
         input_dim = action_dim
-        global_cond_dim = obs_feature_dim * n_obs_steps
 
         model = ConditionalUnet1D(
             input_dim=input_dim,
             local_cond_dim=None,
-            global_cond_dim=global_cond_dim,
+            global_cond_dim=model_global_cond_dim,
             diffusion_step_embed_dim=diffusion_step_embed_dim,
             down_dims=down_dims,
             kernel_size=kernel_size,
@@ -92,13 +96,13 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         
         # VIB components
         self.vib_encoder = VIBEncoder(
-            input_dim=global_cond_dim, 
+            input_dim=obs_cond_dim, 
             latent_dim=vib_latent_dim,
             hidden_dim=vib_hidden_dim,
             alpha=vib_alpha)
         self.vib_decoder = VIBDecoder(
             latent_dim=vib_latent_dim,
-            output_dim=global_cond_dim,
+            output_dim=obs_cond_dim,
             hidden_dim=vib_hidden_dim)
 
         self.mask_generator = LowdimMaskGenerator(
@@ -114,6 +118,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
+        self.n_prev_action_steps = n_prev_action_steps
         self.obs_as_global_cond = obs_as_global_cond
 
         self.vib_alpha = vib_alpha
@@ -124,6 +129,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         if num_inference_steps is None:
             num_inference_steps = 100
         self.num_inference_steps = num_inference_steps
+
 
     # ========= inference  ============
     def conditional_sample(self, 
@@ -162,6 +168,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         return trajectory
     
     def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        obs_dict, _, _ = split_prev_action(obs_dict)
         nobs = self.normalizer.normalize(obs_dict)
         B, To = next(iter(nobs.values())).shape[:2]
         batched_nobs = dict_apply(
@@ -397,17 +404,20 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         assert self.obs_as_global_cond, "VIB policy only supports obs_as_global_cond=True"
         
         # 1. encode observation
+        _, prev_action, prev_action_valid_mask = split_prev_action(obs_dict)
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
         obs_emb = self.encode_obs(obs_dict)
         
         # 2. pass through VIB module
         modified_obs_emb, _, _, _ = self.vib_forward(obs_emb, deterministic=True)
+        model_global_cond = append_prev_action_cond(modified_obs_emb, prev_action_cond)
         
         # 3. predict action
         if rtc_context is None:
-            result = self.conditional_predict(modified_obs_emb)
+            result = self.conditional_predict(model_global_cond)
         else:
             result = self.conditional_predict_rtc(
-                modified_obs_emb,
+                model_global_cond,
                 prev_naction_chunk=rtc_context['prev_naction_chunk'],
                 inference_delay=rtc_context['inference_delay'],
                 prefix_attention_horizon=rtc_context['prefix_attention_horizon'],
@@ -432,7 +442,9 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
     def compute_loss(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
-        nobs = self.normalizer.normalize(batch['obs'])
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(batch['obs'])
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
+        nobs = self.normalizer.normalize(obs_dict)
         nactions = self.normalizer['action'].normalize(batch['action'])
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
@@ -448,6 +460,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         nobs_features = self.obs_encoder(this_nobs)
         # reshape back to B, Do
         global_cond = nobs_features.reshape(batch_size, -1)
+        model_global_cond = append_prev_action_cond(global_cond, prev_action_cond)
 
         # generate impainting mask
         condition_mask = self.mask_generator(trajectory.shape)
@@ -471,7 +484,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         modified_global_cond, z_mean, z_logvar, z = self.vib_forward(global_cond.detach(), deterministic=False)
 
         # --- IL Flow Loss (still conditioned on original obs_emb) ---
-        pred_il = self.model(noisy_trajectory, timesteps, global_cond=global_cond)
+        pred_il = self.model(noisy_trajectory, timesteps, global_cond=model_global_cond)
         il_loss = F.mse_loss(pred_il, target)
 
         # --- VIB KL Loss ---
@@ -488,7 +501,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             self.model,
             (frozen_model_params, frozen_model_buffers),
             (noisy_trajectory, timesteps),
-            {'global_cond': modified_global_cond}
+            {'global_cond': append_prev_action_cond(modified_global_cond, prev_action_cond)}
         )
         vib_il_loss = F.mse_loss(pred_vib_il, target)
         # --- VIB reconstruction loss ---, disabled for now

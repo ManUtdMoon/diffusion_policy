@@ -6,6 +6,7 @@ from zprl.policy.base_image_policy import BaseImagePolicy
 from zprl.model.diffusion.dit import DiTNoiseNet
 from zprl.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
 from zprl.common.pytorch_util import dict_apply
+from zprl.policy.prev_action_util import append_prev_action_cond, get_prev_action_cond, split_prev_action
 
 class FlowMatchDitImagePolicy(BaseImagePolicy):
     def __init__(self, 
@@ -22,7 +23,8 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
             dropout=0.1,
             dim_feedforward=2048,
             nhead=8,
-            activation="gelu"):
+            activation="gelu",
+            n_prev_action_steps=0):
         super().__init__()
 
         # parse shapes
@@ -31,10 +33,11 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         action_dim = action_shape[0]
         # get feature dim
         obs_feature_dim = obs_encoder.output_shape()[0]
+        prev_action_cond_dim = int(n_prev_action_steps) * action_dim
 
         # create diffusion model
         input_dim = action_dim
-        cond_dim = obs_feature_dim * n_obs_steps
+        cond_dim = obs_feature_dim * n_obs_steps + prev_action_cond_dim
 
         model = DiTNoiseNet(
             input_dim=input_dim,
@@ -57,10 +60,12 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
+        self.n_prev_action_steps = n_prev_action_steps
         assert num_inference_steps is not None, "num_inference_steps must be specified for FlowMatchDitImagePolicy"
         self.num_inference_steps = num_inference_steps
 
     
+
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data,
@@ -91,12 +96,15 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         return trajectory
     
     def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(obs_dict)
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
         nobs = self.normalizer.normalize(obs_dict)
         B, To = next(iter(nobs.values())).shape[:2]
         batched_nobs = dict_apply(
             nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
         obs_emb = self.obs_encoder(batched_nobs) # (B*To, do)
         obs_emb = obs_emb.reshape(B, -1) # (B, Do=To*do)
+        obs_emb = append_prev_action_cond(obs_emb, prev_action_cond)
         return obs_emb
     
     def conditional_predict(self, obs_emb: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -143,6 +151,8 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         result: must include "action" key
         """
         # normalize input
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(obs_dict)
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
         nobs = self.normalizer.normalize(obs_dict)
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
@@ -160,6 +170,7 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         nobs_features = self.obs_encoder(this_nobs)
         # reshape back to B, Do
         global_cond = nobs_features.reshape(B, -1)
+        global_cond = append_prev_action_cond(global_cond, prev_action_cond)
         # empty data for action
         cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
 
@@ -195,7 +206,9 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
 
     def compute_loss(self, batch):
         # normalize input
-        nobs = self.normalizer.normalize(batch['obs'])
+        obs_dict, prev_action, prev_action_valid_mask = split_prev_action(batch['obs'])
+        prev_action_cond = get_prev_action_cond(prev_action, prev_action_valid_mask, self.n_prev_action_steps, self.normalizer['action'])
+        nobs = self.normalizer.normalize(obs_dict)
         nactions = self.normalizer['action'].normalize(batch['action'])
         batch_size = nactions.shape[0]
 
@@ -208,6 +221,7 @@ class FlowMatchDitImagePolicy(BaseImagePolicy):
         nobs_features = self.obs_encoder(this_nobs)
         # reshape back to B, Do
         global_cond = nobs_features.reshape(batch_size, -1)
+        global_cond = append_prev_action_cond(global_cond, prev_action_cond)
 
         # Sample noise that we'll add to the images
         noise = torch.randn_like(trajectory)

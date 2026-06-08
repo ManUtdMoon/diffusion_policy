@@ -42,6 +42,7 @@ env_runner:
   fps: 10
   crf: 22
   past_action: ${past_action_visible}
+  n_prev_action_steps: ${n_prev_action_steps}
   abs_action: *abs_action
   tqdm_interval_sec: 1.0
   n_envs: 28
@@ -55,6 +56,7 @@ dataset:
   pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
   pad_after: ${eval:'${n_action_steps}-1'}
   n_obs_steps: ${dataset_obs_steps}
+  n_prev_action_steps: ${n_prev_action_steps}
   abs_action: *abs_action
   rotation_rep: 'rotation_6d'
   use_legacy_normalizer: False

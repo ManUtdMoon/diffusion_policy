@@ -90,6 +90,7 @@ class RobomimicImageRunner(BaseImageRunner):
             fps=10,
             crf=22,
             past_action=False,
+            n_prev_action_steps=0,
             abs_action=False,
             action_pose_repr=None,
             tqdm_interval_sec=5.0,
@@ -276,6 +277,8 @@ class RobomimicImageRunner(BaseImageRunner):
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self.past_action = past_action
+        self.n_prev_action_steps = n_prev_action_steps
+        self.action_shape = tuple(shape_meta['action']['shape'])
         self.max_steps = max_steps
         self.rotation_transformer = rotation_transformer
         self.abs_action = abs_action
@@ -295,6 +298,8 @@ class RobomimicImageRunner(BaseImageRunner):
         # allocate data
         all_video_paths = [None] * n_inits
         all_rewards = [[] for _ in range(n_inits)] # guarantee independent lists
+        all_chunk_boundary_naction_mae = list()
+        all_chunk_inner_naction_mae = list()
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
@@ -316,6 +321,10 @@ class RobomimicImageRunner(BaseImageRunner):
             # start rollout
             obs = env.reset()
             past_action = None
+            prev_action_history = np.zeros(
+                (n_envs, 0) + self.action_shape, dtype=np.float32)
+            prev_action_valid_history = np.zeros((n_envs, 0), dtype=np.float32)
+            prev_naction_last = None
             policy.reset()
 
             env_name = self.env_meta['env_name']
@@ -330,6 +339,18 @@ class RobomimicImageRunner(BaseImageRunner):
                     # TODO: not tested
                     np_obs_dict['past_action'] = past_action[
                         :,-(self.n_obs_steps-1):].astype(np.float32)
+                if self.n_prev_action_steps > 0:
+                    prev_action = np.zeros(
+                        (n_envs, self.n_prev_action_steps) + self.action_shape,
+                        dtype=np.float32)
+                    prev_action_valid_mask = np.zeros(
+                        (n_envs, self.n_prev_action_steps), dtype=np.float32)
+                    n_valid = min(self.n_prev_action_steps, prev_action_history.shape[1])
+                    if n_valid > 0:
+                        prev_action[:, -n_valid:] = prev_action_history[:, -n_valid:]
+                        prev_action_valid_mask[:, -n_valid:] = prev_action_valid_history[:, -n_valid:]
+                    np_obs_dict['prev_action'] = prev_action
+                    np_obs_dict['prev_action_valid_mask'] = prev_action_valid_mask
                 
                 # device transfer
                 obs_dict = dict_apply(np_obs_dict, 
@@ -348,6 +369,20 @@ class RobomimicImageRunner(BaseImageRunner):
                 if not np.all(np.isfinite(action)):
                     print(action)
                     raise RuntimeError("Nan or Inf action")
+                naction = np_action_dict.get('naction', None)
+                if naction is not None:
+                    active_naction = naction[:this_n_active_envs]
+                    if active_naction.shape[1] > 1:
+                        chunk_inner_naction_mae = np.mean(
+                            np.abs(np.diff(active_naction, axis=1)),
+                            axis=-1)
+                        all_chunk_inner_naction_mae.extend(chunk_inner_naction_mae.ravel().tolist())
+                    if prev_naction_last is not None:
+                        chunk_boundary_naction_mae = np.mean(
+                            np.abs(active_naction[:, 0] - prev_naction_last[:this_n_active_envs]),
+                            axis=-1)
+                        all_chunk_boundary_naction_mae.extend(chunk_boundary_naction_mae.tolist())
+                    prev_naction_last = naction[:, -1].copy()
                 
                 # step env
                 env_action = action
@@ -362,6 +397,14 @@ class RobomimicImageRunner(BaseImageRunner):
 
                 done = np.all(done)
                 past_action = action
+                if self.n_prev_action_steps > 0:
+                    prev_action_history = np.concatenate([
+                        prev_action_history, action.astype(np.float32)], axis=1)
+                    prev_action_valid_history = np.concatenate([
+                        prev_action_valid_history,
+                        np.ones(action.shape[:2], dtype=np.float32)], axis=1)
+                    prev_action_history = prev_action_history[:, -self.n_prev_action_steps:]
+                    prev_action_valid_history = prev_action_valid_history[:, -self.n_prev_action_steps:]
 
                 # update pbar
                 pbar.update(action.shape[1])
@@ -402,6 +445,20 @@ class RobomimicImageRunner(BaseImageRunner):
             name = prefix+'mean_score'
             value = np.mean(value)
             log_data[name] = value
+        if len(all_chunk_boundary_naction_mae) > 0:
+            all_chunk_boundary_naction_mae = np.asarray(all_chunk_boundary_naction_mae, dtype=np.float32)
+            log_data['chunk_boundary_naction_mae_mean'] = float(np.mean(all_chunk_boundary_naction_mae))
+            log_data['chunk_boundary_naction_mae_std'] = float(np.std(all_chunk_boundary_naction_mae))
+        else:
+            log_data['chunk_boundary_naction_mae_mean'] = float('nan')
+            log_data['chunk_boundary_naction_mae_std'] = float('nan')
+        if len(all_chunk_inner_naction_mae) > 0:
+            all_chunk_inner_naction_mae = np.asarray(all_chunk_inner_naction_mae, dtype=np.float32)
+            log_data['chunk_inner_naction_mae_mean'] = float(np.mean(all_chunk_inner_naction_mae))
+            log_data['chunk_inner_naction_mae_std'] = float(np.std(all_chunk_inner_naction_mae))
+        else:
+            log_data['chunk_inner_naction_mae_mean'] = float('nan')
+            log_data['chunk_inner_naction_mae_std'] = float('nan')
 
         return log_data
 

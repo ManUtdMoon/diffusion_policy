@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: square_image_abs
+  - task: tool_hang_image_abs
 
 name: train_flow_match_vib_dit_image
 _target_: zprl.workspace.train_flow_match_vib_unet_image_workspace.TrainFlowMatchVibUnetImageWorkspace
@@ -11,16 +11,17 @@ exp_name: "default"
 
 horizon: 16
 n_obs_steps: 1
-n_action_steps: 4
+n_action_steps: 8  # transport 5, others 4, tool_hang 8
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
+n_prev_action_steps: 4
 past_action_visible: False
 
 policy:
   _target_: zprl.policy.flow_match_vib_dit_image_policy.FlowMatchVibDitImagePolicy
-  vib_latent_dim: 16
+  vib_latent_dim: 32
   vib_alpha: 1.0
-  vib_beta: 1.5e-4
+  vib_beta: 1.0e-4
   vib_recon: 0.01
   vib_hidden_dim: 256
 
@@ -30,15 +31,16 @@ policy:
     _target_: zprl.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
     shape_meta: ${shape_meta}
     rgb_model:
-      _target_: zprl.model.vision.model_getter.ResNet18Pooling
-      input_shape: [3, 76, 76] # should match crop_shape
-      weights: null
+      _target_: zprl.model.vision.model_getter.VitPooling
+      model_name: "vit_small_patch16_dinov3.lvd1689m"
+      pretrained: True
+      input_shape: [3, 224, 224] # should match crop_shape, [216, 216] for tool_hang
       # pooling_kwargs
-      pooling_type: "spatial_learned_embeddings"
-      num_spatial_blocks: 8
-      bottleneck_dim: 256
+      pooling_type: "token_attention"
+      hidden_dim: 256
+      bottleneck_dim: null
     resize_shape: null
-    crop_shape: [76, 76]
+    crop_shape: [224, 224]
     # constant center crop
     random_crop: True
     use_group_norm: True
@@ -48,7 +50,8 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 5
+  n_prev_action_steps: ${n_prev_action_steps}
+  num_inference_steps: 20
   num_blocks: 6
   hidden_dim: 384
   time_dim: 128
@@ -95,7 +98,7 @@ training:
   lr_scheduler: cosine_with_min_lr
   lr_warmup_steps: 100
   lr_scheduler_kwargs:
-    min_lr_ratio: 0.0
+    min_lr_ratio: 0.1
   num_epochs: 1001
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm

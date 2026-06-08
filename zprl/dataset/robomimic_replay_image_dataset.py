@@ -62,6 +62,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             seed=42,
             val_ratio=0.0,
             num_demo=None,
+            n_prev_action_steps=0,
         ):
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
@@ -144,7 +145,8 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             pad_before=pad_before,
             pad_after=pad_after,
             train_mask=train_mask,
-            key_first_k=key_first_k)
+            key_first_k=key_first_k,
+            prev_action_length=n_prev_action_steps)
         
         self.replay_buffer = replay_buffer
         self.sampler = sampler
@@ -158,6 +160,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         self.pad_before = pad_before
         self.pad_after = pad_after
         self.use_legacy_normalizer = use_legacy_normalizer
+        self.n_prev_action_steps = n_prev_action_steps
 
     def get_validation_dataset(self):
         val_set = copy.copy(self)
@@ -166,7 +169,8 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             sequence_length=self.horizon,
             pad_before=self.pad_before, 
             pad_after=self.pad_after,
-            episode_mask=~self.train_mask
+            episode_mask=~self.train_mask,
+            prev_action_length=self.n_prev_action_steps
             )
         val_set.train_mask = ~self.train_mask
         return val_set
@@ -238,6 +242,11 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
             del data[key]
+        if self.n_prev_action_steps > 0:
+            prev_action, prev_action_valid_mask = self.sampler.sample_prev_action(
+                idx, action_start_offset=0 if self.n_obs_steps is None else self.n_obs_steps - 1)
+            obs_dict['prev_action'] = prev_action.astype(np.float32)
+            obs_dict['prev_action_valid_mask'] = prev_action_valid_mask.astype(np.float32)
 
         torch_data = {
             'obs': dict_apply(obs_dict, torch.from_numpy),
@@ -268,6 +277,18 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         for key in self.lowdim_keys:
             arr = self.replay_buffer[key]
             obs_batched[key] = arr[buffer_starts][:, np.newaxis].astype(np.float32)  # (B,1,D)
+        if self.n_prev_action_steps > 0:
+            prev_actions = np.empty(
+                (B, self.n_prev_action_steps) + self.replay_buffer['action'].shape[1:],
+                dtype=np.float32)
+            prev_action_valid_masks = np.empty((B, self.n_prev_action_steps), dtype=np.float32)
+            for i, idx in enumerate(indices):
+                prev_action, prev_action_valid_mask = self.sampler.sample_prev_action(
+                    idx, action_start_offset=0 if self.n_obs_steps is None else self.n_obs_steps - 1)
+                prev_actions[i] = prev_action.astype(np.float32)
+                prev_action_valid_masks[i] = prev_action_valid_mask.astype(np.float32)
+            obs_batched['prev_action'] = prev_actions
+            obs_batched['prev_action_valid_mask'] = prev_action_valid_masks
 
         # Action: per-sample (small data, needs padding logic)
         # Only read 'action' key, not all keys
