@@ -19,6 +19,11 @@ shape_meta: &shape_meta
   action: 
     shape: [10]
 
+action_mse_groups:
+  pos: [[0, 3]]
+  rot: [[3, 9]]
+  gripper: [[9, null]]
+
 task_name: &task_name can
 dataset_type: &dataset_type mh
 dataset_path: &dataset_path ./data_local/robomimicv030/${task.task_name}/${task.dataset_type}/image_v141_subset_abs.hdf5

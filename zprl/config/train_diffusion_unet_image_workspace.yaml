@@ -131,10 +131,10 @@ logging:
 
 checkpoint:
   topk:
-    monitor_key: train_action_mse_error
+    monitor_key: test_mean_score
     mode: min
     k: 2
-    format_str: 'epoch={epoch:04d}-train_mse={train_action_mse_error:.3f}.ckpt'
+    format_str: 'epoch_{epoch:04d}-score_{test_mean_score:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

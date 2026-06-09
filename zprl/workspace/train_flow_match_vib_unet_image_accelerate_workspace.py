@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 import tqdm
 import wandb
 
+from zprl.common.action_mse_util import action_mse_per_sample
 from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
 from zprl.common.pytorch_util import dict_apply
@@ -69,6 +70,14 @@ def _split_total_batch_size(total_batch_size: int, world_size: int, name: str) -
             f"{name}.batch_size={total_batch_size} must be divisible by world_size={world_size}"
         )
     return total_batch_size // world_size
+
+
+def _action_mse_log(metric_samples, prefix):
+    result = dict()
+    for name, values in metric_samples.items():
+        key = prefix if name == "" else f"{prefix}_{name}"
+        result[key] = torch.cat(values).mean().item()
+    return result
 
 
 class TrainFlowMatchVibUnetImageAccelerateWorkspace(BaseWorkspace):
@@ -120,6 +129,8 @@ class TrainFlowMatchVibUnetImageAccelerateWorkspace(BaseWorkspace):
         normalizer = dataset.get_normalizer()
 
         val_dataset = dataset.get_validation_dataset()
+        action_mse_groups = OmegaConf.to_container(
+            cfg.task.action_mse_groups, resolve=True)
 
         train_dataloader_kwargs = OmegaConf.to_container(cfg.dataloader, resolve=True)
         val_dataloader_kwargs = OmegaConf.to_container(cfg.val_dataloader, resolve=True)
@@ -290,7 +301,7 @@ class TrainFlowMatchVibUnetImageAccelerateWorkspace(BaseWorkspace):
 
                 if (self.epoch % cfg.training.val_every) == 0:
                     with torch.no_grad():
-                        val_losses = list()
+                        val_mse_samples = dict()
                         with tqdm.tqdm(
                                 val_dataloader,
                                 desc=f"Validation epoch {self.epoch}",
@@ -299,27 +310,36 @@ class TrainFlowMatchVibUnetImageAccelerateWorkspace(BaseWorkspace):
                                 disable=not accelerator.is_local_main_process) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss, info = model(batch)
-                                del info
-                                val_losses.append(_mean_scalar(accelerator, loss.detach(), device))
+                                policy = self.ema_model if cfg.training.use_ema else raw_model
+                                result = policy.predict_action(batch["obs"])
+                                mse_samples = action_mse_per_sample(
+                                    result["action_pred"], batch["action"], action_mse_groups)
+                                mse_samples = accelerator.gather_for_metrics(mse_samples)
+                                for name, values in mse_samples.items():
+                                    val_mse_samples.setdefault(name, list()).append(values.cpu())
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
                                     break
-                        if len(val_losses) > 0:
-                            step_log['val_loss'] = float(np.mean(val_losses))
+                        if len(val_mse_samples) > 0:
+                            step_log.update(_action_mse_log(
+                                val_mse_samples, "val_action_mse"))
 
                 if (self.epoch % cfg.training.sample_every) == 0:
                     accelerator.wait_for_everyone()
-                    if accelerator.is_main_process and train_sampling_batch is not None:
+                    if train_sampling_batch is not None:
                         with torch.no_grad():
                             batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
-                            obs_dict = batch['obs']
-                            gt_action = batch['action']
                             policy = self.ema_model if cfg.training.use_ema else raw_model
-                            result = policy.predict_action(obs_dict)
-                            pred_action = result['action_pred']
-                            mse = torch.nn.functional.mse_loss(pred_action, gt_action)
-                            step_log['train_action_mse_error'] = mse.item()
+                            result = policy.predict_action(batch["obs"])
+                            mse_samples = action_mse_per_sample(
+                                result["action_pred"], batch["action"], action_mse_groups)
+                            mse_samples = accelerator.gather(mse_samples)
+                            mse_samples = {
+                                name: [values.cpu()]
+                                for name, values in mse_samples.items()
+                            }
+                            step_log.update(_action_mse_log(
+                                mse_samples, "train_action_mse"))
 
                 if (self.epoch % cfg.training.checkpoint_every) == 0:
                     accelerator.wait_for_everyone()
