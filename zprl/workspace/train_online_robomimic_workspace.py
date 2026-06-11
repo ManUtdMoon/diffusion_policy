@@ -26,7 +26,7 @@ from stable_baselines3.common.buffers import ReplayBuffer
 
 from zprl.workspace.base_workspace import BaseWorkspace
 from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
-from zprl.policy.td3_policy import TD3Policy, TD3SumPolicy
+from zprl.policy.residue_policy import ResiduePolicy, SumPolicy
 from zprl.env_runner.base_image_runner import BaseImageRunner
 from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
@@ -95,16 +95,15 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         Ta = cfg.n_action_steps
         do = self.base_policy.obs_feature_dim
         Do = To * do  # obs chunk dim
-        dz = self.base_policy.vib_latent_dim
         da = cfg.shape_meta.action.shape[0]
         Da = Ta * da  # action chunk dim
 
-        self.res_policy: TD3Policy = hydra.utils.instantiate(
+        self.res_policy: ResiduePolicy = hydra.utils.instantiate(
             cfg.res_policy, obs_dim=Do, action_dim=Da)
-        print(f"TD3 policy with Do={Do}, Da={Da}, gamma={self.res_policy.gamma}")
+        print(f"Residue policy with Do={Do}, Da={Da}, gamma={self.res_policy.gamma}")
 
         ## sum policy
-        sum_policy = TD3SumPolicy(
+        sum_policy = SumPolicy(
             res_scale=cfg.training.res_scale,
             obs_emb_dim=Do,
             action_dim=da,
@@ -164,7 +163,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
                 reward_agg_method='discounted_sum'
             )
-        env_fns = [env_fn] * cfg.online_task.n_envs
+        env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
 
         # configure logging
@@ -190,6 +189,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         )
         q_opt = optimizers['q_optimizer']
         actor_opt = optimizers['actor_optimizer']
+        alpha_opt = optimizers['alpha_optimizer']
 
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
@@ -205,7 +205,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             dummy_obs_space,
             dummy_buf_action_space,
             device=device,
-            n_envs=cfg.online_task.n_envs,
+            n_envs=cfg.training.n_envs,
             handle_timeout_termination=False,
         )
 
@@ -242,13 +242,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         n_updates_per_training = int(training_freq * utd)
         learning_start = cfg.training.learning_start
         res_scale = cfg.training.res_scale
-        stddev_max = cfg.training.stddev_max
-        stddev_min = cfg.training.stddev_min
-        stddev_steps = cfg.training.stddev_steps
-
-        def get_stddev(step):
-            t = min(step / stddev_steps, 1.0)
-            return stddev_max + (stddev_min - stddev_max) * t
 
         ## check parameters for code clarity
         assert (
@@ -322,7 +315,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     res_ratio = min(
                         max(self.global_step, 0) / cfg.training.prog_explore, 1)
                     ## uncomment to disable progressive exploration
-                    res_ratio = 1.0
+                    # res_ratio = 1.0
 
                     ## prepare masks for progressive exploration
                     if self.global_step < learning_start:
@@ -333,11 +326,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         res_masks = torch.rand(n_envs, device=device) >= res_ratio
 
                     ## forward sum policy with cached base info
-                    stddev = get_stddev(self.global_step)
                     sum_dict = sum_policy.predict_train_action(
                         base_naction_tensor,
                         obs_emb_tensor,
-                        stddev=None,
                         res_mask=res_masks
                     )
                     sum_dict = dict_apply(
@@ -403,7 +394,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ):
                         self.global_update += 1
                         batch = rb.sample(cfg.training.batch_size)
-                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, stddev)
+                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
                         q_opt.zero_grad()
                         critic_loss.backward()
                         q_opt.step()
@@ -444,7 +435,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     batch = rb.sample(cfg.training.batch_size)
 
                     ## update critics
-                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, stddev=None)
+                    critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
                     q_opt.zero_grad()
                     critic_loss.backward()
                     q1_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -457,7 +448,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     
                     ## update policy
                     if self.global_update % cfg.training.policy_freq == 0:
-                        actor_loss, actor_info = self.res_policy.compute_actor_loss(batch, stddev=None)
+                        actor_loss, actor_info = self.res_policy.compute_actor_loss(batch)
                         actor_opt.zero_grad()
                         actor_loss.backward()
                         actor_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -466,6 +457,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         )
                         actor_opt.step()
 
+                        alpha = self.res_policy.init_alpha
+                        if cfg.res_policy.auto_alpha:
+                            alpha_loss = self.res_policy.compute_alpha_loss(batch)
+                            alpha_opt.zero_grad()
+                            alpha_loss.backward()
+                            alpha_opt.step()
+                            alpha = self.res_policy.log_alpha.exp().item()
+
                 ## training metrics
                 recent_done_count, recent_done_sr = get_recent_success_stats()
 
@@ -473,16 +472,18 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/global_step': self.global_step,
                     'info/global_update': self.global_update,
 
-                    'info/stddev': stddev,
                     'info/res_ratio': res_ratio,
                     'info/q_target': critic_info['q_target'],
                     'info/q_predicted': critic_info['q_predicted'],
                     'info/q_predicted_min': critic_info['q_predicted_min'],
                     'info/q_predicted_max': critic_info['q_predicted_max'],
+                    'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
 
                     'info/res_naction_norm': actor_info['res_naction_norm'],
+                    'info/res_n_rms': actor_info['res_n_rms'],
+                    'info/base_n_rms': actor_info['base_n_rms'],
                     'info/recent_done_sr': recent_done_sr,
                     'info/recent_done_count': recent_done_count,
 
@@ -490,7 +491,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'loss/actor_loss': actor_loss.item(),
                     'loss/q1_grad_norm': q1_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),
+                    'loss/alpha': alpha,
                 }
+                if cfg.res_policy.auto_alpha:
+                    step_log['loss/alpha_loss'] = alpha_loss.item()
 
                 # evaluation
                 # sum_policy.eval()

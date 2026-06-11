@@ -186,6 +186,8 @@ class ResiduePolicy(ModuleAttrMixin):
         info = {
             'actor_entropy': -log_prob.mean().item(),
             'res_naction_norm': torch.norm(res_naction, dim=-1).mean().item(),
+            'res_n_rms': torch.sqrt((res_naction ** 2).mean()).item(),
+            'base_n_rms': torch.sqrt((base_naction ** 2).mean()).item(),
         }
 
         return actor_loss, info
