@@ -21,7 +21,7 @@ res_policy:
   obs_dim: ???
   action_dim: ???
   actor_input: obs_action
-  hidden_dim: 256
+  hidden_dim: 512
   log_std_min: -10.0
   log_std_max: 2.0
   gamma: ${eval:"round(${single_gamma}**${n_action_steps}, 4)"}  # multi-step gamma for Bellman target
@@ -29,7 +29,7 @@ res_policy:
   init_alpha: 0.001
   auto_alpha: True
   res_scale: ${training.res_scale}
-  num_qs: 2
+  num_qs: 10
   num_subset: 2
 
 training:
@@ -47,13 +47,15 @@ training:
   policy_freq: 2
   target_freq: 2
   training_freq: 1000
-  utd: 1.0
+  utd: 5.0
   n_envs: ${online_task.n_envs}
   # residue progress
   res_scale: 0.05
   prog_explore: 10000
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
+  preload_offline_data: False
+  preload_shuffle: True
   q_pretrain_steps: 0
   num_steps: 200000
   buffer_size: 200000  # 500k for transport, 1M for others
