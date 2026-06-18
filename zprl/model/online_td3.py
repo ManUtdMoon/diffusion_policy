@@ -43,13 +43,10 @@ class Actor(nn.Module):
 
         self.net = nn.Sequential(
             layer_init(nn.Linear(obs_dim, hidden_dim)),
-            nn.LayerNorm(hidden_dim),
             nn.GELU(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
-            nn.LayerNorm(hidden_dim),
             nn.GELU(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
-            nn.LayerNorm(hidden_dim),
             nn.GELU(),
         )
         self.mu = layer_init(nn.Linear(hidden_dim, action_dim), std=0.01)

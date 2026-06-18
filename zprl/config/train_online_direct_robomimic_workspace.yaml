@@ -1,0 +1,82 @@
+defaults:
+  - _self_
+  - online_task: square_image_abs
+
+name: train_online_direct_robomimic_workspace
+_target_: zprl.workspace.train_online_direct_robomimic_workspace.TrainOnlineDirectRobomimicWorkspace
+
+task_name: ${online_task.name}
+shape_meta: ${online_task.shape_meta}
+exp_name: "default"
+
+horizon: 16
+n_obs_steps: 1
+n_action_steps: 8 # 5 for transport, others 4
+n_latency_steps: 0
+single_gamma: 0.997  # single-step gamma; multi-step gamma for RL is computed from this
+num_inference_steps: 20
+
+direct_policy:
+  _target_: zprl.policy.direct_policy.DirectPolicy
+  obs_dim: ???
+  action_dim: ???
+  hidden_dim: 512
+  gamma: ${eval:"round(${single_gamma}**${n_action_steps}, 4)"}  # multi-step gamma for Bellman target
+  tau: 0.005
+  bc_loss_weight: 1.0
+  base_action_dropout: False
+  base_action_dropout_prob: 0.5
+  fixed_std: 0.01
+  stddev_clip: 0.1
+  num_qs: 10
+  num_subset: 2
+
+training:
+  device: "cuda:0"
+  seed: 42
+  debug: False
+  # optimization
+  batch_size: 256
+  policy_lr: 1e-4
+  q_lr: 3e-4
+  learning_start: 4000  # 4k for transport, 2k for others
+  # lr_scheduler: cosine
+  # lr_warmup_steps: 100
+  max_grad_norm: 50.0
+  policy_freq: 2
+  target_freq: 2
+  training_freq: 1000
+  utd: 5.0
+  n_envs: ${online_task.n_envs}
+  # direct policy progress
+  prog_explore: 10000
+  bootstrap_at_done: never  # never, always, truncated
+  # training loop control in steps
+  preload_offline_data: False
+  preload_shuffle: True
+  q_pretrain_steps: 0
+  num_steps: 200000
+  buffer_size: 200000  # 500k for transport, 1M for others
+  log_every: 1000
+  eval_every: 50000
+  checkpoint_every: 100000
+  # misc
+  tqdm_interval_sec: 1.0
+
+logging:
+  project: online_debug
+  resume: True
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+  tags: ["${name}", "${task_name}", "${exp_name}"]
+  id: null
+  group: null
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}
