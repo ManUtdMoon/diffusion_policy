@@ -11,22 +11,24 @@ exp_name: "default"
 
 horizon: 16
 n_obs_steps: 1
-n_action_steps: 4
+n_action_steps: 8 # 5 for transport, others 4
 n_latency_steps: 0
+single_gamma: 0.997  # single-step gamma; multi-step gamma for RL is computed from this
+num_inference_steps: 20
 
 noise_policy:
   _target_: zprl.policy.noise_policy.NoisePolicy
   obs_dim: ???
   action_dim: ???
   hidden_dim: 256
-  log_std_min: -2.0
+  log_std_min: -20.0
   log_std_max: 2.0
-  # gamma: ${eval:"round(0.997**${n_action_steps}, 3)"}  # for transport
-  gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}  # for can, square is enough
+  gamma: ${eval:"round(${single_gamma}**${n_action_steps}, 4)"}  # multi-step gamma for Bellman target
   tau: 0.005
-  init_alpha: 0.01
+  init_alpha: 1.0
   auto_alpha: True
-  num_qs: 2
+  target_entropy: 0.0
+  num_qs: 10
   num_subset: 2
 
 training:
@@ -37,7 +39,7 @@ training:
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 3e-4
-  learning_start: 1000
+  learning_start: 4000  # 4k for transport, 2k for others
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
@@ -51,8 +53,8 @@ training:
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
   q_pretrain_steps: 0
-  num_steps: 1000000
-  buffer_size: 1000000
+  num_steps: 200000
+  buffer_size: 200000  # 500k for transport, 1M for others
   log_every: 1000
   eval_every: 50000
   checkpoint_every: 100000

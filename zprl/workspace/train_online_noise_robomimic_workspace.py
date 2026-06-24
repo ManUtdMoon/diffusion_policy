@@ -25,7 +25,7 @@ import collections
 from stable_baselines3.common.buffers import ReplayBuffer
 
 from zprl.workspace.base_workspace import BaseWorkspace
-from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
+from zprl.policy.base_image_policy import BaseImagePolicy
 from zprl.policy.noise_policy import NoisePolicy, SumPolicy
 from zprl.env_runner.base_image_runner import BaseImageRunner
 from zprl.common.checkpoint_util import TopKCheckpointManager
@@ -69,7 +69,8 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
         base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
-        self.base_policy: FlowMatchVibUnetImagePolicy
+        base_cfg.policy.num_inference_steps = cfg.num_inference_steps
+        self.base_policy: BaseImagePolicy
         self.base_policy = hydra.utils.instantiate(base_cfg.policy)
         self.base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])
         print(f"Loaded base policy from {cfg.online_task.base_ckpt}")
@@ -87,10 +88,13 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
         ## configure res policy
         To = cfg.n_obs_steps
         H = cfg.horizon
+        Tn = cfg.n_noise_steps
+        assert H % Tn == 0, \
+            f"horizon({H}) must be divisible by n_noise_steps({Tn})"
         do = self.base_policy.obs_feature_dim
         Do = To * do  # obs chunk dim
         da = cfg.shape_meta.action.shape[0]
-        Da = H * da  # action chunk dim in the whole horizon
+        Da = Tn * da  # reduced noise action dim
 
         self.noise_policy: NoisePolicy = hydra.utils.instantiate(
             cfg.noise_policy, obs_dim=Do, action_dim=Da)
@@ -99,15 +103,16 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
         ## sum policy
         sum_policy = SumPolicy(
             noise_scale=cfg.training.noise_scale,
+            n_noise_steps=Tn,
             base_policy=self.base_policy,
             noise_policy=self.noise_policy
         )
 
         # configure env
         ## eval, only average score needed
-        eval_env_runner: BaseImageRunner = hydra.utils.instantiate(
-            cfg.online_task.env_runner,
-            output_dir=self.output_dir)
+        # eval_env_runner: BaseImageRunner = hydra.utils.instantiate(
+        #     cfg.online_task.env_runner,
+        #     output_dir=self.output_dir)
         ## train
         ### fetch env_meta
         dataset_path = os.path.expanduser(cfg.online_task.dataset_path)
@@ -264,13 +269,13 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
         obs_emb_tensor = self.base_policy.encode_obs(obs_seq_tensor).detach()
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as logger:
-            set_rand_crop(False)
-            sum_policy.eval()
-            eval_log = eval_env_runner.run(sum_policy)
-            sum_policy.train()
+            # set_rand_crop(False)
+            # sum_policy.eval()
+            # eval_log = eval_env_runner.run(sum_policy)
+            # sum_policy.train()
             set_rand_crop(True)
-            logger.log(eval_log)
-            wandb_run.log(eval_log, step=self.global_step)
+            # logger.log(eval_log)
+            # wandb_run.log(eval_log, step=self.global_step)
 
             while self.global_step < n_steps:
                 step_log = dict()
@@ -359,7 +364,7 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                         'info/rewards': critic_info['rewards'],
                         'info/dones': critic_info['dones'],
 
-                        'loss/critic_loss': critic_loss.item() / 2.0,
+                        'loss/critic_loss': critic_loss.item() / cfg.noise_policy.num_qs,
                     }
                     logger.log(pretrain_log)
                     wandb_run.log(pretrain_log, step=self.global_step)
@@ -425,22 +430,23 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                     'info/recent_done_sr': recent_done_sr,
                     'info/recent_done_count': recent_done_count,
 
-                    'loss/critic_loss': critic_loss.item() / 2.0,
+                    'loss/critic_loss': critic_loss.item() / cfg.noise_policy.num_qs,
                     'loss/actor_loss': actor_loss.item(),
                     'loss/q1_grad_norm': q1_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),
+                    'loss/log_std': actor_info['log_std'],
                     'loss/alpha': alpha,
                 }
                 if cfg.noise_policy.auto_alpha:
                     step_log['loss/alpha_loss'] = alpha_loss.item()
 
                 # evaluation
-                sum_policy.eval()
-                if self.global_step > 0 and self.global_step % eval_every == 0:
-                    set_rand_crop(False)
-                    eval_log = eval_env_runner.run(sum_policy)
-                    step_log.update(eval_log)
-                    set_rand_crop(True)
+                # sum_policy.eval()
+                # if self.global_step > 0 and self.global_step % eval_every == 0:
+                #     set_rand_crop(False)
+                #     eval_log = eval_env_runner.run(sum_policy)
+                #     step_log.update(eval_log)
+                #     set_rand_crop(True)
                 sum_policy.train()
 
                 # logging
@@ -449,14 +455,14 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                     wandb_run.log(step_log, step=self.global_step)
 
                 # checkpointing
-                if self.global_step % checkpoint_every == 0:
-                    path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step_{self.global_step}.ckpt'
-                    path.parent.mkdir(parents=False, exist_ok=True)
-                    payload = {
-                        'cfg': self.cfg,
-                        'noise_policy': self.noise_policy.state_dict(),
-                    }
-                    torch.save(payload, path.open('wb'), pickle_module=dill)
+                # if self.global_step % checkpoint_every == 0:
+                #     path = pathlib.Path(self.output_dir) / 'checkpoints' / f'step_{self.global_step}.ckpt'
+                #     path.parent.mkdir(parents=False, exist_ok=True)
+                #     payload = {
+                #         'cfg': self.cfg,
+                #         'noise_policy': self.noise_policy.state_dict(),
+                #     }
+                #     torch.save(payload, path.open('wb'), pickle_module=dill)
 
 
 @hydra.main(
