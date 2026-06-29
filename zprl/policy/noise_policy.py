@@ -169,13 +169,13 @@ class NoisePolicy(ModuleAttrMixin):
 
         # compute targets
         with torch.no_grad():
-            next_nnoise, _, _ = self._sample_log_prob(batch.next_observations)
+            next_nnoise, next_log_prob, _ = self._sample_log_prob(batch.next_observations)
 
             target_q_all = self.q_targets(batch.next_observations, next_nnoise)
             subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
             target_q_subset = target_q_all[subset_indices]
 
-            target_q_next = torch.min(target_q_subset, dim=0).values  # (B,1)
+            target_q_next = torch.min(target_q_subset, dim=0).values - alpha * next_log_prob  # (B,1)
             assert_shape(target_q_next, (bs, 1))
             target_q = batch.rewards.flatten() + (1 - batch.dones.flatten()) * self.gamma * target_q_next.view(-1) # (B,)
             target_q = target_q.unsqueeze(0).expand(self.num_qs, -1) # broadcast to (num_qs, B)

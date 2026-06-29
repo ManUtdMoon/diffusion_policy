@@ -10,6 +10,7 @@ shape_meta: ${online_task.shape_meta}
 exp_name: "default"
 
 horizon: 16
+n_noise_steps: 1
 n_obs_steps: 1
 n_action_steps: 8 # 5 for transport, others 4
 n_latency_steps: 0
@@ -20,12 +21,12 @@ noise_policy:
   _target_: zprl.policy.noise_policy.NoisePolicy
   obs_dim: ???
   action_dim: ???
-  hidden_dim: 256
+  hidden_dim: 1024
   log_std_min: -20.0
   log_std_max: 2.0
   gamma: ${eval:"round(${single_gamma}**${n_action_steps}, 4)"}  # multi-step gamma for Bellman target
   tau: 0.005
-  init_alpha: 1.0
+  init_alpha: 0.01
   auto_alpha: True
   target_entropy: 0.0
   num_qs: 10
@@ -46,10 +47,11 @@ training:
   policy_freq: 2
   target_freq: 2
   training_freq: 1000
-  utd: 1.0
+  utd: 5.0
   n_envs: ${online_task.n_envs}
   # residue progress
   noise_scale: 1.5
+  reward_offset: 0.0
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
   q_pretrain_steps: 0

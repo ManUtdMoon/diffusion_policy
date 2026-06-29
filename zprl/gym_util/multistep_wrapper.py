@@ -75,7 +75,8 @@ class MultiStepWrapper(gym.Wrapper):
             n_action_steps, 
             max_episode_steps=None,
             reward_agg_method='max',
-            gamma=0.99
+            gamma=0.99,
+            reward_offset=0.0
         ):
         super().__init__(env)
         self._action_space = repeated_space(env.action_space, n_action_steps)
@@ -85,6 +86,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.n_action_steps = n_action_steps
         self.reward_agg_method = reward_agg_method
         self.gamma = gamma
+        self.reward_offset = reward_offset
         self.n_obs_steps = n_obs_steps
 
         self.obs = deque(maxlen=n_obs_steps+1)
@@ -108,6 +110,7 @@ class MultiStepWrapper(gym.Wrapper):
         """
         actions: (n_action_steps,) + action_shape
         """
+        raw_chunk_rewards = []
         chunk_rewards = []
         chunk_dones = []
         for act in action:
@@ -118,7 +121,8 @@ class MultiStepWrapper(gym.Wrapper):
 
             self.obs.append(observation)
             self.reward.append(reward)
-            chunk_rewards.append(reward)
+            raw_chunk_rewards.append(reward)
+            chunk_rewards.append(reward + self.reward_offset)
             if (self.max_episode_steps is not None) \
                 and (len(self.reward) >= self.max_episode_steps):
                 # truncation
@@ -131,6 +135,7 @@ class MultiStepWrapper(gym.Wrapper):
         reward = aggregate(chunk_rewards, self.reward_agg_method, self.gamma)
         done = aggregate(chunk_dones, 'max')
         info = dict_take_last_n(self.info, self.n_obs_steps)
+        info['raw_reward'] = aggregate(raw_chunk_rewards, 'max')
         return observation, reward, done, info
 
     def _get_obs(self, n_steps=1):
