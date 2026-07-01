@@ -44,10 +44,10 @@ training:
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
-  policy_freq: 2
+  policy_freq: 10
   target_freq: 1
   training_freq: 100
-  utd: 5.0
+  utd: 10.0
   n_envs: ${online_task.n_envs}
   # residue progress
   res_scale: 0.05

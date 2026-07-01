@@ -7,8 +7,8 @@
 
 SESSION="train"
 GPUS=(0 1 2)
-SEEDS=(10 20 30)
-EXP_NAME="resrl-u5_2-q_tanh-q_ent-f100"
+SEEDS=(40 50 60)
+EXP_NAME="resrl-u10_10-q_tanh-q_ent-q_mean-f100"
 BASE_CKPT="data/outputs/2026.06.09/11.41.28_train_diffusion_image_accelerate_tool_hang_image_abs/checkpoints/epoch_0800-score_0.420.ckpt"
 
 # kill old session with the same name (optional, comment out if not wanted)
