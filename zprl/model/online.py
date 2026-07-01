@@ -157,6 +157,7 @@ class Actor(nn.Module):
             'sample': y_t,
             'mean': dist.mean,
             'log_prob': log_prob,
+            'log_std': logstd
         }
 
     def log_prob_action(self, x, action):

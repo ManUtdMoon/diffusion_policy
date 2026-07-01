@@ -492,6 +492,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'loss/q1_grad_norm': q1_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),
                     'loss/alpha': alpha,
+                    'loss/log_std': actor_info['log_std'],
                 }
                 if cfg.res_policy.auto_alpha:
                     step_log['loss/alpha_loss'] = alpha_loss.item()

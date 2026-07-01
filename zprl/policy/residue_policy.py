@@ -112,7 +112,7 @@ class ResiduePolicy(ModuleAttrMixin):
         assert_shape(res['sample'], (bs, self.action_dim))
         assert_shape(res['log_prob'], (bs, 1))
 
-        return res['sample'], res['log_prob']
+        return res['sample'], res['log_prob'], res['log_std']
 
     def compute_critic_loss(self, batch: ReplayBufferSamples, dist=None):
         bs = batch.rewards.shape[0]
@@ -128,14 +128,14 @@ class ResiduePolicy(ModuleAttrMixin):
             actor_input = batch.next_observations
             if self.actor_input == 'obs_action':
                 actor_input = torch.cat([batch.next_observations, base_next_naction], dim=-1)
-            res_next_naction, next_log_prob = self._sample_naction_log_prob(actor_input)
+            res_next_naction, next_log_prob, _ = self._sample_naction_log_prob(actor_input)
             next_naction = res_next_naction * self.res_scale + base_next_naction
 
             target_q_all = self.q_targets(batch.next_observations, next_naction)
             subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
             target_q_subset = target_q_all[subset_indices]
 
-            target_q_next = torch.min(target_q_subset, dim=0).values  # (B,1)
+            target_q_next = torch.min(target_q_subset, dim=0).values - alpha * next_log_prob  # (B,1)
             assert_shape(target_q_next, (bs, 1))
             target_q = batch.rewards.flatten() + (1 - batch.dones.flatten()) * self.gamma * target_q_next.view(-1) # (B,)
             target_q = target_q.unsqueeze(0).expand(self.num_qs, -1) # broadcast to (num_qs, B)
@@ -174,7 +174,7 @@ class ResiduePolicy(ModuleAttrMixin):
         actor_input = batch.observations
         if self.actor_input == 'obs_action':
             actor_input = torch.cat([batch.observations, base_naction], dim=-1)
-        res_naction, log_prob = self._sample_naction_log_prob(actor_input)
+        res_naction, log_prob, log_std = self._sample_naction_log_prob(actor_input)
 
         naction = self.res_scale * res_naction + base_naction  # (B,Da)
         all_q_preds = self.qs(batch.observations, naction)  # (num_qs, B, 1)
@@ -188,6 +188,7 @@ class ResiduePolicy(ModuleAttrMixin):
             'res_naction_norm': torch.norm(res_naction, dim=-1).mean().item(),
             'res_n_rms': torch.sqrt((res_naction ** 2).mean()).item(),
             'base_n_rms': torch.sqrt((base_naction ** 2).mean()).item(),
+            'log_std': log_std.mean().item(),
         }
 
         return actor_loss, info
@@ -202,9 +203,9 @@ class ResiduePolicy(ModuleAttrMixin):
             actor_input = torch.cat([batch.observations, base_naction], dim=-1)
 
         with torch.no_grad():
-            _, log_prob = self._sample_naction_log_prob(actor_input)
+            _, log_prob, _ = self._sample_naction_log_prob(actor_input)
 
-        alpha_loss = (-self.log_alpha.exp() * (log_prob + self.target_entropy)).mean()
+        alpha_loss = (-self.log_alpha * (log_prob + self.target_entropy).detach()).mean()
 
         return alpha_loss
 

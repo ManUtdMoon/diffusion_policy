@@ -8,7 +8,7 @@
 SESSION="train"
 GPUS=(0 1 2)
 SEEDS=(10 20 30)
-EXP_NAME="dsrl-u5-repeat1-auto_1e-2-q_tanh-q_ent"
+EXP_NAME="resrl-u5_2-q_tanh-q_ent-f100"
 BASE_CKPT="data/outputs/2026.06.09/11.41.28_train_diffusion_image_accelerate_tool_hang_image_abs/checkpoints/epoch_0800-score_0.420.ckpt"
 
 # kill old session with the same name (optional, comment out if not wanted)
@@ -22,14 +22,13 @@ for i in "${!GPUS[@]}"; do
     SEED=${SEEDS[$i]}
 
     CMD="MUJOCO_EGL_DEVICE_ID=${GPU} python train.py \
-        --config-name=train_online_noise_robomimic_workspace \
+        --config-name=train_online_robomimic_workspace \
         training.seed=${SEED} \
         exp_name=${EXP_NAME} \
         training.device=cuda:${GPU} \
         online_task.base_ckpt=${BASE_CKPT} \
         online_task=tool_hang_image_abs \
-        training.num_steps=200000 \
-        training.noise_scale=1.5"
+        training.num_steps=200000"
 
     if [ $i -eq 0 ]; then
         tmux send-keys -t $SESSION "mamba activate zprl" Enter
