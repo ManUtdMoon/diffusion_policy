@@ -1,6 +1,7 @@
 defaults:
   - _self_
   - online_task: can_image_abs
+  - svm: default
 
 name: train_online_noise_robomimic_workspace
 _target_: zprl.workspace.train_online_noise_robomimic_workspace.TrainOnlineNoiseRobomimicWorkspace
