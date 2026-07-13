@@ -1,7 +1,6 @@
 defaults:
   - _self_
   - online_task: square_image_abs
-  - svm: default
 
 name: train_online_robomimic_workspace
 _target_: zprl.workspace.train_online_robomimic_workspace.TrainOnlineRobomimicWorkspace
@@ -57,7 +56,6 @@ training:
   # training loop control in steps
   preload_offline_data: False
   preload_shuffle: True
-  q_pretrain_steps: 0
   num_steps: 200000
   buffer_size: 200000  # 500k for transport, 1M for others
   log_every: 1000

@@ -24,6 +24,7 @@ import gymnasium
 import collections
 from stable_baselines3.common.buffers import ReplayBuffer
 
+from zprl.model.svm import SVMReplayBuffer
 from zprl.workspace.base_workspace import BaseWorkspace
 from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
 from zprl.policy.residue_policy import ResiduePolicy, SumPolicy
@@ -97,6 +98,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         Do = To * do  # obs chunk dim
         da = cfg.shape_meta.action.shape[0]
         Da = Ta * da  # action chunk dim
+        SvmDa = Ta * da
 
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
             cfg.res_policy, obs_dim=Do, action_dim=Da)
@@ -191,6 +193,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         actor_opt = optimizers['actor_optimizer']
         alpha_opt = optimizers['alpha_optimizer']
 
+        # svm reward model
+        svm = hydra.utils.instantiate(
+            cfg.svm,
+            obs_dim=Do,
+            action_dim=SvmDa,
+            device=device,
+        )
+
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
@@ -200,16 +210,30 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             low=-np.inf, high=np.inf,
             shape=(Da * 3,), dtype=np.float32
         )
-        rb = ReplayBuffer(
-            cfg.training.buffer_size,
-            dummy_obs_space,
-            dummy_buf_action_space,
-            device=device,
-            n_envs=cfg.training.n_envs,
-            handle_timeout_termination=False,
-        )
+        if cfg.svm.enable:
+            rb = SVMReplayBuffer(
+                cfg.training.buffer_size,
+                dummy_obs_space,
+                dummy_buf_action_space,
+                svm_action_dim=SvmDa,
+                device=device,
+                n_envs=cfg.training.n_envs,
+                handle_timeout_termination=False,
+            )
+        else:
+            rb = ReplayBuffer(
+                cfg.training.buffer_size,
+                dummy_obs_space,
+                dummy_buf_action_space,
+                device=device,
+                n_envs=cfg.training.n_envs,
+                handle_timeout_termination=False,
+            )
 
         # offline demo preload
+        if cfg.svm.enable:
+            assert not cfg.training.preload_offline_data, \
+                "svm.enable=True is incompatible with preload_offline_data=True."
         if cfg.training.preload_offline_data:
             from zprl.common.robomimic_offline_replay import (
                 load_robomimic_offline_data_into_replay_buffer)
@@ -252,6 +276,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             eval_every % log_every == 0
         ), f"log_every({log_every}), eval_every({eval_every}), checkpoint_every({checkpoint_every}), learning_start({learning_start}) must be divisible by training_freq({training_freq}) for code clarity."
 
+        if cfg.svm.enable:
+            assert cfg.svm.update_every % training_freq == 0, \
+                f"svm.update_every({cfg.svm.update_every}) must be divisible by training_freq({training_freq})."
+            min_buffer_size = int(np.ceil(
+                cfg.online_task.env_runner.max_steps / cfg.n_action_steps))
+            assert cfg.training.buffer_size // cfg.training.n_envs >= min_buffer_size, \
+                f"buffer_size // n_envs must be at least {min_buffer_size} when svm is enabled."
+
         # action preprocess: from action to env action
         rot_tf = None
         if cfg.online_task.abs_action:
@@ -278,6 +310,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
         # training loop
         recent_done_successes = collections.deque(maxlen=100)
+        svm_warmup_done = False
         def get_recent_success_stats():
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
@@ -334,14 +367,17 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     sum_dict = dict_apply(
                         sum_dict, lambda x: x.detach().cpu().numpy())
                     res_naction_flat = sum_dict['res_naction_flat']
+                    svm_action = sum_dict['naction'].reshape(n_envs, -1)
                     action = sum_dict['action']
 
                     ## env_action and step
                     env_action = undo_transform_action(action)
                     next_obs_seq, rewards, dones, infos = envs.step(env_action)
-                    for reward, done in zip(rewards, dones):
+                    outcome_rewards = np.array(
+                        [info['raw_reward'] for info in infos], dtype=np.float32)
+                    for outcome_reward, done in zip(outcome_rewards, dones):
                         if done:
-                            recent_done_successes.append(float(reward) > 0.9)
+                            recent_done_successes.append(outcome_reward > 0.9)
 
                     ## reward preprocess
                     ## 1. fixed epi len performs better with positive rewards
@@ -364,14 +400,26 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         axis=-1
                     )
 
-                    rb.add(
-                        obs=obs_emb_tensor.cpu().numpy(),
-                        next_obs=next_obs_emb_tensor.cpu().numpy(),
-                        action=actions_to_save,
-                        reward=rewards,
-                        done=dones,
-                        infos=infos
-                    )
+                    if cfg.svm.enable:
+                        rb.add(
+                            obs=obs_emb_tensor.cpu().numpy(),
+                            next_obs=next_obs_emb_tensor.cpu().numpy(),
+                            action=actions_to_save,
+                            reward=rewards,
+                            done=dones,
+                            infos=infos,
+                            svm_action=svm_action,
+                            outcome_reward=outcome_rewards
+                        )
+                    else:
+                        rb.add(
+                            obs=obs_emb_tensor.cpu().numpy(),
+                            next_obs=next_obs_emb_tensor.cpu().numpy(),
+                            action=actions_to_save,
+                            reward=rewards,
+                            done=dones,
+                            infos=infos
+                        )
 
                     ## switch to next step
                     obs_seq = next_obs_seq
@@ -381,48 +429,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     # Warmup phase: skip training, only collect data
                     continue
 
-                # Q pre-training
-                if (
-                    self.global_step == learning_start and
-                    cfg.training.q_pretrain_steps > 0
-                ):
-                    print("Q pre-training starts...")
-                    pretrain_q_losses = []
-                    for _ in tqdm.tqdm(
-                        range(cfg.training.q_pretrain_steps),
-                        desc=f"Q pre-training for {cfg.training.q_pretrain_steps} steps."
-                    ):
-                        self.global_update += 1
-                        batch = rb.sample(cfg.training.batch_size)
-                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
-                        q_opt.zero_grad()
-                        critic_loss.backward()
-                        q_opt.step()
-                        pretrain_q_losses.append(critic_loss.item())
-
-                        if self.global_update % cfg.training.target_freq == 0:
-                            self.res_policy.target_update()
-                    
-                    print("Q pre-training finished.")
-                    
-                    # Log pre-training metrics
-                    pretrain_log = {
-                        'info/global_step': self.global_step,
-                        'info/global_update': self.global_update,
-
-                        'info/q_target': critic_info['q_target'],
-                        'info/q_predicted': critic_info['q_predicted'],
-                        'info/q_predicted_min': critic_info['q_predicted_min'],
-                        'info/q_predicted_max': critic_info['q_predicted_max'],
-                        'info/rewards': critic_info['rewards'],
-                        'info/dones': critic_info['dones'],
-
-                        'loss/critic_loss': critic_loss.item() / cfg.res_policy.num_qs,
-                    }
-                    logger.log(pretrain_log)
-                    wandb_run.log(pretrain_log, step=self.global_step)
-
-                    continue  # pretrain Q only
+                svm_update_info = dict()
+                if not svm_warmup_done:
+                    svm_update_info.update(svm.warmup_update(rb))
+                    svm_warmup_done = True
+                else:
+                    svm_update_info.update(svm.update(rb, self.global_step))
 
                 # training
                 for _ in tqdm.tqdm(
@@ -433,6 +445,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
                     ## fetch data
                     batch = rb.sample(cfg.training.batch_size)
+                    batch = svm.process_batch_reward(batch)
 
                     ## update critics
                     critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
@@ -496,6 +509,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 }
                 if cfg.res_policy.auto_alpha:
                     step_log['loss/alpha_loss'] = alpha_loss.item()
+                if cfg.svm.enable:
+                    step_log.update(svm_update_info)
+                    step_log.update(svm.last_reward_info)
 
                 # evaluation
                 # sum_policy.eval()

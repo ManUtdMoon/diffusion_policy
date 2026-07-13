@@ -24,6 +24,7 @@ import gymnasium
 import collections
 from stable_baselines3.common.buffers import ReplayBuffer
 
+from zprl.model.svm import SVMReplayBuffer
 from zprl.workspace.base_workspace import BaseWorkspace
 from zprl.policy.base_image_policy import BaseImagePolicy
 from zprl.policy.noise_policy import NoisePolicy, SumPolicy
@@ -95,6 +96,7 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
         Do = To * do  # obs chunk dim
         da = cfg.shape_meta.action.shape[0]
         Da = Tn * da  # reduced noise action dim
+        SvmDa = cfg.n_action_steps * da
 
         self.noise_policy: NoisePolicy = hydra.utils.instantiate(
             cfg.noise_policy, obs_dim=Do, action_dim=Da)
@@ -189,6 +191,14 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
         actor_opt = optimizers['actor_optimizer']
         alpha_opt = optimizers['alpha_optimizer']
 
+        # svm reward model
+        svm = hydra.utils.instantiate(
+            cfg.svm,
+            obs_dim=Do,
+            action_dim=SvmDa,
+            device=device,
+        )
+
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
@@ -198,14 +208,25 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
             low=-np.inf, high=np.inf,
             shape=(Da,), dtype=np.float32
         )  # res z
-        rb = ReplayBuffer(
-            cfg.training.buffer_size,
-            dummy_obs_space,
-            dummy_buf_action_space,
-            device=device,
-            n_envs=cfg.training.n_envs,
-            handle_timeout_termination=False,
-        )
+        if cfg.svm.enable:
+            rb = SVMReplayBuffer(
+                cfg.training.buffer_size,
+                dummy_obs_space,
+                dummy_buf_action_space,
+                svm_action_dim=SvmDa,
+                device=device,
+                n_envs=cfg.training.n_envs,
+                handle_timeout_termination=False,
+            )
+        else:
+            rb = ReplayBuffer(
+                cfg.training.buffer_size,
+                dummy_obs_space,
+                dummy_buf_action_space,
+                device=device,
+                n_envs=cfg.training.n_envs,
+                handle_timeout_termination=False,
+            )
 
         if cfg.training.debug:
             cfg.training.num_steps = 5000
@@ -234,6 +255,14 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
             eval_every % log_every == 0
         ), f"log_every({log_every}), eval_every({eval_every}), checkpoint_every({checkpoint_every}), learning_start({learning_start}) must be divisible by training_freq({training_freq}) for code clarity."
 
+        if cfg.svm.enable:
+            assert cfg.svm.update_every % training_freq == 0, \
+                f"svm.update_every({cfg.svm.update_every}) must be divisible by training_freq({training_freq})."
+            min_buffer_size = int(np.ceil(
+                cfg.online_task.env_runner.max_steps / cfg.n_action_steps))
+            assert cfg.training.buffer_size // cfg.training.n_envs >= min_buffer_size, \
+                f"buffer_size // n_envs must be at least {min_buffer_size} when svm is enabled."
+
         # action preprocess: from action to env action
         rot_tf = None
         if cfg.online_task.abs_action:
@@ -260,6 +289,7 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
 
         # training loop
         recent_done_successes = collections.deque(maxlen=100)
+        svm_warmup_done = False
         def get_recent_success_stats():
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
@@ -299,15 +329,17 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                     sum_dict = dict_apply(
                         sum_dict, lambda x: x.detach())
                     nnoise = sum_dict['nnoise']
+                    svm_action = sum_dict['naction'].flatten(start_dim=1).cpu().numpy()
                     action = sum_dict['action'].cpu().numpy()
 
                     ## env_action and step
                     env_action = undo_transform_action(action)
                     next_obs_seq, rewards, dones, infos = envs.step(env_action)
-                    for info, done in zip(infos, dones):
+                    outcome_rewards = np.array(
+                        [info['raw_reward'] for info in infos], dtype=np.float32)
+                    for outcome_reward, done in zip(outcome_rewards, dones):
                         if done:
-                            recent_done_successes.append(
-                                float(info['raw_reward']) > 0.9)
+                            recent_done_successes.append(outcome_reward > 0.9)
 
                     ## prepare transitions for rb
                     assert cfg.training.bootstrap_at_done == 'never'
@@ -315,14 +347,26 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                     next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
 
-                    rb.add(
-                        obs=obs_emb_tensor.cpu().numpy(),
-                        next_obs=next_obs_emb_tensor.cpu().numpy(),
-                        action=nnoise.cpu().numpy(),
-                        reward=rewards,
-                        done=dones,
-                        infos=infos
-                    )
+                    if cfg.svm.enable:
+                        rb.add(
+                            obs=obs_emb_tensor.cpu().numpy(),
+                            next_obs=next_obs_emb_tensor.cpu().numpy(),
+                            action=nnoise.cpu().numpy(),
+                            reward=rewards,
+                            done=dones,
+                            infos=infos,
+                            svm_action=svm_action,
+                            outcome_reward=outcome_rewards
+                        )
+                    else:
+                        rb.add(
+                            obs=obs_emb_tensor.cpu().numpy(),
+                            next_obs=next_obs_emb_tensor.cpu().numpy(),
+                            action=nnoise.cpu().numpy(),
+                            reward=rewards,
+                            done=dones,
+                            infos=infos
+                        )
 
                     ## switch to next step
                     obs_emb_tensor = next_obs_emb_tensor
@@ -331,48 +375,12 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                     # Warmup phase: skip training, only collect data
                     continue
 
-                # Q pre-training
-                if (
-                    self.global_step == learning_start and
-                    cfg.training.q_pretrain_steps > 0
-                ):
-                    print("Q pre-training starts...")
-                    pretrain_q_losses = []
-                    for _ in tqdm.tqdm(
-                        range(cfg.training.q_pretrain_steps),
-                        desc=f"Q pre-training for {cfg.training.q_pretrain_steps} steps."
-                    ):
-                        self.global_update += 1
-                        batch = rb.sample(cfg.training.batch_size)
-                        critic_loss, critic_info = self.noise_policy.compute_critic_loss(batch)
-                        q_opt.zero_grad()
-                        critic_loss.backward()
-                        q_opt.step()
-                        pretrain_q_losses.append(critic_loss.item())
-
-                        if self.global_update % cfg.training.target_freq == 0:
-                            self.noise_policy.target_update()
-                    
-                    print("Q pre-training finished.")
-                    
-                    # Log pre-training metrics
-                    pretrain_log = {
-                        'info/global_step': self.global_step,
-                        'info/global_update': self.global_update,
-
-                        'info/q_target': critic_info['q_target'],
-                        'info/q_predicted': critic_info['q_predicted'],
-                        'info/q_predicted_min': critic_info['q_predicted_min'],
-                        'info/q_predicted_max': critic_info['q_predicted_max'],
-                        'info/rewards': critic_info['rewards'],
-                        'info/dones': critic_info['dones'],
-
-                        'loss/critic_loss': critic_loss.item() / cfg.noise_policy.num_qs,
-                    }
-                    logger.log(pretrain_log)
-                    wandb_run.log(pretrain_log, step=self.global_step)
-
-                    continue  # pretrain Q only
+                svm_update_info = dict()
+                if not svm_warmup_done:
+                    svm_update_info.update(svm.warmup_update(rb))
+                    svm_warmup_done = True
+                else:
+                    svm_update_info.update(svm.update(rb, self.global_step))
 
                 # training
                 for _ in tqdm.tqdm(
@@ -383,6 +391,7 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
 
                     ## fetch data
                     batch = rb.sample(cfg.training.batch_size)
+                    batch = svm.process_batch_reward(batch)
 
                     ## update critics
                     critic_loss, critic_info = self.noise_policy.compute_critic_loss(batch)
@@ -442,6 +451,9 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                 }
                 if cfg.noise_policy.auto_alpha:
                     step_log['loss/alpha_loss'] = alpha_loss.item()
+                if cfg.svm.enable:
+                    step_log.update(svm_update_info)
+                    step_log.update(svm.last_reward_info)
 
                 # evaluation
                 # sum_policy.eval()

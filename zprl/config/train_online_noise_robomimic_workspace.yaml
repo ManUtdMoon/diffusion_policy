@@ -1,7 +1,6 @@
 defaults:
   - _self_
   - online_task: can_image_abs
-  - svm: default
 
 name: train_online_noise_robomimic_workspace
 _target_: zprl.workspace.train_online_noise_robomimic_workspace.TrainOnlineNoiseRobomimicWorkspace
@@ -45,17 +44,16 @@ training:
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
   max_grad_norm: 50.0
-  policy_freq: 2
-  target_freq: 2
-  training_freq: 1000
-  utd: 5.0
+  policy_freq: 10
+  target_freq: 1
+  training_freq: 100
+  utd: 10.0
   n_envs: ${online_task.n_envs}
   # residue progress
   noise_scale: 1.5
   reward_offset: 0.0
   bootstrap_at_done: never  # never, always, truncated
   # training loop control in steps
-  q_pretrain_steps: 0
   num_steps: 200000
   buffer_size: 200000  # 500k for transport, 1M for others
   log_every: 1000

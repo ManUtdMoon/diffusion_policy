@@ -8,7 +8,7 @@
 SESSION="train"
 GPUS=(0 1 2)
 SEEDS=(40 50 60)
-EXP_NAME="resrl-u10_10-q_tanh-q_ent-q_mean-f100"
+EXP_NAME="dsrl:u10_10-q_ent-f100-svm"
 BASE_CKPT="data/outputs/2026.06.09/11.41.28_train_diffusion_image_accelerate_tool_hang_image_abs/checkpoints/epoch_0800-score_0.420.ckpt"
 
 # kill old session with the same name (optional, comment out if not wanted)
@@ -22,7 +22,7 @@ for i in "${!GPUS[@]}"; do
     SEED=${SEEDS[$i]}
 
     CMD="MUJOCO_EGL_DEVICE_ID=${GPU} python train.py \
-        --config-name=train_online_robomimic_workspace \
+        --config-name=train_online_noise_robomimic_workspace \
         training.seed=${SEED} \
         exp_name=${EXP_NAME} \
         training.device=cuda:${GPU} \
