@@ -381,49 +381,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     # Warmup phase: skip training, only collect data
                     continue
 
-                # Q pre-training
-                if (
-                    self.global_step == learning_start and
-                    cfg.training.q_pretrain_steps > 0
-                ):
-                    print("Q pre-training starts...")
-                    pretrain_q_losses = []
-                    for _ in tqdm.tqdm(
-                        range(cfg.training.q_pretrain_steps),
-                        desc=f"Q pre-training for {cfg.training.q_pretrain_steps} steps."
-                    ):
-                        self.global_update += 1
-                        batch = rb.sample(cfg.training.batch_size)
-                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
-                        q_opt.zero_grad()
-                        critic_loss.backward()
-                        q_opt.step()
-                        pretrain_q_losses.append(critic_loss.item())
-
-                        if self.global_update % cfg.training.target_freq == 0:
-                            self.res_policy.target_update()
-                    
-                    print("Q pre-training finished.")
-                    
-                    # Log pre-training metrics
-                    pretrain_log = {
-                        'info/global_step': self.global_step,
-                        'info/global_update': self.global_update,
-
-                        'info/q_target': critic_info['q_target'],
-                        'info/q_predicted': critic_info['q_predicted'],
-                        'info/q_predicted_min': critic_info['q_predicted_min'],
-                        'info/q_predicted_max': critic_info['q_predicted_max'],
-                        'info/rewards': critic_info['rewards'],
-                        'info/dones': critic_info['dones'],
-
-                        'loss/critic_loss': critic_loss.item() / cfg.res_policy.num_qs,
-                    }
-                    logger.log(pretrain_log)
-                    wandb_run.log(pretrain_log, step=self.global_step)
-
-                    continue  # pretrain Q only
-
                 # training
                 for _ in tqdm.tqdm(
                         range(n_updates_per_training),
