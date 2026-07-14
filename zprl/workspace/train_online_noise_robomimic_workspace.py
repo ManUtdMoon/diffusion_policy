@@ -198,6 +198,8 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
             low=-np.inf, high=np.inf,
             shape=(Da,), dtype=np.float32
         )  # res z
+        bootstrap_at_done = cfg.training.bootstrap_at_done
+        assert bootstrap_at_done in ['never', 'truncated']
         rb = ReplayBuffer(
             cfg.training.buffer_size,
             dummy_obs_space,
@@ -310,17 +312,39 @@ class TrainOnlineNoiseRobomimicWorkspace(BaseWorkspace):
                                 float(info['raw_reward']) > 0.9)
 
                     ## prepare transitions for rb
-                    assert cfg.training.bootstrap_at_done == 'never'
+                    rb_next_obs_seq = next_obs_seq
+                    rb_dones = dones
+                    if bootstrap_at_done == 'truncated':
+                        timeout_indices = [
+                            i for i, info in enumerate(infos)
+                            if info.get('TimeLimit.truncated', False)
+                        ]
+                        if len(timeout_indices) > 0:
+                            rb_next_obs_seq = dict_apply(next_obs_seq, np.copy)
+                            rb_dones = dones.copy()
+                            rb_dones[timeout_indices] = False
+                            for i in timeout_indices:
+                                terminal_observation = infos[i]['terminal_observation']
+                                for key in rb_next_obs_seq.keys():
+                                    rb_next_obs_seq[key][i] = terminal_observation[key]
+
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                     next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
+                    if rb_next_obs_seq is next_obs_seq:
+                        rb_next_obs_emb_tensor = next_obs_emb_tensor
+                    else:
+                        rb_next_obs_seq_tensor = dict_apply(
+                            rb_next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
+                        rb_next_obs_emb_tensor = self.base_policy.encode_obs(
+                            rb_next_obs_seq_tensor).detach()
 
                     rb.add(
                         obs=obs_emb_tensor.cpu().numpy(),
-                        next_obs=next_obs_emb_tensor.cpu().numpy(),
+                        next_obs=rb_next_obs_emb_tensor.cpu().numpy(),
                         action=nnoise.cpu().numpy(),
                         reward=rewards,
-                        done=dones,
+                        done=rb_dones,
                         infos=infos
                     )
 

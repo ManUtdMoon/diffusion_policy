@@ -52,7 +52,7 @@ training:
   # residue progress
   noise_scale: 1.5
   reward_offset: 0.0
-  bootstrap_at_done: never  # never, always, truncated
+  bootstrap_at_done: truncated  # never, truncated
   # training loop control in steps
   num_steps: 200000
   buffer_size: 200000  # 500k for transport, 1M for others

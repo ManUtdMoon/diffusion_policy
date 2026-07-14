@@ -113,29 +113,38 @@ class MultiStepWrapper(gym.Wrapper):
         raw_chunk_rewards = []
         chunk_rewards = []
         chunk_dones = []
+        truncated = False
         for act in action:
-            if len(self.done) > 0 and self.done[-1]:
-                # termination
-                break
             observation, reward, done, info = super().step(act)
 
             self.obs.append(observation)
             self.reward.append(reward)
             raw_chunk_rewards.append(reward)
             chunk_rewards.append(reward + self.reward_offset)
-            if (self.max_episode_steps is not None) \
+            truncated = bool(info.get('TimeLimit.truncated', False))
+            terminated = bool(done) and not truncated
+            if not terminated \
+                and (self.max_episode_steps is not None) \
                 and (len(self.reward) >= self.max_episode_steps):
                 # truncation
-                done = True
+                truncated = True
+            done = terminated or truncated
             self.done.append(done)
             chunk_dones.append(done)
-            self._add_info(info)
+            step_info = info.copy()
+            step_info.pop('TimeLimit.truncated', None)
+            self._add_info(step_info)
+            if done:
+                break
 
         observation = self._get_obs(self.n_obs_steps)
         reward = aggregate(chunk_rewards, self.reward_agg_method, self.gamma)
         done = aggregate(chunk_dones, 'max')
         info = dict_take_last_n(self.info, self.n_obs_steps)
         info['raw_reward'] = aggregate(raw_chunk_rewards, 'max')
+        if truncated:
+            info['TimeLimit.truncated'] = True
+            info['terminal_observation'] = observation
         return observation, reward, done, info
 
     def _get_obs(self, n_steps=1):

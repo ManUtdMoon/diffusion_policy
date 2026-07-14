@@ -52,7 +52,7 @@ training:
   # residue progress
   res_scale: 0.05
   prog_explore: 10000
-  bootstrap_at_done: never  # never, always, truncated
+  bootstrap_at_done: truncated  # never, truncated
   # training loop control in steps
   preload_offline_data: False
   preload_shuffle: True
