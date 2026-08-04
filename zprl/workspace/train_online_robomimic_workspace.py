@@ -143,7 +143,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
-                reward_agg_method='discounted_sum'
+                reward_agg_method='discounted_sum',
+                reward_offset=cfg.training.reward_offset
             )
         def dummy_env_fn():
             robomimic_env = create_env(
@@ -161,7 +162,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
-                reward_agg_method='discounted_sum'
+                reward_agg_method='discounted_sum',
+                reward_offset=cfg.training.reward_offset
             )
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
@@ -341,13 +343,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## env_action and step
                     env_action = undo_transform_action(action)
                     next_obs_seq, rewards, dones, infos = envs.step(env_action)
-                    for reward, done in zip(rewards, dones):
+                    for info, done in zip(infos, dones):
                         if done:
-                            recent_done_successes.append(float(reward) > 0.9)
-
-                    ## reward preprocess
-                    ## 1. fixed epi len performs better with positive rewards
-                    # rewards -= 1.0
+                            recent_done_successes.append(
+                                float(info['raw_reward']) > 0.9)
 
                     ## prepare transitions for rb
                     rb_next_obs_seq = next_obs_seq
