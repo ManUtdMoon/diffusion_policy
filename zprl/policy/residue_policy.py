@@ -29,6 +29,7 @@ class ResiduePolicy(ModuleAttrMixin):
             init_alpha: float = 0.01,
             auto_alpha: bool = True,
             res_scale: float = 0.05,
+            q_ent: bool = True,
             # batched-q params
             num_qs: int = 2,
             num_subset: int = 2,):
@@ -73,6 +74,7 @@ class ResiduePolicy(ModuleAttrMixin):
         self.target_entropy = target_entropy
         self.res_scale = res_scale
         self.actor_input = actor_input
+        self.q_ent = q_ent
 
         # dimensions
         self.obs_dim = obs_dim
@@ -135,7 +137,9 @@ class ResiduePolicy(ModuleAttrMixin):
             subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
             target_q_subset = target_q_all[subset_indices]
 
-            target_q_next = torch.min(target_q_subset, dim=0).values - alpha * next_log_prob  # (B,1)
+            target_q_next = torch.min(target_q_subset, dim=0).values  # (B,1)
+            if self.q_ent:
+                target_q_next -= alpha * next_log_prob
             assert_shape(target_q_next, (bs, 1))
             target_q = batch.rewards.flatten() + (1 - batch.dones.flatten()) * self.gamma * target_q_next.view(-1) # (B,)
             target_q = target_q.unsqueeze(0).expand(self.num_qs, -1) # broadcast to (num_qs, B)
