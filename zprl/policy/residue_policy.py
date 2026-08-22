@@ -239,7 +239,8 @@ class SumPolicy:
     def __init__(self,
             # dimensions
             res_scale: float,
-            obs_emb_dim: int,
+            base_obs_emb_dim: int,
+            subtask_dim: int,
             action_dim: int,
             n_action_steps: int,
             # policies
@@ -254,9 +255,12 @@ class SumPolicy:
         self.base_policy.eval()
 
         # store dimensions
-        self.obs_emb_dim = obs_emb_dim
+        self.base_obs_emb_dim = base_obs_emb_dim
+        self.subtask_dim = subtask_dim
+        self.obs_emb_dim = base_obs_emb_dim + subtask_dim
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
+        assert self.res_policy.obs_dim == self.obs_emb_dim
 
     def reset(self):
         pass
@@ -276,13 +280,28 @@ class SumPolicy:
         return self.res_policy.dtype
 
     @torch.no_grad()
+    def encode_obs(self, obs_dict: Dict[str, torch.Tensor]):
+        base_obs_dict = obs_dict
+        if self.subtask_dim > 0:
+            stage_mask = obs_dict['completed_stage_mask'][:, -1]
+            assert_shape(stage_mask, (None, self.subtask_dim))
+            base_obs_dict = dict(obs_dict)
+            del base_obs_dict['completed_stage_mask']
+
+        base_res = self.base_policy.predict_action(base_obs_dict)
+        obs_seq_emb = base_res['obs_emb']
+        obs_emb = obs_seq_emb[:, -self.base_obs_emb_dim:]
+        if self.subtask_dim > 0:
+            obs_emb = torch.cat([obs_emb, stage_mask], dim=-1)
+        assert_shape(obs_emb, (None, self.obs_emb_dim))
+        return base_res, obs_emb
+
+    @torch.no_grad()
     def predict_action(self,
             obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         normalizer = self.base_policy.normalizer
-        base_res = self.base_policy.predict_action(obs_dict)
-        obs_seq_emb = base_res['obs_emb']
+        base_res, obs_emb = self.encode_obs(obs_dict)
         base_naction = base_res['naction']
-        obs_emb = obs_seq_emb[:, -self.obs_emb_dim:]
 
         res_input = obs_emb
         if self.res_policy.actor_input == 'obs_action':
@@ -312,12 +331,14 @@ class SumPolicy:
 
         Args:
             base_naction (torch.Tensor): normalized act seq by base, (B, Ta, da)
-            obs_emb(torch.Tensor): o_t embedding by base, (B,do)
+            obs_emb(torch.Tensor): augmented residual state, (B, self.obs_emb_dim)
             res_masks (torch.Tensor): True where res is masked, (B,)
 
         Returns:
             Dict[str, torch.Tensor]
         """
+        assert_shape(obs_emb, (None, self.obs_emb_dim))
+
         # 1. forward the residue policy
         res_input = obs_emb
         if self.res_policy.actor_input == 'obs_action':

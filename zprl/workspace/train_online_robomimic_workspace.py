@@ -37,6 +37,10 @@ from zprl.env_runner.robomimic_image_runner import create_env
 from zprl.gym_util.async_vector_env import AsyncVectorEnv
 from zprl.gym_util.multistep_wrapper import MultiStepWrapper
 from zprl.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper, RobomimicEarlyStopWrapper
+from zprl.env.robomimic.robomimic_square_subtask_wrapper import (
+    SquareSubtaskWrapper,
+    get_subtask_dim,
+)
 import robomimic.utils.file_utils as FileUtils
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -61,6 +65,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
+        subtask = cfg.online_task.subtask
+        d_mask = get_subtask_dim(subtask)
 
         # configure policies
         ## load base policy
@@ -94,18 +100,20 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         To = cfg.n_obs_steps
         Ta = cfg.n_action_steps
         do = self.base_policy.obs_feature_dim
-        Do = To * do  # obs chunk dim
+        Do_base = To * do
+        Do_aug = Do_base + d_mask
         da = cfg.shape_meta.action.shape[0]
         Da = Ta * da  # action chunk dim
 
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=Do, action_dim=Da)
-        print(f"Residue policy with Do={Do}, Da={Da}, gamma={self.res_policy.gamma}")
+            cfg.res_policy, obs_dim=Do_aug, action_dim=Da)
+        print(f"Residue policy with Do={Do_aug}, Da={Da}, gamma={self.res_policy.gamma}")
 
         ## sum policy
         sum_policy = SumPolicy(
             res_scale=cfg.training.res_scale,
-            obs_emb_dim=Do,
+            base_obs_emb_dim=Do_base,
+            subtask_dim=d_mask,
             action_dim=da,
             n_action_steps=cfg.n_action_steps,
             base_policy=self.base_policy,
@@ -133,13 +141,15 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 shape_meta=shape_meta
             )
             robomimic_env.env.hard_reset = False
+            early_stop_env = RobomimicEarlyStopWrapper(robomimic_env)
+            image_env = RobomimicImageWrapper(
+                env=early_stop_env,
+                shape_meta=shape_meta,
+                init_state=None,
+                render_obs_key=cfg.online_task.env_runner.render_obs_key
+            )
             return MultiStepWrapper(
-                RobomimicImageWrapper(
-                    env=RobomimicEarlyStopWrapper(robomimic_env),
-                    shape_meta=shape_meta,
-                    init_state=None,
-                    render_obs_key=cfg.online_task.env_runner.render_obs_key
-                ),
+                SquareSubtaskWrapper(image_env, subtask),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
@@ -152,13 +162,15 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 shape_meta=shape_meta,
                 enable_render=False
             )
+            early_stop_env = RobomimicEarlyStopWrapper(robomimic_env)
+            image_env = RobomimicImageWrapper(
+                env=early_stop_env,
+                shape_meta=shape_meta,
+                init_state=None,
+                render_obs_key=cfg.online_task.env_runner.render_obs_key
+            )
             return MultiStepWrapper(
-                RobomimicImageWrapper(
-                    env=RobomimicEarlyStopWrapper(robomimic_env),
-                    shape_meta=shape_meta,
-                    init_state=None,
-                    render_obs_key=cfg.online_task.env_runner.render_obs_key
-                ),
+                SquareSubtaskWrapper(image_env, subtask),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
@@ -196,7 +208,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(Do,), dtype=np.float32
+            shape=(Do_aug,), dtype=np.float32
         )
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
@@ -215,6 +227,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
         # offline demo preload
         if cfg.training.preload_offline_data:
+            assert d_mask == 0
             from zprl.common.robomimic_offline_replay import (
                 load_robomimic_offline_data_into_replay_buffer)
             load_robomimic_offline_data_into_replay_buffer(
@@ -280,17 +293,24 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 uaction = uaction.reshape((*raw_shape[:-1], 14))
             return uaction
 
+        @torch.no_grad()
+        def encode_obs(obs_seq):
+            obs_seq_tensor = dict_apply(
+                obs_seq, lambda x: torch.from_numpy(x).to(device=device))
+            return sum_policy.encode_obs(obs_seq_tensor)
+
         # training loop
         recent_done_successes = collections.deque(maxlen=100)
+        recent_done_stage_masks = collections.deque(maxlen=100)
         def get_recent_success_stats():
             count = len(recent_done_successes)
             rate = float(np.mean(recent_done_successes)) if count > 0 else 0.0
-            return count, rate
+            stage_rates = np.mean(recent_done_stage_masks, axis=0) \
+                if count > 0 else np.zeros(len(subtask.stages))
+            return count, rate, stage_rates
 
         obs_seq = envs.reset()
-        obs_seq_tensor = dict_apply(
-            obs_seq, lambda x: torch.from_numpy(x).to(device=device))
-        base_dict = self.base_policy.predict_action(obs_seq_tensor)
+        base_dict, obs_emb_tensor = encode_obs(obs_seq)
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as logger:
             # set_rand_crop(False)
@@ -311,7 +331,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     self.global_step += n_envs
 
                     ## retrieve from base cache
-                    obs_emb_tensor = base_dict['obs_emb'].detach()
                     base_naction_tensor = base_dict['naction'].detach()
                     base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
 
@@ -346,7 +365,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     for info, done in zip(infos, dones):
                         if done:
                             recent_done_successes.append(
-                                float(info['raw_reward']) > 0.9)
+                                float(info['task_reward']) > 0.9)
+                            stage_mask = np.asarray(
+                                info['completed_stage_mask'])[-1]
+                            recent_done_stage_masks.append(stage_mask)
 
                     ## prepare transitions for rb
                     rb_next_obs_seq = next_obs_seq
@@ -365,16 +387,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                                 for key in rb_next_obs_seq.keys():
                                     rb_next_obs_seq[key][i] = terminal_observation[key]
 
-                    next_obs_seq_tensor = dict_apply(
-                        next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
-                    next_base_dict = self.base_policy.predict_action(next_obs_seq_tensor)
+                    next_base_dict, next_obs_emb_tensor = encode_obs(next_obs_seq)
                     if rb_next_obs_seq is next_obs_seq:
                         rb_next_base_dict = next_base_dict
+                        rb_next_obs_emb_tensor = next_obs_emb_tensor
                     else:
-                        rb_next_obs_seq_tensor = dict_apply(
-                            rb_next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
-                        rb_next_base_dict = self.base_policy.predict_action(rb_next_obs_seq_tensor)
-                    rb_next_obs_emb_tensor = rb_next_base_dict['obs_emb'].detach()
+                        rb_next_base_dict, rb_next_obs_emb_tensor = encode_obs(
+                            rb_next_obs_seq)
                     rb_next_base_naction_tensor = rb_next_base_dict['naction'].detach()
                     actions_to_save = np.concatenate(
                         [
@@ -397,6 +416,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## switch to next step
                     obs_seq = next_obs_seq
                     base_dict = next_base_dict
+                    obs_emb_tensor = next_obs_emb_tensor
 
                 if self.global_step < learning_start:
                     # Warmup phase: skip training, only collect data
@@ -444,7 +464,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                             alpha = self.res_policy.log_alpha.exp().item()
 
                 ## training metrics
-                recent_done_count, recent_done_sr = get_recent_success_stats()
+                recent_done_count, recent_done_sr, recent_stage_rates = \
+                    get_recent_success_stats()
 
                 step_log = {
                     'info/global_step': self.global_step,
@@ -474,6 +495,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 }
                 if cfg.res_policy.auto_alpha:
                     step_log['loss/alpha_loss'] = alpha_loss.item()
+                for stage, rate in zip(subtask.stages, recent_stage_rates):
+                    step_log[f'info/recent_{stage}_rate'] = \
+                        float(rate)
 
                 # evaluation
                 # sum_policy.eval()

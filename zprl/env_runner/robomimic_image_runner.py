@@ -20,6 +20,7 @@ from zprl.common.pytorch_util import dict_apply
 from zprl.env_runner.base_image_runner import BaseImageRunner
 from zprl.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper
 from zprl.env.robomimic.robomimic_image_relative_wrapper import RobomimicImageRelativeWrapper
+from zprl.env.robomimic.robomimic_square_subtask_wrapper import SquareSubtaskWrapper
 import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.obs_utils as ObsUtils
@@ -77,6 +78,7 @@ class RobomimicImageRunner(BaseImageRunner):
             output_dir,
             dataset_path,
             shape_meta:dict,
+            subtask,
             n_train=10,
             n_train_vis=3,
             train_start_idx=0,
@@ -129,14 +131,16 @@ class RobomimicImageRunner(BaseImageRunner):
             # Disabled to run more envs.
             # https://github.com/ARISE-Initiative/robosuite/blob/92abf5595eddb3a845cd1093703e5a3ccd01e77e/robosuite/environments/base.py#L247-L248
             robomimic_env.env.hard_reset = False
+            image_env = RobomimicImageWrapper(
+                env=robomimic_env,
+                shape_meta=env_shape_meta,
+                init_state=None,
+                render_obs_key=render_obs_key
+            )
+            image_env = SquareSubtaskWrapper(image_env, subtask)
             wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
-                    RobomimicImageWrapper(
-                        env=robomimic_env,
-                        shape_meta=env_shape_meta,
-                        init_state=None,
-                        render_obs_key=render_obs_key
-                    ),
+                    image_env,
                     video_recoder=VideoRecorder.create_h264(
                         fps=fps,
                         codec='h264',
@@ -169,14 +173,16 @@ class RobomimicImageRunner(BaseImageRunner):
                     shape_meta=env_shape_meta,
                     enable_render=False
                 )
+            image_env = RobomimicImageWrapper(
+                env=robomimic_env,
+                shape_meta=env_shape_meta,
+                init_state=None,
+                render_obs_key=render_obs_key
+            )
+            image_env = SquareSubtaskWrapper(image_env, subtask)
             wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
-                    RobomimicImageWrapper(
-                        env=robomimic_env,
-                        shape_meta=env_shape_meta,
-                        init_state=None,
-                        render_obs_key=render_obs_key
-                    ),
+                    image_env,
                     video_recoder=VideoRecorder.create_h264(
                         fps=fps,
                         codec='h264',
@@ -280,6 +286,7 @@ class RobomimicImageRunner(BaseImageRunner):
         self.rotation_transformer = rotation_transformer
         self.abs_action = abs_action
         self.action_pose_repr = action_pose_repr
+        self.subtask_stages = tuple(subtask.stages)
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self, policy: BaseImagePolicy):
@@ -295,6 +302,8 @@ class RobomimicImageRunner(BaseImageRunner):
         # allocate data
         all_video_paths = [None] * n_inits
         all_rewards = [[] for _ in range(n_inits)] # guarantee independent lists
+        all_stage_masks = np.zeros(
+            (n_inits, len(self.subtask_stages)), dtype=np.float32)
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
@@ -357,8 +366,12 @@ class RobomimicImageRunner(BaseImageRunner):
                 obs, reward, done, info = env.step(env_action)
 
                 # collect rewards moved here
-                for sublist, r in zip(all_rewards[this_global_slice], reward):
-                    sublist.append(r)
+                for i, (sublist, env_info) in enumerate(
+                        zip(all_rewards[this_global_slice], info), start=start):
+                    sublist.append(float(env_info['task_reward']))
+                    if self.subtask_stages:
+                        mask = np.asarray(env_info['completed_stage_mask'])
+                        all_stage_masks[i] = mask[-1]
 
                 done = np.all(done)
                 past_action = action
@@ -375,6 +388,7 @@ class RobomimicImageRunner(BaseImageRunner):
         
         # log
         max_rewards = collections.defaultdict(list)
+        stage_completions = collections.defaultdict(list)
         log_data = dict()
         # results reported in the paper are generated using the commented out line below
         # which will only report and average metrics from first n_envs initial condition and seeds
@@ -390,6 +404,9 @@ class RobomimicImageRunner(BaseImageRunner):
             max_reward = np.max(all_rewards[i])
             max_rewards[prefix].append(max_reward)
             log_data[prefix+f'sim_max_reward_{seed}'] = max_reward
+            for stage, completed in zip(self.subtask_stages, all_stage_masks[i]):
+                stage_completions[prefix, stage].append(completed)
+                log_data[prefix+f'sim_{stage}_completed_{seed}'] = completed
 
             # visualize sim
             video_path = all_video_paths[i]
@@ -402,6 +419,8 @@ class RobomimicImageRunner(BaseImageRunner):
             name = prefix+'mean_score'
             value = np.mean(value)
             log_data[name] = value
+        for (prefix, stage), value in stage_completions.items():
+            log_data[prefix+f'{stage}_completion_rate'] = np.mean(value)
 
         return log_data
 

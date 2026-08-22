@@ -24,6 +24,7 @@ from zprl.policy.residue_policy import (
     ResiduePolicy as ActionResiduePolicy,
     SumPolicy as ActionSumPolicy,
 )
+from zprl.env.robomimic.robomimic_square_subtask_wrapper import get_subtask_dim
 
 
 # a patch due to uploaded checkpoints using a absolute specified dataset path.
@@ -54,6 +55,7 @@ def main(checkpoint, output_dir, device, base_ckpt):
 
     Ta = int(cfg.n_action_steps)
     To = int(cfg.n_obs_steps)
+    d_mask = get_subtask_dim(cfg.online_task.subtask)
 
     ## deterministic mode
     seed = cfg.training.seed
@@ -96,34 +98,38 @@ def main(checkpoint, output_dir, device, base_ckpt):
     ## 2. res_policy + sum_policy
     cfg.n_action_steps = Ta
     do = int(base_policy.obs_feature_dim)
-    Do = int(To * do)
+    Do_base = int(To * do)
+    Do_aug = Do_base + d_mask
     da = int(cfg.shape_meta.action.shape[0])
     Da = int(Ta * da)
     res_target = str(cfg.res_policy._target_)
 
     if "latent_policy" in res_target:
+        assert d_mask == 0
         z_dim = int(base_policy.vib_latent_dim)
         res_policy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=Do, z_dim=z_dim, action_dim=Da)
+            cfg.res_policy, obs_dim=Do_base, z_dim=z_dim, action_dim=Da)
         sum_policy = LatentSumPolicy(
             res_scale=cfg.training.res_scale,
             base_policy=base_policy,
             res_policy=res_policy,
         )
-        print(f"ZPRL (latent) with To={To}, do={do}, Do={Do}, "
+        print(f"ZPRL (latent) with To={To}, do={do}, Do={Do_base}, "
               f"Ta={Ta}, da={da}, Da={Da}, z_dim={z_dim}")
     elif "residue_policy" in res_target:
         res_policy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=do, action_dim=Da)
+            cfg.res_policy, obs_dim=Do_aug, action_dim=Da)
         sum_policy = ActionSumPolicy(
             res_scale=cfg.training.res_scale,
-            obs_emb_dim=do,
+            base_obs_emb_dim=Do_base,
+            subtask_dim=d_mask,
             action_dim=da,
             n_action_steps=Ta,
             base_policy=base_policy,
             res_policy=res_policy,
         )
-        print(f"ResRL (action) with To={To}, do={do}, Ta={Ta}, da={da}, Da={Da}")
+        print(f"ResRL (action) with To={To}, do={do}, Do={Do_aug}, "
+              f"Ta={Ta}, da={da}, Da={Da}")
     else:
         raise ValueError(f"Unknown res_policy target: {res_target}")
 

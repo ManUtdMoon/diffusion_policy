@@ -26,6 +26,15 @@ abs_action: &abs_action True
 
 base_ckpt: null
 
+subtask:
+  enabled: true
+  stages: [grasp, hover]
+  reward_mode: semi_sparse
+  reward_scale: 1.0
+  stage_weights: [0.5, 0.5]
+  hover_threshold: 0.65
+  obs_key: completed_stage_mask
+
 # train
 n_envs: 20
 
@@ -50,5 +59,6 @@ env_runner:
   crf: 22
   past_action: False
   abs_action: *abs_action
+  subtask: ${online_task.subtask}
   tqdm_interval_sec: 1.0
   n_envs: 25  # for eval only

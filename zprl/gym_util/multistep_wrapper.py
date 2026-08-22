@@ -110,7 +110,8 @@ class MultiStepWrapper(gym.Wrapper):
         """
         actions: (n_action_steps,) + action_shape
         """
-        raw_chunk_rewards = []
+        env_rewards = []
+        task_rewards = []
         chunk_rewards = []
         chunk_dones = []
         truncated = False
@@ -119,7 +120,8 @@ class MultiStepWrapper(gym.Wrapper):
 
             self.obs.append(observation)
             self.reward.append(reward)
-            raw_chunk_rewards.append(reward)
+            env_rewards.append(reward)
+            task_rewards.append(info['task_reward'])
             chunk_rewards.append(reward + self.reward_offset)
             truncated = bool(info.get('TimeLimit.truncated', False))
             terminated = bool(done) and not truncated
@@ -141,7 +143,8 @@ class MultiStepWrapper(gym.Wrapper):
         reward = aggregate(chunk_rewards, self.reward_agg_method, self.gamma)
         done = aggregate(chunk_dones, 'max')
         info = dict_take_last_n(self.info, self.n_obs_steps)
-        info['raw_reward'] = aggregate(raw_chunk_rewards, 'max')
+        info['raw_reward'] = aggregate(env_rewards, 'sum')
+        info['task_reward'] = aggregate(task_rewards, 'max')
         if truncated:
             info['TimeLimit.truncated'] = True
             info['terminal_observation'] = observation
