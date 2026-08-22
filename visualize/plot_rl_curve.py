@@ -11,7 +11,7 @@ from pathlib import Path
 # Plotting Configuration
 # =============================================================================
 PALETTE = {
-    'ZPRL': '#c66a42',
+    'ZPRL': '#ff4000', # '#c66a42'
     'Po-dec': '#696fa2',
     'DSRL': '#e8cd81',
     'ReinFlow': '#89c085',
@@ -37,16 +37,43 @@ OFFLINE = {
     'pen': 0.68,
     'metaworld_box-close': 0.53,
     'metaworld_push-wall': 0.64,
+    'can': 0.8,
+    'square': 0.42,
+    'transport': 0.62,
 }
 
-ARIAL_FONT_PATH = Path(__file__).resolve().parent.parent / 'data' / 'Arial.ttf'
+
+# Font configuration
+DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
+ARIAL_FONT_PATH = DATA_DIR / 'Arial.ttf'
+CAMBRIA_MATH_FONT_PATH = DATA_DIR / 'cambria-math.ttf'
+STIX_MATH_FONT_PATH = DATA_DIR / 'STIXTwoMath.otf'
+
+for font_path in [ARIAL_FONT_PATH, CAMBRIA_MATH_FONT_PATH, STIX_MATH_FONT_PATH]:
+    if font_path.exists():
+        font_manager.fontManager.addfont(str(font_path))
+
 if ARIAL_FONT_PATH.exists():
-    font_manager.fontManager.addfont(str(ARIAL_FONT_PATH))
     mpl.rcParams['font.family'] = font_manager.FontProperties(
         fname=str(ARIAL_FONT_PATH)
     ).get_name()
 else:
     mpl.rcParams['font.family'] = ['Arial', 'Liberation Sans', 'DejaVu Sans', 'sans-serif']
+
+math_font_name = 'Cambria Math'
+if CAMBRIA_MATH_FONT_PATH.exists():
+    math_font_name = font_manager.FontProperties(
+        fname=str(CAMBRIA_MATH_FONT_PATH)
+    ).get_name()
+
+mpl.rcParams['mathtext.fontset'] = 'custom'
+mpl.rcParams['mathtext.rm'] = math_font_name
+mpl.rcParams['mathtext.it'] = math_font_name
+mpl.rcParams['mathtext.bf'] = math_font_name
+mpl.rcParams['mathtext.cal'] = math_font_name
+mpl.rcParams['mathtext.sf'] = math_font_name
+mpl.rcParams['mathtext.fallback'] = 'stix'
+
 
 def smooth(data, sm=2):
     """Simple moving average smoothing."""
@@ -191,12 +218,12 @@ def main(task, mode):
         )
 
     # --- Customize Aesthetics ---
-    ax.set_xlabel(r'Env Steps ($\times 10^6$)', fontsize=12)
-    ax.set_ylabel('Success Rate', fontsize=12)
+    ax.set_xlabel(r'Env Steps ($\times 10^6$)', fontsize=14)
+    ax.set_ylabel('Success Rate', fontsize=14)
     if task in ['door', 'hammer', 'pen']:
         task = 'adroit_' + task
     ax.set_title(f'{task.capitalize()}', fontsize=12)
-    ax.tick_params(axis='both', which='major', labelsize=11)
+    ax.tick_params(axis='both', which='major', labelsize=14)
     ax.yaxis.set_major_formatter('{x:.1f}')
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}'))
     ax.grid(True, which='major', linestyle='-', linewidth='0.5', color='lightgrey')
@@ -221,7 +248,7 @@ def main(task, mode):
 
     # Customize the legend
     handles, labels = ax.get_legend_handles_labels()
-    legend = ax.legend(handles=handles, labels=labels, fontsize=10, title='Algorithm')
+    legend = ax.legend(handles=handles, labels=labels, fontsize=14, title='Algorithm')
     legend.set_title('')
     ax.get_legend().remove()  # remove legend
     plt.tight_layout()
