@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+import timm
 
 def get_resnet(name, weights=None, **kwargs):
     """
@@ -232,6 +233,41 @@ class ResNet18Pooling(nn.Module):
         return x
 
 
+class TimmPooling(nn.Module):
+    def __init__(self, model_name, input_shape, **kwargs):
+        super(TimmPooling, self).__init__()
+        assert (
+            len(input_shape) == 3
+        ), "[error] input shape of timm model should be (C, H, W)"
+
+        self.backbone = timm.create_model(
+            model_name,
+            pretrained=False,
+            in_chans=input_shape[0]
+        )
+
+        x = torch.zeros(1, *input_shape)
+        y = self.backbone.forward_features(x)
+        output_shape = y.shape
+
+        num_spatial_blocks = kwargs.get("num_spatial_blocks", 8)
+        bottleneck_dim = kwargs.get("bottleneck_dim", 256)
+        self.pooling = SpatialLearnedEmbeddings(
+            input_shape=output_shape[1:],
+            num_spatial_blocks=num_spatial_blocks,
+            bottleneck_dim=bottleneck_dim
+        )
+        self.output_shape = self.pooling(y).shape[-1]
+        print(f"Feature shape: {output_shape}")
+        print(f"Backbone params: {sum(p.numel() for p in self.backbone.parameters() if p.requires_grad) / 1e6:.2f}M")
+        print(f"Pooling params: {sum(p.numel() for p in self.pooling.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)
+        x = self.pooling(x)
+        return x
+
+
 if __name__ == "__main__":
     # Test Resnet w/ Spatial Projection
     input_shape = (3, 120, 160)
@@ -264,3 +300,15 @@ if __name__ == "__main__":
     output = model3(sample)
     print(output.shape, model3.output_shape)
     # Expected output shape: (16, 512) for avg pooling
+
+    # Test resnet34
+    input_shape = (3, 224, 224)
+    sample = torch.randn(16, *input_shape)
+    pooling_kwargs = {
+        "num_spatial_blocks": 8,
+        "bottleneck_dim": 256,
+    }
+    model4 = TimmPooling("resnet34", input_shape, **pooling_kwargs)
+    output = model4(sample)
+    print(output.shape, model4.output_shape)
+    # Expected output shape: (16, 256) for Timm convnext pooling

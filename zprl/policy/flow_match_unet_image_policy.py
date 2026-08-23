@@ -244,6 +244,9 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
     def set_normalizer(self, normalizer: LinearNormalizer):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
+    def forward(self, batch):
+        return self.compute_loss(batch)
+
     def compute_loss(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
