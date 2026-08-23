@@ -23,6 +23,7 @@ from zprl.workspace.base_workspace import BaseWorkspace
 from zprl.policy.diffusion_unet_image_policy import DiffusionUnetImagePolicy
 from zprl.dataset.base_dataset import BaseImageDataset
 from zprl.env_runner.base_image_runner import BaseImageRunner
+from zprl.common.action_mse_util import action_mse_per_sample
 from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
 from zprl.common.pytorch_util import dict_apply, optimizer_to
@@ -78,6 +79,9 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         # configure validation dataset
         val_dataset = dataset.get_validation_dataset()
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
+        action_mse_groups = OmegaConf.to_container(
+            OmegaConf.select(cfg, "task.action_mse_groups", default=OmegaConf.create({})),
+            resolve=True)
 
         self.model.set_normalizer(normalizer)
         if cfg.training.use_ema:
@@ -224,12 +228,18 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                 if (self.epoch % cfg.training.val_every) == 0:
                     with torch.no_grad():
                         val_losses = list()
+                        val_mse_samples = dict()
                         with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}", 
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
                                 loss = self.model.compute_loss(batch)
                                 val_losses.append(loss)
+                                result = policy.predict_action(batch["obs"])
+                                mse_samples = action_mse_per_sample(
+                                    result["action_pred"], batch["action"], action_mse_groups)
+                                for name, values in mse_samples.items():
+                                    val_mse_samples.setdefault(name, list()).append(values.cpu())
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
                                     break
@@ -237,6 +247,10 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                             val_loss = torch.mean(torch.tensor(val_losses)).item()
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
+                        for name, values in val_mse_samples.items():
+                            key = "val_action_mse" if name == "" \
+                                else f"val_action_mse_{name}"
+                            step_log[key] = torch.cat(values).mean().item()
 
                 # run diffusion sampling on a training batch
                 if (self.epoch % cfg.training.sample_every) == 0:
@@ -250,12 +264,18 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                         pred_action = result['action_pred']
                         mse = torch.nn.functional.mse_loss(pred_action, gt_action)
                         step_log['train_action_mse_error'] = mse.item()
+                        mse_samples = action_mse_per_sample(
+                            pred_action, gt_action, action_mse_groups)
+                        for name, values in mse_samples.items():
+                            if name != "":
+                                step_log[f"train_action_mse_{name}"] = values.mean().item()
                         del batch
                         del obs_dict
                         del gt_action
                         del result
                         del pred_action
                         del mse
+                        del mse_samples
                 
                 # checkpoint
                 if (self.epoch % cfg.training.checkpoint_every) == 0:

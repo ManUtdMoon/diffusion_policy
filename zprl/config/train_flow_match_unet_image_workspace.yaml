@@ -42,6 +42,7 @@ policy:
     crop_shape: [76, 76]
     # constant center crop
     random_crop: True
+    crop_randomizer_version: v3
     use_group_norm: True
     share_rgb_model: False
     imagenet_norm: True
@@ -129,7 +130,7 @@ checkpoint:
     monitor_key: test_mean_score
     mode: max
     k: 2
-    format_str: 'epoch={epoch:04d}-score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch_{epoch:04d}-score_{test_mean_score:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

@@ -183,6 +183,94 @@ class CropRandomizerV2(nn.Module):
         return msg
 
 
+class CropRandomizerV3(nn.Module):
+    """
+    A CropRandomizer using grid_sample, inspired by ref.py.
+    Each image in the batch gets an independently sampled random crop during training,
+    and a center crop during eval.
+    """
+    def __init__(
+        self,
+        input_shape: tuple,
+        crop_height: int,
+        crop_width: int,
+        # not used, but kept for compatibility
+        num_crops: int = 1,
+        pos_enc: bool = False,
+    ):
+        super().__init__()
+
+        assert len(input_shape) == 3, "Input shape must be of length 3 (C, H, W)"
+        assert crop_height <= input_shape[1], "Crop height must be <= image height"
+        assert crop_width <= input_shape[2], "Crop width must be <= image width"
+
+        self.input_shape = input_shape
+        self.crop_height = crop_height
+        self.crop_width = crop_width
+        self.force_random_crop = False
+
+    def forward_in(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            inputs: [..., C, H, W] tensor.
+                - 4D [B, C, H, W]: each image gets an independent random crop.
+                - 5D [B, T, C, H, W]: same crop for all T frames within each B,
+                  but different crops across B.
+        """
+        extra_dims = inputs.shape[:-3]
+        C, H, W = inputs.shape[-3:]
+        x = inputs.reshape(-1, C, H, W)
+        n = x.shape[0]
+
+        if inputs.ndim == 5:
+            B, T = inputs.shape[0], inputs.shape[1]
+        else:
+            B, T = n, 1
+
+        # Build a base grid of shape [crop_height, crop_width] in [-1, 1]
+        # that corresponds to a crop starting at pixel 0
+        eps_h = 1.0 / H
+        eps_w = 1.0 / W
+        grid_h = torch.linspace(-1.0 + eps_h, 1.0 - eps_h, H, device=x.device, dtype=x.dtype)[:self.crop_height]
+        grid_w = torch.linspace(-1.0 + eps_w, 1.0 - eps_w, W, device=x.device, dtype=x.dtype)[:self.crop_width]
+        base_grid = torch.stack(
+            torch.meshgrid(grid_h, grid_w, indexing='ij'), dim=-1
+        ).flip(-1)  # (x, y) as grid_sample expects
+        base_grid = base_grid.unsqueeze(0).expand(n, -1, -1, -1)
+
+        if self.training or self.force_random_crop:
+            max_h = H - self.crop_height
+            max_w = W - self.crop_width
+            shift_h = torch.randint(
+                0, max_h + 1, size=(B, 1, 1, 1), device=x.device
+            ).to(x.dtype) * (2.0 / H)
+            shift_w = torch.randint(
+                0, max_w + 1, size=(B, 1, 1, 1), device=x.device
+            ).to(x.dtype) * (2.0 / W)
+            shift = torch.cat([shift_w, shift_h], dim=-1)
+            shift = shift.unsqueeze(1).expand(-1, T, -1, -1, -1).reshape(n, 1, 1, 2)
+        else:
+            # Center crop: shift to center
+            offset_h = (H - self.crop_height) / 2.0 * (2.0 / H)
+            offset_w = (W - self.crop_width) / 2.0 * (2.0 / W)
+            shift = torch.tensor([offset_w, offset_h], device=x.device, dtype=x.dtype)
+            shift = shift.reshape(1, 1, 1, 2).expand(n, -1, -1, -1)
+
+        grid = base_grid + shift
+        out = torch.nn.functional.grid_sample(
+            x, grid, padding_mode="zeros", align_corners=False
+        )
+
+        return out.reshape(*extra_dims, C, self.crop_height, self.crop_width)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return self.forward_in(inputs)
+
+    def __repr__(self):
+        header = f'{self.__class__.__name__}'
+        return header + f"(input_shape={self.input_shape}, crop_size=[{self.crop_height}, {self.crop_width}])"
+
+
 def crop_image_from_indices(images, crop_indices, crop_height, crop_width):
     """
     Crops images at the locations specified by @crop_indices. Crops will be 

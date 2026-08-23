@@ -40,6 +40,7 @@ policy:
     crop_shape: [76, 76]
     # constant center crop
     random_crop: True
+    crop_randomizer_version: v3
     use_group_norm: True
     share_rgb_model: False
     imagenet_norm: True

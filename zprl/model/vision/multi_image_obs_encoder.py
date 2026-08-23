@@ -4,7 +4,7 @@ import logging
 import torch
 import torch.nn as nn
 import torchvision
-from zprl.model.vision.crop_randomizer import CropRandomizer, CropRandomizerV2
+from zprl.model.vision.crop_randomizer import CropRandomizerV2, CropRandomizerV3
 from zprl.model.common.module_attr_mixin import ModuleAttrMixin
 from zprl.common.pytorch_util import dict_apply, replace_submodules
 
@@ -24,13 +24,24 @@ class MultiImageObsEncoder(ModuleAttrMixin):
             share_rgb_model: bool=False,
             # renormalize rgb input with imagenet normalization
             # assuming input in [0,1]
-            imagenet_norm: bool=False
+            imagenet_norm: bool=False,
+            crop_randomizer_version: str="v2"
         ):
         """
         Assumes rgb input: B,C,H,W
         Assumes low_dim input: B,D
         """
         super().__init__()
+
+        crop_randomizer_cls = {
+            "v2": CropRandomizerV2,
+            "v3": CropRandomizerV3,
+        }.get(crop_randomizer_version)
+        if crop_randomizer_cls is None:
+            raise ValueError(
+                f"Unsupported crop_randomizer_version: {crop_randomizer_version!r}. "
+                "Expected 'v2' or 'v3'."
+            )
 
         rgb_keys = list()
         low_dim_keys = list()
@@ -93,7 +104,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                     else:
                         h, w = crop_shape
                     if random_crop:
-                        this_randomizer = CropRandomizerV2(
+                        this_randomizer = crop_randomizer_cls(
                             input_shape=input_shape,
                             crop_height=h,
                             crop_width=w,
