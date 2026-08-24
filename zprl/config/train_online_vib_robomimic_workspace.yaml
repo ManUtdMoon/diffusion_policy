@@ -14,6 +14,7 @@ n_obs_steps: 1
 n_action_steps: 4 # transport 5, others 4, tool_hang 8
 n_latency_steps: 0
 num_inference_steps: 2 # 2 for can/square/transport, tool_hang 20
+single_gamma: 0.99  # single-step gamma; multi-step gamma for RL is computed from this, 0.99 for most tasks, 0.997 for transport, tool_hang
 
 res_policy:
   _target_: zprl.policy.latent_policy.ResiduePolicy
@@ -24,8 +25,7 @@ res_policy:
   hidden_dim: 256
   log_std_min: -10.0
   log_std_max: 2.0
-  # gamma: ${eval:"round(0.997**${n_action_steps}, 3)"}  # for transport, tool_hang TBD
-  gamma: ${eval:"round(0.99**${n_action_steps}, 2)"}  # for can, square is enough
+  gamma: ${eval:"round(${single_gamma}**${n_action_steps}, 4)"}  # multi-step gamma for Bellman target
   tau: 0.005
   init_alpha: 0.01
   auto_alpha: True
@@ -52,9 +52,8 @@ training:
   n_envs: ${online_task.n_envs}
   # residue progress
   res_scale: 0.2  # 0.2 for can, square; 0.1 for transport
-  bootstrap_at_done: never  # never, always, truncated
+  bootstrap_at_done: never  # never, truncated
   # training loop control in steps
-  q_pretrain_steps: 0
   num_steps: 1000000
   buffer_size: 1000000  # 500k for transport, tool_hang, 1M for others
   log_every: 1000

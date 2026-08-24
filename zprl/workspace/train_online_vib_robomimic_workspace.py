@@ -32,7 +32,7 @@ from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
 from zprl.common.pytorch_util import dict_apply, optimizer_to
 from zprl.model.common.rotation_transformer import RotationTransformer
-from zprl.model.vision.crop_randomizer import CropRandomizerV2
+from zprl.common.online_util import prepare_base_policy_config, get_crop_randomizers
 from zprl.env_runner.robomimic_image_runner import create_env
 from zprl.gym_util.async_vector_env import AsyncVectorEnv
 from zprl.gym_util.multistep_wrapper import MultiStepWrapper
@@ -65,16 +65,10 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
         # configure policies
         ## load base policy
         base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
-        base_cfg = base_payload['cfg']
-        # patch legacy checkpoint configs that still use the old package name
-        base_cfg_yaml = OmegaConf.to_yaml(base_cfg)
-        if 'diffusion_policy' in base_cfg_yaml:
-            base_cfg_yaml = base_cfg_yaml.replace('diffusion_policy', 'zprl')
-            base_cfg = OmegaConf.create(base_cfg_yaml)
+        base_cfg = prepare_base_policy_config(
+            base_payload['cfg'], cfg.n_action_steps, cfg.num_inference_steps)
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
-        base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
-        base_cfg.policy.num_inference_steps = cfg.num_inference_steps
         self.base_policy: FlowMatchVibUnetImagePolicy
         self.base_policy = hydra.utils.instantiate(base_cfg.policy)
         self.base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])
@@ -82,10 +76,7 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
         self.base_policy.eval()
         self.base_policy.requires_grad_(False)
 
-        crop_randomizers = list()
-        for m in self.base_policy.modules():
-            if isinstance(m, CropRandomizerV2):
-                crop_randomizers.append(m)
+        crop_randomizers = get_crop_randomizers(self.base_policy)
         def set_rand_crop(mode):
             for m in crop_randomizers:
                 m.force_random_crop = mode
@@ -198,6 +189,8 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
             low=-np.inf, high=np.inf,
             shape=(dz,), dtype=np.float32
         )  # res z
+        bootstrap_at_done = cfg.training.bootstrap_at_done
+        assert bootstrap_at_done in ["never", "truncated"]
         rb = ReplayBuffer(
             cfg.training.buffer_size,
             dummy_obs_space,
@@ -313,20 +306,50 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                             recent_done_successes.append(float(reward) > 0.9)
 
                     ## prepare transitions for rb
-                    assert cfg.training.bootstrap_at_done == 'never'
+                    rb_next_obs_seq = next_obs_seq
+                    rb_dones = dones
+                    if bootstrap_at_done == 'truncated':
+                        timeout_indices = [
+                            i for i, info in enumerate(infos)
+                            if info.get('TimeLimit.truncated', False)
+                        ]
+                        if len(timeout_indices) > 0:
+                            rb_next_obs_seq = dict_apply(next_obs_seq, np.copy)
+                            rb_dones = dones.copy()
+                            rb_dones[timeout_indices] = False
+                            for i in timeout_indices:
+                                terminal_observation = infos[i]['terminal_observation']
+                                for key in rb_next_obs_seq.keys():
+                                    rb_next_obs_seq[key][i] = terminal_observation[key]
+
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                     with torch.no_grad():
                         next_obs_emb_tensor = self.base_policy.encode_obs(next_obs_seq_tensor).detach()
                         _, next_z_mean, next_z_logvar, next_z = self.base_policy.vib_forward(next_obs_emb_tensor)
                         next_obs_z = torch.cat([next_obs_emb_tensor, next_z_mean, next_z_logvar, next_z], dim=-1)
+                    if rb_next_obs_seq is next_obs_seq:
+                        rb_next_obs_z = next_obs_z
+                    else:
+                        rb_next_obs_seq_tensor = dict_apply(
+                            rb_next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
+                        with torch.no_grad():
+                            rb_next_obs_emb_tensor = self.base_policy.encode_obs(
+                                rb_next_obs_seq_tensor).detach()
+                            _, rb_next_z_mean, rb_next_z_logvar, rb_next_z = (
+                                self.base_policy.vib_forward(rb_next_obs_emb_tensor)
+                            )
+                            rb_next_obs_z = torch.cat([
+                                rb_next_obs_emb_tensor, rb_next_z_mean,
+                                rb_next_z_logvar, rb_next_z
+                            ], dim=-1)
 
                     rb.add(
                         obs=obs_z.detach().cpu().numpy(),
-                        next_obs=next_obs_z.detach().cpu().numpy(),
+                        next_obs=rb_next_obs_z.detach().cpu().numpy(),
                         action=res_z.cpu().numpy(),
                         reward=rewards,
-                        done=dones,
+                        done=rb_dones,
                         infos=infos
                     )
 
@@ -336,49 +359,6 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                 if self.global_step < learning_start:
                     # Warmup phase: skip training, only collect data
                     continue
-
-                # Q pre-training
-                if (
-                    self.global_step == learning_start and
-                    cfg.training.q_pretrain_steps > 0
-                ):
-                    print("Q pre-training starts...")
-                    pretrain_q_losses = []
-                    for _ in tqdm.tqdm(
-                        range(cfg.training.q_pretrain_steps),
-                        desc=f"Q pre-training for {cfg.training.q_pretrain_steps} steps."
-                    ):
-                        self.global_update += 1
-                        batch = rb.sample(cfg.training.batch_size)
-                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
-                        q_opt.zero_grad()
-                        critic_loss.backward()
-                        q_opt.step()
-                        pretrain_q_losses.append(critic_loss.item())
-
-                        if self.global_update % cfg.training.target_freq == 0:
-                            self.res_policy.target_update()
-                    
-                    print("Q pre-training finished.")
-                    
-                    # Log pre-training metrics
-                    pretrain_log = {
-                        'info/global_step': self.global_step,
-                        'info/global_update': self.global_update,
-
-                        'info/q_target': critic_info['q_target'],
-                        'info/q_predicted': critic_info['q_predicted'],
-                        'info/q_predicted_min': critic_info['q_predicted_min'],
-                        'info/q_predicted_max': critic_info['q_predicted_max'],
-                        'info/rewards': critic_info['rewards'],
-                        'info/dones': critic_info['dones'],
-
-                        'loss/critic_loss': critic_loss.item() / 2.0,
-                    }
-                    logger.log(pretrain_log)
-                    wandb_run.log(pretrain_log, step=self.global_step)
-
-                    continue  # pretrain Q only
 
                 # training
                 for _ in tqdm.tqdm(
@@ -444,7 +424,7 @@ class TrainOnlineVibRobomimicWorkspace(BaseWorkspace):
                     'info/recent_done_sr': recent_done_sr,
                     'info/recent_done_count': recent_done_count,
 
-                    'loss/critic_loss': critic_loss.item() / 2.0,
+                    'loss/critic_loss': critic_loss.item() / cfg.res_policy.num_qs,
                     'loss/actor_loss': actor_loss.item(),
                     'loss/q1_grad_norm': q1_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),

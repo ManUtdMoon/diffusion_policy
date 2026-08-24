@@ -6,14 +6,93 @@ import torch.nn.functional as F
 from einops import rearrange, reduce
 from stable_baselines3.common.type_aliases import ReplayBufferSamples
 
-from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
+from zprl.policy.base_image_policy import BaseImagePolicy
 from zprl.common.pytorch_util import dict_apply
 from zprl.model.common.module_attr_mixin import ModuleAttrMixin
 from zprl.model.common.shape_util import assert_shape
-from zprl.model.online import Actor, BatchedSoftQNet
+from zprl.model.online import SquashedNormal, BatchedLayerNorm, BatchedLinear
 
 
 logger = logging.getLogger(__name__)
+
+
+class DSRLActor(nn.Module):
+    def __init__(self,
+            obs_dim: int,
+            action_dim: int,
+            hidden_dim: int = 256,
+            log_std_min: float = -20.0,
+            log_std_max: float = 2.0,):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(obs_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.Tanh(),
+        )
+        self.mean = nn.Linear(hidden_dim, action_dim)
+        self.log_std = nn.Linear(hidden_dim, action_dim)
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+
+    def forward(self, x):
+        x = self.net(x)
+        mean = self.mean(x)
+        log_std = torch.clamp(
+            self.log_std(x), self.log_std_min, self.log_std_max)
+        return mean, log_std
+
+    def get_eval_action(self, x):
+        mean, _ = self.forward(x)
+        return torch.tanh(mean)
+
+    def get_action(self, x):
+        mean, log_std = self.forward(x)
+        dist = SquashedNormal(mean, log_std.exp())
+
+        sample = dist.rsample()
+        log_prob = dist.log_prob(sample).sum(dim=-1, keepdim=True)
+
+        assert torch.all(torch.isfinite(sample))
+        assert torch.all(torch.isfinite(log_prob))
+
+        return {
+            'sample': sample,
+            'mean': dist.mean,
+            'log_prob': log_prob,
+            'log_std': log_std,
+        }
+
+class DSRLQNet(nn.Module):
+    def __init__(self, obs_dim, action_dim, num_qs, hidden_dim=256):
+        super().__init__()
+        self.num_qs = num_qs
+        self.net = nn.Sequential(
+            BatchedLinear(num_qs, obs_dim + action_dim, hidden_dim),
+            BatchedLayerNorm(num_qs, hidden_dim),
+            nn.Tanh(),
+            BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            BatchedLayerNorm(num_qs, hidden_dim),
+            nn.Tanh(),
+            BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            BatchedLayerNorm(num_qs, hidden_dim),
+            nn.Tanh(),
+            BatchedLinear(num_qs, hidden_dim, 1),
+        )
+
+    def forward(self, obs, action):
+        x = torch.cat([obs, action], dim=-1)
+        # expand for batch
+        x = x.unsqueeze(0).expand(self.num_qs, -1, -1) # (num_qs, B, D_in)
+        q_logits = self.net(x) # (num_qs, B, 1)
+        # q_values = 0.5 * (torch.tanh(q_logits) + 1.)  # scale to [0, 1]
+        return q_logits
 
 
 class NoisePolicy(ModuleAttrMixin):
@@ -22,21 +101,23 @@ class NoisePolicy(ModuleAttrMixin):
             obs_dim: int,
             action_dim: int,
             hidden_dim: int = 256,
-            log_std_min: float = -2.0,
+            log_std_min: float = -20.0,
             log_std_max: float = 2.0,
             # training params
             gamma: float = 0.97,
             tau: float = 0.01,
-            init_alpha: float = 0.01,
+            init_alpha: float = 1.0,
             auto_alpha: bool = True,
+            target_entropy: float = 0.0,
             # batched-q params
             num_qs: int = 2,
-            num_subset: int = 2,):
+            num_subset: int = 2,
+            q_entropy: bool = True,):
         super().__init__()
 
         # create models
 
-        actor = Actor(
+        actor = DSRLActor(
             obs_dim=obs_dim,
             action_dim=action_dim,
             hidden_dim=hidden_dim,
@@ -44,15 +125,15 @@ class NoisePolicy(ModuleAttrMixin):
             log_std_max=log_std_max,
         )
 
-        qs = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
-        q_targets = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
+        qs = DSRLQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
+        q_targets = DSRLQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
         q_targets.load_state_dict(qs.state_dict())
         q_targets.requires_grad_(False)
 
         log_alpha = nn.Parameter(
             torch.log(torch.tensor(init_alpha, dtype=torch.float32))
         )
-        target_entropy = -action_dim / 2 # heuristic target entropy
+        target_entropy = -action_dim / 2. if target_entropy is None else target_entropy
 
         self.actor = actor
         self.qs = qs
@@ -65,6 +146,7 @@ class NoisePolicy(ModuleAttrMixin):
         self.init_alpha = init_alpha
         self.auto_alpha = auto_alpha
         self.target_entropy = target_entropy
+        self.q_entropy = q_entropy
 
         # dimensions
         self.obs_dim = obs_dim
@@ -104,7 +186,7 @@ class NoisePolicy(ModuleAttrMixin):
         assert_shape(res['sample'], (bs, self.action_dim))
         assert_shape(res['log_prob'], (bs, 1))
 
-        return res['sample'], res['log_prob']
+        return res['sample'], res['log_prob'], res['log_std']
 
     def compute_critic_loss(self, batch: ReplayBufferSamples):
         bs = batch.rewards.shape[0]
@@ -115,13 +197,15 @@ class NoisePolicy(ModuleAttrMixin):
 
         # compute targets
         with torch.no_grad():
-            next_nnoise, _ = self._sample_log_prob(batch.next_observations)
+            next_nnoise, next_log_prob, _ = self._sample_log_prob(batch.next_observations)
 
             target_q_all = self.q_targets(batch.next_observations, next_nnoise)
             subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
             target_q_subset = target_q_all[subset_indices]
 
-            target_q_next = torch.min(target_q_subset, dim=0).values  # (B,1)
+            target_q_next = torch.min(target_q_subset, dim=0).values
+            if self.q_entropy:
+                target_q_next = target_q_next - alpha * next_log_prob
             assert_shape(target_q_next, (bs, 1))
             target_q = batch.rewards.flatten() + (1 - batch.dones.flatten()) * self.gamma * target_q_next.view(-1) # (B,)
             target_q = target_q.unsqueeze(0).expand(self.num_qs, -1) # broadcast to (num_qs, B)
@@ -154,9 +238,9 @@ class NoisePolicy(ModuleAttrMixin):
         else:
             alpha = self.init_alpha
 
-        nnoise, log_prob = self._sample_log_prob(batch.observations)
+        nnoise, log_prob, log_std = self._sample_log_prob(batch.observations)
         all_q_preds = self.qs(batch.observations, nnoise)  # (num_qs, B, 1)
-        predicted_q = torch.mean(all_q_preds, dim=0)  # (B, 1)
+        predicted_q = torch.min(all_q_preds, dim=0).values  # (B, 1)
         assert_shape(predicted_q, (bs, 1))
 
         actor_loss = (alpha * log_prob - predicted_q).mean()
@@ -164,15 +248,18 @@ class NoisePolicy(ModuleAttrMixin):
         info = {
             'actor_entropy': -log_prob.mean().item(),
             'nnoise_norm': torch.norm(nnoise, dim=-1).mean().item(),
+            'log_std': log_std.mean().item(),
         }
 
         return actor_loss, info
 
     def compute_alpha_loss(self, batch):
         with torch.no_grad():
-            _, log_prob = self._sample_log_prob(batch.observations)
+            _, log_prob, _ = self._sample_log_prob(batch.observations)
 
-        alpha_loss = (-self.log_alpha.exp() * (log_prob + self.target_entropy)).mean()
+        alpha_loss = (
+            -self.log_alpha.exp() * (log_prob + self.target_entropy).detach()
+        ).mean()
 
         return alpha_loss
 
@@ -203,18 +290,40 @@ class SumPolicy:
     def __init__(self,
             # dimensions
             noise_scale: float,
+            n_noise_steps: int,
             # policies
-            base_policy: FlowMatchVibUnetImagePolicy,
+            base_policy: BaseImagePolicy,
             noise_policy: NoisePolicy,):
         # verify and init policies
-        assert hasattr(base_policy, 'vib_encoder') and hasattr(base_policy, 'vib_decoder')
+        assert hasattr(base_policy, 'encode_obs')
+        assert hasattr(base_policy, 'conditional_predict_from_noise')
         self.base_policy = base_policy
         self.noise_policy = noise_policy
+        self.base_policy_has_vib = hasattr(base_policy, 'vib_forward')
+        assert noise_scale > 0
+        assert n_noise_steps > 0
+        assert base_policy.horizon % n_noise_steps == 0
+        assert noise_policy.action_dim == n_noise_steps * base_policy.action_dim
         self.noise_scale = noise_scale
+        self.n_noise_steps = n_noise_steps
         self.normalizer = base_policy.normalizer
 
         # make sure the base policy is in eval mode
         self.base_policy.eval()
+
+    def _get_base_cond(self, obs_emb: torch.Tensor, deterministic: bool):
+        if not self.base_policy_has_vib:
+            return obs_emb, None
+        mod_obs_emb, z_mean, _, _ = self.base_policy.vib_forward(
+            obs_emb, deterministic=deterministic)
+        return mod_obs_emb, z_mean
+
+    def _repeat_noise(self, noise: torch.Tensor) -> torch.Tensor:
+        B = noise.shape[0]
+        da = self.base_policy.action_dim
+        noise = noise.reshape(B, self.n_noise_steps, da)
+        return noise.repeat(
+            1, self.base_policy.horizon // self.n_noise_steps, 1)
 
     def reset(self):
         pass
@@ -236,20 +345,17 @@ class SumPolicy:
     @torch.no_grad()
     def predict_action(self,
             obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        T = self.base_policy.horizon
-        da = self.base_policy.action_dim
-
-        # 1. Get latent mean from base policy's encoders
+        # 1. Get condition from base policy
         obs_emb = self.base_policy.encode_obs(obs_dict)
-        mod_obs_emb, _, _, _ = self.base_policy.vib_forward(obs_emb, deterministic=True)
+        base_cond, _ = self._get_base_cond(obs_emb, deterministic=True)
 
         # 2. Get init noise from rl policy
-        noise = self.noise_policy.predict_noise(obs_emb, argmax=True)
-        noise = noise.reshape(-1, T, da)
+        noise = self.noise_policy.predict_noise(obs_emb)
+        noise = self._repeat_noise(noise)
 
         # 3. Apply noise and obs_emb decoding
         result = self.base_policy.conditional_predict_from_noise(
-            mod_obs_emb, noise * self.noise_scale
+            base_cond, noise * self.noise_scale
         )
 
         return result
@@ -269,11 +375,9 @@ class SumPolicy:
         Returns:
             Dict[str, torch.Tensor]
         """
-        T = self.base_policy.horizon
-        da = self.base_policy.action_dim
-
-        # 1. Get latent mean from base policy's VIB encoder
-        mod_obs_emb, z_mean, _, _ = self.base_policy.vib_forward(obs_emb, deterministic=False)
+        # 1. Get condition from base policy
+        base_cond, z_mean = self._get_base_cond(
+            obs_emb, deterministic=False)
 
         # 2. Get init noise from rl policy
         nnoise = self.noise_policy.predict_noise(obs_emb)
@@ -281,16 +385,18 @@ class SumPolicy:
             init_noise = nnoise * self.noise_scale
         else:
             init_noise = torch.clamp(torch.randn_like(nnoise), -self.noise_scale, self.noise_scale)
+            nnoise = init_noise / self.noise_scale
         # 3. Apply noise and obs_emb decoding
         result = self.base_policy.conditional_predict_from_noise(
-            mod_obs_emb, init_noise.reshape(-1, T, da)
+            base_cond, self._repeat_noise(init_noise)
         )
 
         # 4. Return values for env step and replay buffer
         # 'obs_emb' is already available
         # 'z_mean' is possibly obs for the RL agent
         # 'noise' is the 'action' for the RL agent
-        result['z_mean'] = z_mean
+        if z_mean is not None:
+            result['z_mean'] = z_mean
         result['nnoise'] = nnoise
 
         return result

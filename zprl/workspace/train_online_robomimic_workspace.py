@@ -32,7 +32,7 @@ from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
 from zprl.common.pytorch_util import dict_apply, optimizer_to
 from zprl.model.common.rotation_transformer import RotationTransformer
-from zprl.model.vision.crop_randomizer import CropRandomizerV2
+from zprl.common.online_util import prepare_base_policy_config, get_crop_randomizers
 from zprl.env_runner.robomimic_image_runner import create_env
 from zprl.gym_util.async_vector_env import AsyncVectorEnv
 from zprl.gym_util.multistep_wrapper import MultiStepWrapper
@@ -65,10 +65,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         # configure policies
         ## load base policy
         base_payload = torch.load(open(cfg.online_task.base_ckpt, 'rb'), pickle_module=dill)
-        base_cfg = base_payload['cfg']
+        base_cfg = prepare_base_policy_config(
+            base_payload['cfg'], cfg.n_action_steps, cfg.num_inference_steps)
         assert base_cfg.task_name == cfg.task_name, \
             f"Base policy task {base_cfg.task_name} does not match current task {cfg.task_name}"
-        base_cfg.policy.n_action_steps = cfg.n_action_steps # may be different
         self.base_policy: FlowMatchUnetImagePolicy
         self.base_policy = hydra.utils.instantiate(base_cfg.policy)
         self.base_policy.load_state_dict(base_payload['state_dicts']['ema_model'])
@@ -76,34 +76,28 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         self.base_policy.eval()
         self.base_policy.requires_grad_(False)
 
-        crop_randomizers = list()
-        for m in self.base_policy.modules():
-            if isinstance(m, CropRandomizerV2):
-                crop_randomizers.append(m)
+        crop_randomizers = get_crop_randomizers(self.base_policy)
         def set_rand_crop(mode):
             for m in crop_randomizers:
                 m.force_random_crop = mode
 
-        ## load demo_obs_emb from base policy
-        checkpoint = cfg.online_task.base_ckpt
-        ckpt_dir = pathlib.Path(checkpoint).parent
-        ckpt_name = pathlib.Path(checkpoint).stem
-        demo_emb_path = ckpt_dir / f'{ckpt_name}_obs_emb_action.pt'
-        # demo_emb = torch.load(open(demo_emb_path, 'rb'), pickle_module=dill)
-
         ## configure res policy
-        obs_emb_dim = self.base_policy.obs_feature_dim # do, Do=To*do
-        act_dim = cfg.shape_meta.action.shape[0] # da
-        act_seq_dim = cfg.n_action_steps * act_dim # Da=Ta*da
+        To = cfg.n_obs_steps
+        Ta = cfg.n_action_steps
+        do = self.base_policy.obs_feature_dim
+        Do = To * do  # obs chunk dim
+        da = cfg.shape_meta.action.shape[0]
+        Da = Ta * da  # action chunk dim
+
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
-            cfg.res_policy, obs_dim=obs_emb_dim, action_dim=act_seq_dim)
-        print(f"Residue policy with do={obs_emb_dim}, Da={act_seq_dim}, gamma={self.res_policy.gamma}")
+            cfg.res_policy, obs_dim=Do, action_dim=Da)
+        print(f"Residue policy with Do={Do}, Da={Da}, gamma={self.res_policy.gamma}")
 
         ## sum policy
         sum_policy = SumPolicy(
             res_scale=cfg.training.res_scale,
-            obs_emb_dim=obs_emb_dim,
-            action_dim=act_dim,
+            obs_emb_dim=Do,
+            action_dim=da,
             n_action_steps=cfg.n_action_steps,
             base_policy=self.base_policy,
             res_policy=self.res_policy
@@ -163,19 +157,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
 
-        ### uncomment to set all train env as in-demo env
-        # env_init_fn_dills = list()
-        # with h5py.File(dataset_path, 'r') as f:
-        #     for i in range(cfg.training.n_envs):
-        #         init_state = f[f'data/demo_{i}/states'][0]
-
-        #         def init_fn(env, init_state=init_state):
-        #             assert isinstance(env.env, RobomimicImageWrapper)
-        #             env.env.init_state = init_state
-        #         env_init_fn_dills.append(dill.dumps(init_fn))
-        # envs.call_each('run_dill_function', 
-        #     args_list=[(x,) for x in env_init_fn_dills])
-
         # configure logging
         wandb_run = wandb.init(
             dir=str(self.output_dir),
@@ -192,10 +173,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         device = torch.device(cfg.training.device)
         self.base_policy.to(device)
         self.res_policy.to(device)
-        ## extract rgb_emb from demo_obs_emb
-        lowdim_dim = sum([self.base_policy.obs_encoder.key_shape_map[k][0] for k in self.base_policy.obs_encoder.low_dim_keys])
-        rgb_emb_dim = obs_emb_dim - lowdim_dim
-        # demo_rgb_emb = demo_emb['obs_emb'][..., -obs_emb_dim:-obs_emb_dim + rgb_emb_dim].to(device)  # (N, di)
 
         optimizers = self.res_policy.get_optimizer(
             policy_lr=cfg.training.policy_lr,
@@ -208,12 +185,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(obs_emb_dim,), dtype=np.float32
+            shape=(Do,), dtype=np.float32
         )
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(act_seq_dim * 3,), dtype=np.float32
+            shape=(Da * 3,), dtype=np.float32
         )
+        bootstrap_at_done = cfg.training.bootstrap_at_done
+        assert bootstrap_at_done in ['never', 'truncated']
         rb = ReplayBuffer(
             cfg.training.buffer_size,
             dummy_obs_space,
@@ -348,28 +327,48 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     # rewards -= 1.0
 
                     ## prepare transitions for rb
-                    ## because we do not bootstrap at done, we can use next_obs_seq directly
-                    assert cfg.training.bootstrap_at_done == 'never'
+                    rb_next_obs_seq = next_obs_seq
+                    rb_dones = dones
+                    if bootstrap_at_done == 'truncated':
+                        timeout_indices = [
+                            i for i, info in enumerate(infos)
+                            if info.get('TimeLimit.truncated', False)
+                        ]
+                        if len(timeout_indices) > 0:
+                            rb_next_obs_seq = dict_apply(next_obs_seq, np.copy)
+                            rb_dones = dones.copy()
+                            rb_dones[timeout_indices] = False
+                            for i in timeout_indices:
+                                terminal_observation = infos[i]['terminal_observation']
+                                for key in rb_next_obs_seq.keys():
+                                    rb_next_obs_seq[key][i] = terminal_observation[key]
+
                     next_obs_seq_tensor = dict_apply(
                         next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                     next_base_dict = self.base_policy.predict_action(next_obs_seq_tensor)
-                    next_obs_emb_tensor = next_base_dict['obs_emb'][:, -obs_emb_dim:].detach()
-                    next_base_naction_tensor = next_base_dict['naction'].detach()
+                    if rb_next_obs_seq is next_obs_seq:
+                        rb_next_base_dict = next_base_dict
+                    else:
+                        rb_next_obs_seq_tensor = dict_apply(
+                            rb_next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
+                        rb_next_base_dict = self.base_policy.predict_action(rb_next_obs_seq_tensor)
+                    rb_next_obs_emb_tensor = rb_next_base_dict['obs_emb'][:, -obs_emb_dim:].detach()
+                    rb_next_base_naction_tensor = rb_next_base_dict['naction'].detach()
                     actions_to_save = np.concatenate(
                         [
                             res_naction_flat,
                             base_naction_flat,
-                            next_base_naction_tensor.flatten(start_dim=1).cpu().numpy()
+                            rb_next_base_naction_tensor.flatten(start_dim=1).cpu().numpy()
                         ],
                         axis=-1
                     )
 
                     rb.add(
                         obs=obs_emb_tensor.cpu().numpy(),
-                        next_obs=next_obs_emb_tensor.cpu().numpy(),
+                        next_obs=rb_next_obs_emb_tensor.cpu().numpy(),
                         action=actions_to_save,
                         reward=rewards,
-                        done=dones,
+                        done=rb_dones,
                         infos=infos
                     )
 
@@ -381,49 +380,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     # Warmup phase: skip training, only collect data
                     continue
 
-                # Q pre-training
-                if (
-                    self.global_step == learning_start and
-                    cfg.training.q_pretrain_steps > 0
-                ):
-                    print("Q pre-training starts...")
-                    pretrain_q_losses = []
-                    for _ in tqdm.tqdm(
-                        range(cfg.training.q_pretrain_steps),
-                        desc=f"Q pre-training for {cfg.training.q_pretrain_steps} steps."
-                    ):
-                        self.global_update += 1
-                        batch = rb.sample(cfg.training.batch_size)
-                        critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
-                        q_opt.zero_grad()
-                        critic_loss.backward()
-                        q_opt.step()
-                        pretrain_q_losses.append(critic_loss.item())
-
-                        if self.global_update % cfg.training.target_freq == 0:
-                            self.res_policy.target_update()
-                    
-                    print("Q pre-training finished.")
-                    
-                    # Log pre-training metrics
-                    pretrain_log = {
-                        'info/global_step': self.global_step,
-                        'info/global_update': self.global_update,
-
-                        'info/q_target': critic_info['q_target'],
-                        'info/q_predicted': critic_info['q_predicted'],
-                        'info/q_predicted_min': critic_info['q_predicted_min'],
-                        'info/q_predicted_max': critic_info['q_predicted_max'],
-                        'info/rewards': critic_info['rewards'],
-                        'info/dones': critic_info['dones'],
-
-                        'loss/critic_loss': critic_loss.item() / 2.0,
-                    }
-                    logger.log(pretrain_log)
-                    wandb_run.log(pretrain_log, step=self.global_step)
-
-                    continue  # pretrain Q only
-
                 # training
                 for _ in tqdm.tqdm(
                         range(n_updates_per_training),
@@ -434,21 +390,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## fetch data
                     batch = rb.sample(cfg.training.batch_size)
 
-                    ## compute d2d of this batch
-                    # with torch.no_grad():
-                    #     batch_rgb = batch.observations[..., :rgb_emb_dim]
-                    #     batch_d2d = torch.cdist(
-                    #         batch_rgb, demo_rgb_emb
-                    #     ).min(dim=1).values # (B,)
-
                     ## update critics
                     critic_loss, critic_info = self.res_policy.compute_critic_loss(batch, None)
                     q_opt.zero_grad()
                     critic_loss.backward()
                     q1_grad_norm = torch.nn.utils.clip_grad_norm_(
                         self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
-                    # q2_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    #     self.res_policy.qs.parameters(), cfg.training.max_grad_norm)
                     q_opt.step()
 
                     ## update target
@@ -489,15 +436,14 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/actor_entropy': actor_info['actor_entropy'],
                     'info/rewards': critic_info['rewards'],
                     'info/dones': critic_info['dones'],
-                    # 'info/uncertainty': batch_d2d.mean().item(),
+
                     'info/res_naction_norm': actor_info['res_naction_norm'],
                     'info/recent_done_sr': recent_done_sr,
                     'info/recent_done_count': recent_done_count,
 
-                    'loss/critic_loss': critic_loss.item() / 2.0,
+                    'loss/critic_loss': critic_loss.item() / cfg.res_policy.num_qs,
                     'loss/actor_loss': actor_loss.item(),
                     'loss/q1_grad_norm': q1_grad_norm.item(),
-                    # 'loss/q2_grad_norm': q2_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),
                     'loss/alpha': alpha,
                 }
@@ -527,19 +473,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         'res_policy': self.res_policy.state_dict(),
                     }
                     torch.save(payload, path.open('wb'), pickle_module=dill)
-                
-                # uncomment to save early buffer for d2d visualization
-                # if self.global_step % 10_000 == 0 and self.global_step <= 50_000:
-                #     rb_obs_emb = rb.observations
-                #     if not rb.full:
-                #         rb_obs_emb = rb.observations[:rb.pos]
-                #     print(rb_obs_emb.shape) # (N, n_env, do)
-
-                #     rb_obs_emb_path = pathlib.Path(self.output_dir) / f'rb_obs_emb_{self.global_step}.npy'
-                #     np.save(rb_obs_emb_path, rb_obs_emb)
-                #     print(f"RB obs embeddings saved to {rb_obs_emb_path}")
-
-        # envs.close()
 
 
 @hydra.main(

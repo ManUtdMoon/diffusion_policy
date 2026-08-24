@@ -194,10 +194,26 @@ class BatchedLinear(nn.Module):
             x = x + self.bias
         return x
 
+class BatchedLayerNorm(nn.Module):
+    def __init__(self, num_batch, normalized_shape, eps=1e-5):
+        super().__init__()
+        self.normalized_shape = (normalized_shape,)
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(num_batch, 1, normalized_shape))
+        self.bias = nn.Parameter(torch.zeros(num_batch, 1, normalized_shape))
+
+    def forward(self, x):
+        x = F.layer_norm(x, self.normalized_shape, eps=self.eps)
+        return x * self.weight + self.bias
+
 class BatchedSoftQNet(nn.Module):
     def __init__(self, obs_dim, action_dim, num_qs, hidden_dim=256):
         super().__init__()
         self.num_qs = num_qs
+        # High-UTD dev experiments needed a coordinated change: per-Q
+        # BatchedLayerNorm, Tanh hidden activations, unbounded Q outputs, and a
+        # larger ensemble. ToolHang used hidden=512, num_qs=10, UTD=10,
+        # policy_freq=10, target_freq=1, training_freq=100. None are enabled here.
         self.net = nn.Sequential(
             BatchedLinear(num_qs, obs_dim + action_dim, hidden_dim),
             nn.GELU(),
