@@ -23,6 +23,7 @@ class VideoRecordingWrapper(gym.Wrapper):
         self.video_recoder = video_recoder
 
         self.step_count = 0
+        self._closed = False
 
     def reset(self, **kwargs):
         obs = super().reset(**kwargs)
@@ -49,3 +50,10 @@ class VideoRecordingWrapper(gym.Wrapper):
         if self.video_recoder.is_ready():
             self.video_recoder.stop()
         return self.file_path
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self.video_recoder.stop()
+        return self.env.close()
