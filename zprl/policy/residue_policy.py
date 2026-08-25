@@ -10,7 +10,7 @@ from zprl.policy.base_image_policy import BaseImagePolicy
 from zprl.common.pytorch_util import dict_apply
 from zprl.model.common.module_attr_mixin import ModuleAttrMixin
 from zprl.model.common.shape_util import assert_shape
-from zprl.model.online import Actor, BatchedSoftQNet
+from zprl.model.online import Actor, BatchedSoftQNet, BatchedUnboundedQNet
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,8 @@ class ResiduePolicy(ModuleAttrMixin):
             res_scale: float = 0.05,
             # batched-q params
             num_qs: int = 2,
-            num_subset: int = 2,):
+            num_subset: int = 2,
+            unbounded_q: bool = False,):
         super().__init__()
 
         # create models
@@ -50,8 +51,9 @@ class ResiduePolicy(ModuleAttrMixin):
             log_std_max=log_std_max
         )
 
-        qs = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
-        q_targets = BatchedSoftQNet(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
+        q_cls = BatchedUnboundedQNet if unbounded_q else BatchedSoftQNet
+        qs = q_cls(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
+        q_targets = q_cls(obs_dim=obs_dim, action_dim=action_dim, num_qs=num_qs, hidden_dim=hidden_dim)
         q_targets.load_state_dict(qs.state_dict())
         q_targets.requires_grad_(False)
 

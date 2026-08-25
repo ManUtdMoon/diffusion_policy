@@ -231,3 +231,26 @@ class BatchedSoftQNet(nn.Module):
         q_logits = self.net(x) # (num_qs, B, 1)
         q_values = 0.5 * (torch.tanh(q_logits) + 1.)  # scale to [0, 1]
         return q_values
+
+
+class BatchedUnboundedQNet(nn.Module):
+    def __init__(self, obs_dim, action_dim, num_qs, hidden_dim=256):
+        super().__init__()
+        self.num_qs = num_qs
+        self.net = nn.Sequential(
+            BatchedLinear(num_qs, obs_dim + action_dim, hidden_dim),
+            BatchedLayerNorm(num_qs, hidden_dim),
+            nn.Tanh(),
+            BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            BatchedLayerNorm(num_qs, hidden_dim),
+            nn.Tanh(),
+            BatchedLinear(num_qs, hidden_dim, hidden_dim),
+            BatchedLayerNorm(num_qs, hidden_dim),
+            nn.Tanh(),
+            BatchedLinear(num_qs, hidden_dim, 1),
+        )
+
+    def forward(self, obs, action):
+        x = torch.cat([obs, action], dim=-1)
+        x = x.unsqueeze(0).expand(self.num_qs, -1, -1)
+        return self.net(x)

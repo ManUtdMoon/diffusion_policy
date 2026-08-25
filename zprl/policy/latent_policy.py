@@ -10,7 +10,7 @@ from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePo
 from zprl.common.pytorch_util import dict_apply
 from zprl.model.common.module_attr_mixin import ModuleAttrMixin
 from zprl.model.common.shape_util import assert_shape
-from zprl.model.online import Actor, BatchedSoftQNet
+from zprl.model.online import Actor, BatchedSoftQNet, BatchedUnboundedQNet
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,8 @@ class ResiduePolicy(ModuleAttrMixin):
             res_scale: float = 0.05,
             # batched-q params
             num_qs: int = 2,
-            num_subset: int = 2,):
+            num_subset: int = 2,
+            unbounded_q: bool = False,):
         super().__init__()
 
         # create models
@@ -57,12 +58,13 @@ class ResiduePolicy(ModuleAttrMixin):
             log_std_max=log_std_max,
         )
 
-        qs = BatchedSoftQNet(
+        q_cls = BatchedUnboundedQNet if unbounded_q else BatchedSoftQNet
+        qs = q_cls(
             obs_dim=obs_agg_dim,
             action_dim=z_dim,
             num_qs=num_qs, 
             hidden_dim=hidden_dim)
-        q_targets = BatchedSoftQNet(
+        q_targets = q_cls(
             obs_dim=obs_agg_dim,
             action_dim=z_dim,
             num_qs=num_qs, 

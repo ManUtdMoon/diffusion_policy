@@ -190,7 +190,6 @@ class TrainOnlineNoiseWorkspace(BaseWorkspace):
             n_obs_steps=To,
             n_action_steps=cfg.n_action_steps,
             max_steps=max_steps,
-            reward_offset=cfg.training.reward_offset,
         )
         env_fns = [env_fn] * cfg.training.n_envs
         envs = AsyncVectorEnv(env_fns, dummy_env_fn=env_fn)

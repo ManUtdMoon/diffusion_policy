@@ -75,8 +75,8 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 128
-  num_workers: 8
+  batch_size: 256
+  num_workers: 12
   shuffle: True
   pin_memory: True
   persistent_workers: False
@@ -124,7 +124,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: offline_debug
+  project: metaworld_offline_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}

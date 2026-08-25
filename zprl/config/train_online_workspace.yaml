@@ -31,6 +31,7 @@ res_policy:
   res_scale: ${training.res_scale}
   num_qs: 2
   num_subset: 2
+  unbounded_q: True
 
 training:
   device: "cuda:0"
