@@ -1,0 +1,38 @@
+name: push-wall
+
+task_name: ${task.name}
+crop_shape: [80, 80]
+
+shape_meta: &shape_meta
+  obs:
+    image:
+      shape: [3, 84, 84]
+      type: rgb
+    agent_pos:
+      shape: [9]
+      type: low_dim
+  action:
+    shape: [4]
+
+env_runner:
+  _target_: zprl.env_runner.metaworld_runner.MetaworldRunner
+  eval_episodes: 100
+  max_steps: 200
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 20
+  task_name: ${task.task_name}
+  tqdm_interval_sec: 1.0
+  n_envs: 25
+  render_device_id: ${eval:'int("${training.device}".split(":")[-1])'}
+
+dataset:
+  _target_: zprl.dataset.metaworld_image_dataset.MetaworldImageDataset
+  zarr_path: ./data_local/metaworld/metaworld_push-wall_medium-expert.zarr
+  n_obs_steps: ${n_obs_steps}
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: 100

@@ -9,7 +9,7 @@ task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: "default"
 
-horizon: 16
+horizon: 8
 n_obs_steps: 1
 n_action_steps: 4  # transport 5, others 4, tool_hang 8
 n_latency_steps: 0
@@ -20,9 +20,9 @@ obs_as_global_cond: True
 
 policy:
   _target_: zprl.policy.flow_match_vib_unet_image_policy.FlowMatchVibUnetImagePolicy
-  vib_latent_dim: 16
+  vib_latent_dim: 8
   vib_alpha: 1.0
-  vib_beta: 2.0e-4
+  vib_beta: 2.0e-4 # TODO: 2e-4 | 4e-4 for dim=8?
   vib_recon: 0.01
   vib_hidden_dim: 256
 
@@ -37,14 +37,14 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: zprl.model.vision.model_getter.ResNet18Pooling
-      input_shape: [3, 76, 76] # should match crop_shape, [216, 216] for tool_hang
+      input_shape: [3, 80, 80] # should match crop_shape, [216, 216] for tool_hang
       weights: null
       # pooling_kwargs
       pooling_type: "spatial_learned_embeddings"
       num_spatial_blocks: 8
       bottleneck_dim: 256
     resize_shape: null
-    crop_shape: [76, 76]
+    crop_shape: [80, 80]
     # constant center crop
     random_crop: True
     crop_randomizer_version: v3
@@ -75,8 +75,8 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 256
-  num_workers: 12
+  batch_size: 128
+  num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: False

@@ -1,0 +1,32 @@
+name: box-close
+
+task_name: ${online_task.name}
+crop_shape: [80, 80]
+
+shape_meta: &shape_meta
+  obs:
+    image:
+      shape: [3, 84, 84]
+      type: rgb
+    agent_pos:
+      shape: [9]
+      type: low_dim
+  action:
+    shape: [4]
+
+base_ckpt: ???
+
+n_envs: 20
+success_threshold: 0.5
+
+env_runner:
+  _target_: zprl.env_runner.metaworld_runner.MetaworldRunner
+  eval_episodes: 100
+  max_steps: 200
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 20
+  task_name: ${online_task.task_name}
+  tqdm_interval_sec: 1.0
+  n_envs: 25
+  render_device_id: ${eval:'int("${training.device}".split(":")[-1])'}

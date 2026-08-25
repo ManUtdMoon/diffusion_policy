@@ -1,0 +1,33 @@
+name: adroit_hammer
+
+task_name: hammer
+crop_shape: [80, 80]
+
+shape_meta: &shape_meta
+  obs:
+    image:
+      shape: [3, 84, 84]
+      type: rgb
+    agent_pos:
+      shape: [24]
+      type: low_dim
+  action:
+    shape: [26]
+
+base_ckpt: ???
+
+n_envs: 20
+success_threshold: 50
+
+env_runner:
+  _target_: zprl.env_runner.adroit_runner.AdroitRunner
+  eval_episodes: 100
+  max_steps: 200
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 10
+  task_name: ${online_task.task_name}
+  tqdm_interval_sec: 1.0
+  n_envs: 25
+  test_start_seed: 10000
+  render_device_id: ${eval:'int("${training.device}".split(":")[-1])'}
