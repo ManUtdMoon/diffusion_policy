@@ -141,3 +141,6 @@ dmypy.json
 .pyre/
 
 AGENTS.md
+
+!third_party/Metaworld/metaworld/envs/assets_v2/objects/meshes/bin/
+!third_party/Metaworld/metaworld/envs/assets_v2/objects/meshes/bin/bin.stl
