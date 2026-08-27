@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: can_image_abs
+  - task: metaworld_box-close
 
 name: train_flow_match_unet_image
 _target_: zprl.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
@@ -9,9 +9,9 @@ task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: "default"
 
-horizon: 16
+horizon: 8
 n_obs_steps: 1
-n_action_steps: 4
+n_action_steps: 2
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -32,14 +32,14 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: zprl.model.vision.model_getter.ResNet18Pooling
-      input_shape: [3, 76, 76] # should match crop_shape
+      input_shape: [3, 80, 80] # should match crop_shape
       weights: null
       # pooling_kwargs
       pooling_type: "spatial_learned_embeddings"
       num_spatial_blocks: 8
       bottleneck_dim: 256
     resize_shape: null
-    crop_shape: [76, 76]
+    crop_shape: [80, 80]
     # constant center crop
     random_crop: True
     crop_randomizer_version: v3
@@ -50,7 +50,7 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 2
+  num_inference_steps: 5
   obs_as_global_cond: ${obs_as_global_cond}
   diffusion_step_embed_dim: 128
   down_dims: [128,256,512]
@@ -117,7 +117,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: offline_debug
+  project: metaworld_offline_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}

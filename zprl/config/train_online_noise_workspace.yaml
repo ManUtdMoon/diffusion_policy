@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - online_task: adroit_pen
+  - online_task: metaworld_push-wall
 
 name: train_online_noise_workspace
 _target_: zprl.workspace.train_online_noise_workspace.TrainOnlineNoiseWorkspace
@@ -10,7 +10,7 @@ shape_meta: ${online_task.shape_meta}
 exp_name: "default"
 
 horizon: 8
-n_noise_steps: 2
+n_noise_steps: 2 # 1 | 2
 n_obs_steps: 1
 n_action_steps: 2
 n_latency_steps: 0
@@ -30,7 +30,7 @@ noise_policy:
   auto_alpha: True
   target_entropy: 0.0 # [float | None]
   q_entropy: True
-  num_qs: 2
+  num_qs: 10
   num_subset: 2
 
 training:
@@ -44,10 +44,10 @@ training:
   learning_start: 10000
   # lr_scheduler: cosine
   # lr_warmup_steps: 100
-  max_grad_norm: 1.0
+  max_grad_norm: 50.0
   policy_freq: 2
   target_freq: 1
-  training_freq: 1000
+  training_freq: 200
   utd: 1.0
   n_envs: ${online_task.n_envs}
   # residue progress
@@ -58,12 +58,12 @@ training:
   buffer_size: 500000
   log_every: 1000
   eval_every: 10000
-  checkpoint_every: 100000
+  checkpoint_every: 500000
   # misc
   tqdm_interval_sec: 1.0
 
 logging:
-  project: adroit_online_debug
+  project: metaworld_online_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
