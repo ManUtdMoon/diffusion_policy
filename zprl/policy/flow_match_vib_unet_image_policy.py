@@ -287,7 +287,7 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
     def forward(self, batch):
         return self.compute_loss(batch)
 
-    def compute_loss(self, batch):
+    def _prepare_flow_loss_inputs(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
         nobs = self.normalizer.normalize(batch['obs'])
@@ -313,8 +313,11 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         # Sample noise that we'll add to the images
         noise = torch.randn(trajectory.shape, device=trajectory.device)
         # Sample a random timestep for each image
-        if self.timesteps.device != trajectory.device:
-            self.timesteps = self.timesteps.to(trajectory.device)
+        # Restore the training schedule in case inference changed scheduler state.
+        self.noise_scheduler.set_timesteps(
+            self.noise_scheduler.config.num_train_timesteps,
+            device=trajectory.device)
+        self.timesteps = self.noise_scheduler.timesteps
         timestep_idxs = torch.randint(
             0, self.noise_scheduler.config.num_train_timesteps, 
             (batch_size,), device=trajectory.device
@@ -330,13 +333,17 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
         # target for flow matching
         target = noise - trajectory
 
+        return {
+            'noisy_trajectory': noisy_trajectory,
+            'timesteps': timesteps,
+            'target': target,
+            'global_cond': global_cond,
+        }
+
+    def _compute_vib_loss(self, noisy_trajectory, timesteps, target, global_cond):
         # --- VIB Forward Pass ---
         # Decouple il and vib training
         modified_global_cond, z_mean, z_logvar, z = self.vib_forward(global_cond.detach(), deterministic=False)
-
-        # --- IL Flow Loss (still conditioned on original obs_emb) ---
-        pred_il = self.model(noisy_trajectory, timesteps, global_cond=global_cond)
-        il_loss = F.mse_loss(pred_il, target)
 
         # --- VIB KL Loss ---
         # KL divergence loss to regularize the latent space
@@ -363,14 +370,12 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
             + self.vib_beta * vib_kl_loss
             + self.vib_recon * vib_recon_loss
         )
-        loss = il_loss + vib_loss
 
         with torch.no_grad():
             delta_rms = (modified_global_cond - global_cond).pow(2).mean().sqrt()
             base_rms = global_cond.pow(2).mean().sqrt()
             # logging
             info = {
-                'il_loss': il_loss.item(),
                 'vib_loss': vib_loss.item(),
                 'vib_il_loss': vib_il_loss.item(),
                 'vib_kl_loss': vib_kl_loss.item(),
@@ -381,5 +386,24 @@ class FlowMatchVibUnetImagePolicy(BaseImagePolicy):
                 'z_rms': z.pow(2).mean().sqrt().item(),
                 'vib_recon_loss': vib_recon_loss.item(),
             }
+
+        return vib_loss, info
+
+    def compute_vib_loss(self, batch):
+        inputs = self._prepare_flow_loss_inputs(batch)
+        return self._compute_vib_loss(**inputs)
+
+    def compute_loss(self, batch):
+        inputs = self._prepare_flow_loss_inputs(batch)
+
+        # --- IL Flow Loss (still conditioned on original obs_emb) ---
+        pred_il = self.model(
+            inputs['noisy_trajectory'], inputs['timesteps'],
+            global_cond=inputs['global_cond'])
+        il_loss = F.mse_loss(pred_il, inputs['target'])
+
+        vib_loss, info = self._compute_vib_loss(**inputs)
+        loss = il_loss + vib_loss
+        info = {'il_loss': il_loss.item(), **info}
 
         return loss, info

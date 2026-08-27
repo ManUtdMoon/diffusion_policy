@@ -55,11 +55,19 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
 
         # configure training state
         self.optimizer = hydra.utils.instantiate(
-            cfg.optimizer, params=self.model.parameters())
+            cfg.optimizer, params=self.get_optimizer_parameters())
 
         # configure training state
         self.global_step = 0
         self.epoch = 0
+
+    def get_optimizer_parameters(self):
+        return self.model.parameters()
+
+    def compute_batch_loss(self, batch, model=None):
+        if model is None:
+            model = self.model
+        return model(batch)
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
@@ -177,7 +185,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                             train_sampling_batch = batch
 
                         # compute loss
-                        loss, info = self.model(batch)
+                        loss, info = self.compute_batch_loss(batch)
                         loss.backward()
 
                         # step optimizer
@@ -239,7 +247,7 @@ class TrainFlowMatchVibUnetImageWorkspace(BaseWorkspace):
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss, info = self.model(batch)
+                                loss, info = self.compute_batch_loss(batch, model=policy)
                                 val_losses.append(loss.item())
                                 result = policy.predict_action(batch["obs"])
                                 mse_samples = action_mse_per_sample(

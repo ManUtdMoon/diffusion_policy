@@ -1,0 +1,12 @@
+defaults:
+  - train_flow_match_vib_unet_image_workspace
+  - _self_
+
+name: train_flow_match_posthoc_vib_unet_image
+_target_: zprl.workspace.train_flow_match_posthoc_vib_unet_image_workspace.TrainFlowMatchPosthocVibUnetImageWorkspace
+
+base_ckpt: ???
+
+training:
+  resume: False
+  use_ema: True
