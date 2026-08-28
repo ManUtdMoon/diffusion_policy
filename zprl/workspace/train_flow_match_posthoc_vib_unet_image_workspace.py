@@ -43,19 +43,27 @@ _COMPATIBILITY_FIELDS = (
     'policy.n_groups',
     'policy.cond_predict_scale',
     'task.task_name',
-    'task.dataset_type',
-    'task.abs_action',
     'task.dataset._target_',
-    'task.dataset.shape_meta',
     'task.dataset.horizon',
     'task.dataset.pad_before',
     'task.dataset.pad_after',
     'task.dataset.n_obs_steps',
+    'task.dataset.seed',
+)
+_OPTIONAL_COMPATIBILITY_FIELDS = (
+    'task.dataset_type',
+    'task.abs_action',
+    'task.dataset.shape_meta',
     'task.dataset.abs_action',
     'task.dataset.rotation_rep',
     'task.dataset.use_legacy_normalizer',
-    'task.dataset.seed',
     'task.dataset.num_demo',
+    'task.dataset.val_ratio',
+    'task.dataset.max_train_episodes',
+)
+_DATASET_LOCATION_FIELDS = (
+    'task.dataset.dataset_path',
+    'task.dataset.zarr_path',
 )
 
 
@@ -109,16 +117,44 @@ class TrainFlowMatchPosthocVibUnetImageWorkspace(
                     f"Source config mismatch for '{path}': "
                     f"source={source_value!r}, target={target_value!r}")
 
-        dataset_path = 'task.dataset.dataset_path'
-        source_dataset = pathlib.Path(str(
-            self._resolved_config_value(source_cfg, dataset_path))).name
-        target_dataset = pathlib.Path(str(
-            self._resolved_config_value(self.cfg, dataset_path))).name
-        if source_dataset != target_dataset:
+        for path in _OPTIONAL_COMPATIBILITY_FIELDS:
+            source_value = OmegaConf.select(source_cfg, path, default=None)
+            target_value = OmegaConf.select(self.cfg, path, default=None)
+            if source_value is None and target_value is None:
+                continue
+            if OmegaConf.is_config(source_value):
+                source_value = OmegaConf.to_container(
+                    source_value, resolve=True)
+            if OmegaConf.is_config(target_value):
+                target_value = OmegaConf.to_container(
+                    target_value, resolve=True)
+            if source_value != target_value:
+                raise ValueError(
+                    f"Source config mismatch for '{path}': "
+                    f"source={source_value!r}, target={target_value!r}")
+
+        location_found = False
+        for path in _DATASET_LOCATION_FIELDS:
+            source_path = OmegaConf.select(source_cfg, path, default=None)
+            target_path = OmegaConf.select(self.cfg, path, default=None)
+            if source_path is None and target_path is None:
+                continue
+            location_found = True
+            source_dataset = (
+                pathlib.Path(str(source_path)).name
+                if source_path is not None else None)
+            target_dataset = (
+                pathlib.Path(str(target_path)).name
+                if target_path is not None else None)
+            if source_dataset != target_dataset:
+                raise ValueError(
+                    f"Source config mismatch for '{path}': "
+                    f"source filename={source_dataset!r}, "
+                    f"target filename={target_dataset!r}")
+        if not location_found:
             raise ValueError(
-                f"Source config mismatch for '{dataset_path}': "
-                f"source filename={source_dataset!r}, "
-                f"target filename={target_dataset!r}")
+                'Missing required dataset location; expected one of '
+                f'{_DATASET_LOCATION_FIELDS}')
 
     def _initialize_from_source_payload(self, payload, source_path):
         if 'cfg' not in payload or 'state_dicts' not in payload:

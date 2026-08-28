@@ -372,6 +372,32 @@ class PosthocVibTest(unittest.TestCase):
         self.assertEqual(
             cfg.ema._target_, 'zprl.model.diffusion.ema_model.EMAModel')
 
+    def test_metaworld_box_close_source_config_is_compatible(self):
+        with initialize_config_dir(
+                version_base=None, config_dir=str(CONFIG_DIR)):
+            target_cfg = compose(
+                config_name=(
+                    'train_flow_match_posthoc_vib_unet_image_workspace'),
+                overrides=[
+                    'task=metaworld_box-close',
+                    'base_ckpt=/tmp/base.ckpt',
+                ])
+            source_cfg = compose(
+                config_name='train_flow_match_unet_image_workspace',
+                overrides=['task=metaworld_box-close'])
+
+        workspace = TrainFlowMatchPosthocVibUnetImageWorkspace.__new__(
+            TrainFlowMatchPosthocVibUnetImageWorkspace)
+        workspace.cfg = target_cfg
+        workspace._validate_source_config(source_cfg)
+
+        self.assertEqual(target_cfg.task.name, 'box-close')
+        self.assertEqual(target_cfg.policy.vib_latent_dim, 8)
+
+        source_cfg.task.dataset.zarr_path = '/tmp/other.zarr'
+        with self.assertRaisesRegex(ValueError, 'task.dataset.zarr_path'):
+            workspace._validate_source_config(source_cfg)
+
     def test_source_initialization_loads_base_freezes_and_syncs_full_ema(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = pathlib.Path(temp_dir) / 'source.ckpt'
