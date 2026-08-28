@@ -7,7 +7,7 @@ import torch
 
 from zprl.common.pytorch_util import dict_apply
 from zprl.common.replay_buffer import ReplayBuffer
-from zprl.common.sampler import SequenceSampler, get_val_mask
+from zprl.common.sampler import SequenceSampler, get_val_mask, downsample_mask
 from zprl.model.common.normalizer import LinearNormalizer
 from zprl.dataset.base_dataset import BaseImageDataset
 from zprl.common.normalize_util import (
@@ -28,6 +28,7 @@ class AdroitImageDataset(BaseImageDataset):
             seed=42,
             val_ratio=0.0,
             task_name=None,
+            max_train_episodes=None
             ):
         super().__init__()
         if not os.path.isdir(zarr_path):
@@ -41,6 +42,10 @@ class AdroitImageDataset(BaseImageDataset):
             val_ratio=val_ratio,
             seed=seed)
         train_mask = ~val_mask
+        train_mask = downsample_mask(
+            mask=train_mask,
+            max_n=max_train_episodes,
+            seed=seed)
 
         self.sampler = SequenceSampler(
             replay_buffer=self.replay_buffer,

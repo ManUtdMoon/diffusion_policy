@@ -21,7 +21,7 @@ success_threshold: 50
 
 env_runner:
   _target_: zprl.env_runner.adroit_runner.AdroitRunner
-  eval_episodes: 50
+  eval_episodes: 100
   max_steps: 200
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}

@@ -117,7 +117,7 @@ class AdroitRunner(BaseImageRunner):
         n_epis = self.eval_episodes
         n_chunks = n_epis // n_envs
 
-        all_n_goal_achieved = [[] for _ in range(n_epis)]
+        all_n_goal_achieved = np.zeros(n_epis, dtype=np.int64)
         all_rewards = [[] for _ in range(n_epis)]
         all_video_paths = [None for _ in range(n_epis)]
 
@@ -160,8 +160,9 @@ class AdroitRunner(BaseImageRunner):
 
                 for sublist, r in zip(all_rewards[global_slice], reward):
                     sublist.append(r)
-                for sublist, d in zip(all_n_goal_achieved[global_slice], info):
-                    sublist.append(d["n_goal_achieved"])
+                for episode_idx, d in enumerate(info, start=start):
+                    values = np.asarray(d["accumulated_goal_achieved"])
+                    all_n_goal_achieved[episode_idx] = values.reshape(-1)[-1]
 
                 done = np.all(done)
                 pbar.update(action.shape[1])
@@ -172,8 +173,6 @@ class AdroitRunner(BaseImageRunner):
         log_data = dict()
 
         all_returns = np.array([np.sum(r) for r in all_rewards])
-        all_n_goal_achieved = np.array(
-            [np.sum(g) for g in all_n_goal_achieved])
         n_success = np.sum(all_n_goal_achieved >= self.success_threshold)
         success_rate = n_success / self.eval_episodes
 

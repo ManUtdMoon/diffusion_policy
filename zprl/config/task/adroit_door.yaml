@@ -16,7 +16,7 @@ shape_meta: &shape_meta
 
 env_runner:
   _target_: zprl.env_runner.adroit_runner.AdroitRunner
-  eval_episodes: 50
+  eval_episodes: 100
   max_steps: 200
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
@@ -37,3 +37,4 @@ dataset:
   seed: 42
   val_ratio: 0.02
   task_name: ${task.task_name}
+  max_train_episodes: 100 # 50, 100, 200

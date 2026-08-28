@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import gym
 import numpy as np
+import torch
 
 from zprl.env.adroit.adroit import AdroitEnv
 from zprl.env.adroit.rrl_local.rrl_multicam import BasicAdroitEnv
@@ -186,3 +187,63 @@ def test_close_is_idempotent_and_releases_recorder_env_and_context():
     runner.close()
     runner.close()
     assert vector_env.close_count == 1
+
+
+def test_adroit_runner_uses_final_accumulated_goal_count(tmp_path):
+    class FakeVectorEnv:
+        def __init__(self):
+            self.step_count = 0
+
+        def call_each(self, *args, **kwargs):
+            pass
+
+        def reset(self):
+            self.step_count = 0
+            return {
+                'image': np.zeros((2, 1, 1, 2, 2), dtype=np.float32),
+                'agent_pos': np.zeros((2, 1, 1), dtype=np.float32),
+            }
+
+        def step(self, action):
+            self.step_count += 1
+            counts = [20, 10] if self.step_count == 1 else [50, 39]
+            info = [
+                {'accumulated_goal_achieved': np.array([count])}
+                for count in counts
+            ]
+            obs = {
+                'image': np.zeros((2, 1, 1, 2, 2), dtype=np.float32),
+                'agent_pos': np.zeros((2, 1, 1), dtype=np.float32),
+            }
+            done = np.full(2, self.step_count == 2)
+            return obs, np.zeros(2), done, info
+
+        def render(self):
+            return [None, None]
+
+    class FakePolicy:
+        device = torch.device('cpu')
+
+        def reset(self):
+            pass
+
+        def predict_action(self, obs):
+            return {'action': torch.zeros((2, 1, 2))}
+
+    runner = AdroitRunner.__new__(AdroitRunner)
+    runner.task_name = 'door'
+    runner.success_threshold = 50
+    runner.env = FakeVectorEnv()
+    runner.env_seeds = [10000, 10001]
+    runner.env_init_fn_dills = [b'', b'']
+    runner.eval_episodes = 2
+    runner.n_envs = 2
+    runner.max_steps = 2
+    runner.tqdm_interval_sec = 0
+
+    log = runner.run(FakePolicy())
+
+    assert log['test/mean_score'] == 0.5
+    assert log['test/mean_n_goal_achieved'] == 44.5
+    assert log['test/n_goal_10000'] == 50
+    assert log['test/n_goal_10001'] == 39

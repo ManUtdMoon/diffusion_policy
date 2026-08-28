@@ -9,6 +9,8 @@ import numpy as np
 from hydra import compose, initialize
 from hydra.core.global_hydra import GlobalHydra
 
+from zprl.env.adroit.adroit import _AdroitGoalCountWrapper
+
 WORKSPACE_MODULES = [
     "zprl.workspace.train_online_workspace",
     "zprl.workspace.train_online_vib_workspace",
@@ -64,12 +66,20 @@ class AdroitMetaworldOnlineWorkspaceTest(unittest.TestCase):
     def test_adroit_goal_count_survives_multistep_info_window(self):
         for module_name in WORKSPACE_MODULES:
             module = importlib.import_module(module_name)
-            with patch.object(module, "AdroitEnv", FakeImageEnv):
+            fake_adroit_env = lambda *args, **kwargs: \
+                _AdroitGoalCountWrapper(FakeImageEnv())
+            with patch.object(module, "AdroitEnv", fake_adroit_env):
                 env = module._make_env_fn("adroit", "door", 0, 1, 2, 5)()
                 env.reset()
                 _, _, done, info = env.step(
                     np.zeros((2, 2), dtype=np.float32))
                 self.assertFalse(done)
+                value = np.asarray(
+                    info["accumulated_goal_achieved"]).reshape(-1)[-1]
+                self.assertEqual(int(value), 2)
+                env.reset()
+                _, _, _, info = env.step(
+                    np.zeros((2, 2), dtype=np.float32))
                 value = np.asarray(
                     info["accumulated_goal_achieved"]).reshape(-1)[-1]
                 self.assertEqual(int(value), 2)

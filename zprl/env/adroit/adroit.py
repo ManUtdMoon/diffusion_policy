@@ -9,6 +9,19 @@ from gym import spaces
 from zprl.env.adroit.rrl_local.rrl_multicam import BasicAdroitEnv
 
 
+class _AdroitGoalCountWrapper(gym.Wrapper):
+    def reset(self):
+        self.accumulated_goal_achieved = 0
+        return super().reset()
+
+    def step(self, action):
+        obs, reward, done, info = super().step(action)
+        self.accumulated_goal_achieved += int(info.get("n_goal_achieved", 0))
+        info = info.copy()
+        info["accumulated_goal_achieved"] = self.accumulated_goal_achieved
+        return obs, reward, done, info
+
+
 class AdroitEnv:
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
@@ -48,6 +61,7 @@ class AdroitEnv:
             channels_first=True, num_repeats=num_repeats,
             num_frames=num_frames, device=device,
             render_device_id=render_device_id)
+        env = _AdroitGoalCountWrapper(env)
 
         self._env = env
         self.obs_dim = env.spec.observation_dim

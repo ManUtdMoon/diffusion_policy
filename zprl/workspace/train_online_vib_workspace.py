@@ -18,7 +18,6 @@ import wandb
 import tqdm
 import dill
 import numpy as np
-import gym
 import gymnasium
 import collections
 from contextlib import ExitStack
@@ -40,27 +39,14 @@ from zprl.env.metaworld.metaworld_image_wrapper import MetaWorldEnv, MetaworldEa
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 
-class _AdroitGoalCountWrapper(gym.Wrapper):
-    def reset(self):
-        self.accumulated_goal_achieved = 0
-        return super().reset()
-
-    def step(self, action):
-        obs, reward, done, info = super().step(action)
-        self.accumulated_goal_achieved += int(info.get("n_goal_achieved", 0))
-        info = info.copy()
-        info["accumulated_goal_achieved"] = self.accumulated_goal_achieved
-        return obs, reward, done, info
-
-
 def _make_env_fn(env_type, task_name, render_device_id,
         n_obs_steps, n_action_steps, max_steps):
     def env_fn():
         if env_type == "adroit":
-            env = _AdroitGoalCountWrapper(AdroitEarlyStopWrapper(AdroitEnv(
+            env = AdroitEarlyStopWrapper(AdroitEnv(
                 env_name=task_name,
                 render_device_id=render_device_id,
-            )))
+            ))
         elif env_type == "metaworld":
             env = MetaworldEarlyStopWrapper(MetaWorldEnv(
                 task_name=task_name,
