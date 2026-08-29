@@ -1,0 +1,13 @@
+defaults:
+  - train_flow_match_vib_unet_image_workspace
+  - _self_
+
+name: train_flow_match_ae_unet_image
+
+policy:
+  _target_: zprl.policy.flow_match_ae_unet_image_policy.FlowMatchAeUnetImagePolicy
+  vib_latent_dim: 16
+  vib_alpha: 1.0  # unused by deterministic AE
+  vib_beta: 0.0
+  vib_recon: 0.01
+  vib_hidden_dim: 256
