@@ -130,9 +130,9 @@ class FlowMatchAeTest(unittest.TestCase):
                 cfg.policy._target_,
                 'zprl.policy.flow_match_ae_unet_image_policy.'
                 'FlowMatchAeUnetImagePolicy')
-            self.assertEqual(cfg.policy.vib_latent_dim, 16)
+            self.assertEqual(cfg.policy.vib_latent_dim, 32)
             self.assertEqual(cfg.policy.vib_alpha, 1.0)
-            self.assertEqual(cfg.policy.vib_beta, 0.0)
+            self.assertEqual(cfg.policy.vib_beta, 1.0e-4)
             self.assertEqual(cfg.policy.vib_recon, 0.01)
             self.assertEqual(cfg.policy.vib_hidden_dim, 256)
 

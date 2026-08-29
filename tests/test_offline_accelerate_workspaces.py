@@ -47,6 +47,11 @@ class TestOfflineAccelerateWorkspaces(unittest.TestCase):
                 "zprl.policy.flow_match_vib_unet_image_policy.FlowMatchVibUnetImagePolicy",
                 "zprl.workspace.train_flow_match_vib_unet_image_accelerate_workspace.TrainFlowMatchVibUnetImageAccelerateWorkspace",
             ),
+            (
+                "train_flow_match_ae_unet_image_accelerate_workspace",
+                "zprl.policy.flow_match_ae_unet_image_policy.FlowMatchAeUnetImagePolicy",
+                "zprl.workspace.train_flow_match_vib_unet_image_accelerate_workspace.TrainFlowMatchVibUnetImageAccelerateWorkspace",
+            ),
         ]
         for config_name, policy_target, workspace_target in cases:
             with self.subTest(config_name=config_name):
