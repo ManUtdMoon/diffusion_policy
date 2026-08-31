@@ -29,10 +29,28 @@ class ResiduePolicy(ModuleAttrMixin):
             init_alpha: float = 0.01,
             auto_alpha: bool = True,
             res_scale: float = 0.05,
+            n_action_steps: Optional[int] = None,
+            lambda_s: Optional[float] = None,
+            lambda_t: Optional[float] = None,
+            sigma: float = 0.02,
             # batched-q params
             num_qs: int = 2,
             num_subset: int = 2,):
         super().__init__()
+
+        if (lambda_s is None) != (lambda_t is None):
+            raise ValueError("lambda_s and lambda_t must both be None or both be set")
+        smoothness_enabled = lambda_s is not None
+        if smoothness_enabled:
+            if lambda_s < 0 or lambda_t < 0:
+                raise ValueError("lambda_s and lambda_t must be non-negative")
+            if sigma < 0:
+                raise ValueError("sigma must be non-negative")
+            if n_action_steps is None or n_action_steps <= 1:
+                raise ValueError("n_action_steps must be greater than 1 when smoothness is enabled")
+            if action_dim % n_action_steps != 0:
+                raise ValueError(
+                    f"action_dim({action_dim}) must be divisible by n_action_steps({n_action_steps})")
 
         # create models
         if actor_input == 'obs':
@@ -73,6 +91,11 @@ class ResiduePolicy(ModuleAttrMixin):
         self.target_entropy = target_entropy
         self.res_scale = res_scale
         self.actor_input = actor_input
+        self.n_action_steps = n_action_steps
+        self.lambda_s = lambda_s
+        self.lambda_t = lambda_t
+        self.sigma = sigma
+        self.smoothness_enabled = smoothness_enabled
 
         # dimensions
         self.obs_dim = obs_dim
@@ -174,18 +197,63 @@ class ResiduePolicy(ModuleAttrMixin):
         actor_input = batch.observations
         if self.actor_input == 'obs_action':
             actor_input = torch.cat([batch.observations, base_naction], dim=-1)
-        res_naction, log_prob = self._sample_naction_log_prob(actor_input)
+        actor_result = self.actor.get_action(actor_input)
+        res_naction = actor_result['sample']
+        res_naction_mean = actor_result['mean']
+        log_prob = actor_result['log_prob']
+        assert_shape(res_naction, (bs, self.action_dim))
+        assert_shape(res_naction_mean, (bs, self.action_dim))
+        assert_shape(log_prob, (bs, 1))
 
         naction = self.res_scale * res_naction + base_naction  # (B,Da)
         all_q_preds = self.qs(batch.observations, naction)  # (num_qs, B, 1)
         predicted_q = torch.mean(all_q_preds, dim=0)  # (B, 1)
         assert_shape(predicted_q, (bs, 1))
 
-        actor_loss = (alpha * log_prob - predicted_q).mean()
+        actor_rl_loss = (alpha * log_prob - predicted_q).mean()
+        spatial_smoothness_loss = actor_rl_loss.new_zeros(())
+        temporal_smoothness_loss = actor_rl_loss.new_zeros(())
+        if self.smoothness_enabled:
+            actor_input_bar = (
+                actor_input + self.sigma * torch.randn_like(actor_input)
+            ).detach()
+            res_naction_mean_bar = self.actor.get_eval_action(actor_input_bar)
+            assert_shape(res_naction_mean_bar, (bs, self.action_dim))
+
+            naction_mean = self.res_scale * res_naction_mean + base_naction
+            naction_mean_bar = self.res_scale * res_naction_mean_bar + base_naction
+            spatial_smoothness_loss = 0.5 * (
+                naction_mean_bar - naction_mean
+            ).pow(2).sum(dim=-1).mean()
+
+            action_step_dim = self.action_dim // self.n_action_steps
+            naction_mean = naction_mean.reshape(
+                bs, self.n_action_steps, action_step_dim)
+            temporal_smoothness_loss = 0.5 * (
+                naction_mean[:, 1:] - naction_mean[:, :-1]
+            ).pow(2).sum(dim=-1).sum(dim=-1).div(
+                self.n_action_steps - 1
+            ).mean()
+
+        weighted_spatial_smoothness_loss = spatial_smoothness_loss
+        weighted_temporal_smoothness_loss = temporal_smoothness_loss
+        if self.smoothness_enabled:
+            weighted_spatial_smoothness_loss = \
+                self.lambda_s * spatial_smoothness_loss
+            weighted_temporal_smoothness_loss = \
+                self.lambda_t * temporal_smoothness_loss
+        actor_loss = actor_rl_loss \
+            + weighted_spatial_smoothness_loss \
+            + weighted_temporal_smoothness_loss
 
         info = {
             'actor_entropy': -log_prob.mean().item(),
             'res_naction_norm': torch.norm(res_naction, dim=-1).mean().item(),
+            'actor_rl_loss': actor_rl_loss.item(),
+            'spatial_smoothness_loss': spatial_smoothness_loss.item(),
+            'temporal_smoothness_loss': temporal_smoothness_loss.item(),
+            'weighted_spatial_smoothness_loss': weighted_spatial_smoothness_loss.item(),
+            'weighted_temporal_smoothness_loss': weighted_temporal_smoothness_loss.item(),
         }
 
         return actor_loss, info

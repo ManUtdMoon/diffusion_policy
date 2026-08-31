@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - online_task: can_image_abs
+  - online_task: square_image_abs
 
 name: train_online_robomimic_workspace
 _target_: zprl.workspace.train_online_robomimic_workspace.TrainOnlineRobomimicWorkspace
@@ -29,6 +29,10 @@ res_policy:
   init_alpha: 0.01
   auto_alpha: True
   res_scale: ${training.res_scale}
+  n_action_steps: ${n_action_steps}
+  lambda_s: 0.1  # spatial smoothness loss weight
+  lambda_t: 0.1  # temporal smoothness loss weight
+  sigma: 0.01  # spatial actor-input Gaussian noise std
   num_qs: 2
   num_subset: 2
 

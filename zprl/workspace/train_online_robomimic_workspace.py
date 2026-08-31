@@ -286,7 +286,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     self.global_step += n_envs
 
                     ## retrieve from base cache
-                    obs_emb_tensor = base_dict['obs_emb'][:, -obs_emb_dim:].detach()
+                    obs_emb_tensor = base_dict['obs_emb'][:, -Do:].detach()
                     base_naction_tensor = base_dict['naction'].detach()
                     base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
 
@@ -352,7 +352,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         rb_next_obs_seq_tensor = dict_apply(
                             rb_next_obs_seq, lambda x: torch.from_numpy(x).to(device=device))
                         rb_next_base_dict = self.base_policy.predict_action(rb_next_obs_seq_tensor)
-                    rb_next_obs_emb_tensor = rb_next_base_dict['obs_emb'][:, -obs_emb_dim:].detach()
+                    rb_next_obs_emb_tensor = rb_next_base_dict['obs_emb'][:, -Do:].detach()
                     rb_next_base_naction_tensor = rb_next_base_dict['naction'].detach()
                     actions_to_save = np.concatenate(
                         [
@@ -443,6 +443,11 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
                     'loss/critic_loss': critic_loss.item() / cfg.res_policy.num_qs,
                     'loss/actor_loss': actor_loss.item(),
+                    'loss/actor_rl_loss': actor_info['actor_rl_loss'],
+                    'loss/spatial_smoothness_loss': actor_info['spatial_smoothness_loss'],
+                    'loss/temporal_smoothness_loss': actor_info['temporal_smoothness_loss'],
+                    'loss/weighted_spatial_smoothness_loss': actor_info['weighted_spatial_smoothness_loss'],
+                    'loss/weighted_temporal_smoothness_loss': actor_info['weighted_temporal_smoothness_loss'],
                     'loss/q1_grad_norm': q1_grad_norm.item(),
                     'loss/actor_grad_norm': actor_grad_norm.item(),
                     'loss/alpha': alpha,
