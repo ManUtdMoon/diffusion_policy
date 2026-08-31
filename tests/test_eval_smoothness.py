@@ -15,6 +15,7 @@ from eval_smoothness import (
     PrimitiveTraceWrapper,
     TrajectoryRecord,
     TraceMultiStepWrapper,
+    TranslationEMAFilterWrapper,
     _append_chunk_traces,
     aggregate_statistics,
     compute_trajectory_derivatives,
@@ -27,16 +28,17 @@ from eval_smoothness import (
 class PositionEnv(gym.Env):
     metadata = {}
 
-    def __init__(self, terminate_at=None):
+    def __init__(self, terminate_at=None, action_dim=4):
         self.terminate_at = terminate_at
         self.step_count = 0
         self.position = np.zeros(3, dtype=np.float32)
+        self.received_actions = []
         self.observation_space = gym.spaces.Dict({
             'robot0_eef_pos': gym.spaces.Box(
                 low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32)
         })
         self.action_space = gym.spaces.Box(
-            low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+            low=-1.0, high=1.0, shape=(action_dim,), dtype=np.float32)
 
     def get_state(self):
         return {'states': np.concatenate([
@@ -47,9 +49,11 @@ class PositionEnv(gym.Env):
     def reset(self):
         self.step_count = 0
         self.position = np.zeros(3, dtype=np.float32)
+        self.received_actions = []
         return {'robot0_eef_pos': self.position.copy()}
 
     def step(self, action):
+        self.received_actions.append(np.asarray(action).copy())
         self.step_count += 1
         self.position += np.asarray(action[:3], dtype=np.float32)
         done = self.step_count == self.terminate_at
@@ -94,6 +98,7 @@ class EvalSmoothnessTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIn('--policy-type [base|zprl|resrl]', result.output)
         self.assertIn('--checkpoint', result.output)
+        self.assertIn('--ema-weight', result.output)
 
     def test_loader_rejects_unknown_policy_type_before_loading(self):
         with self.assertRaisesRegex(ValueError, 'Unknown policy type'):
@@ -169,6 +174,61 @@ class EvalSmoothnessTest(unittest.TestCase):
         self.assertEqual(state_pos.shape, (5, 3))
         np.testing.assert_array_equal(
             state_pos[:, 0], [0.0, 1.0, 2.0, 3.0, 4.0])
+
+    def test_translation_ema_uses_previous_chunk_and_is_traced(self):
+        base_env = PositionEnv(action_dim=10)
+        env = TraceMultiStepWrapper(
+            TranslationEMAFilterWrapper(
+                PrimitiveTraceWrapper(base_env),
+                weight=0.5,
+                window_size=4,
+            ),
+            n_obs_steps=1,
+            n_action_steps=4,
+            max_episode_steps=20,
+        )
+        env.reset()
+        first_chunk = np.zeros((4, 10), dtype=np.float32)
+        first_chunk[:, 0] = [0.0, 1.0, 2.0, 3.0]
+        first_chunk[:, 3:] = np.arange(28, dtype=np.float32).reshape(4, 7)
+        second_chunk = np.zeros((4, 10), dtype=np.float32)
+        second_chunk[:, 0] = [4.0, 5.0, 6.0, 7.0]
+        second_chunk[:, 3:] = np.arange(
+            28, 56, dtype=np.float32).reshape(4, 7)
+
+        env.step(first_chunk)
+        _, _, _, info = env.step(second_chunk)
+
+        expected = np.average(
+            [1.0, 2.0, 3.0, 4.0], weights=[0.125, 0.25, 0.5, 1.0])
+        self.assertAlmostEqual(info[TRACE_ACTION_POS_KEY][0, 0], expected)
+        self.assertEqual(info[TRACE_ACTION_POS_KEY].shape, (4, 3))
+        np.testing.assert_array_equal(
+            np.asarray(base_env.received_actions)[4:, 3:],
+            second_chunk[:, 3:],
+        )
+
+    def test_zero_ema_weight_is_disabled(self):
+        env = TraceMultiStepWrapper(
+            TranslationEMAFilterWrapper(
+                PrimitiveTraceWrapper(PositionEnv()),
+                weight=0.0,
+                window_size=2,
+            ),
+            n_obs_steps=1,
+            n_action_steps=2,
+            max_episode_steps=10,
+        )
+        env.reset()
+        action = np.array([
+            [1.0, 0.0, 0.0, -1.0],
+            [3.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float32)
+
+        _, _, _, info = env.step(action)
+
+        np.testing.assert_array_equal(
+            info[TRACE_ACTION_POS_KEY], action[:, :3])
 
     def test_success_chunk_is_kept_and_later_chunks_are_ignored(self):
         buffers = [{

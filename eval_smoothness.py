@@ -237,6 +237,31 @@ class PrimitiveTraceWrapper(gym.Wrapper):
         return trace
 
 
+class TranslationEMAFilterWrapper(gym.Wrapper):
+    def __init__(self, env, weight, window_size):
+        super().__init__(env)
+        self.weight = weight
+        self.window_size = window_size
+        self.translation_history = []
+
+    def reset(self, **kwargs):
+        self.translation_history = []
+        return super().reset(**kwargs)
+
+    def step(self, action):
+        if self.weight == 0:
+            return super().step(action)
+
+        action = np.asarray(action).copy()
+        self.translation_history.append(action[:3].copy())
+        self.translation_history = self.translation_history[-self.window_size:]
+        weights = self.weight ** np.arange(
+            len(self.translation_history) - 1, -1, -1)
+        action[:3] = np.average(
+            self.translation_history, axis=0, weights=weights)
+        return super().step(action)
+
+
 class TraceMultiStepWrapper(MultiStepWrapper):
     def __init__(self, env, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
@@ -253,7 +278,7 @@ class TraceMultiStepWrapper(MultiStepWrapper):
         return obs, reward, done, info
 
 
-def _make_env_pool(bundle: EvalPolicyBundle, n_envs: int):
+def _make_env_pool(bundle: EvalPolicyBundle, n_envs: int, ema_weight: float):
     configured_path = pathlib.Path(
         os.path.expanduser(str(bundle.env_runner_cfg.dataset_path)))
     task_cfg = bundle.cfg.task \
@@ -291,8 +316,11 @@ def _make_env_pool(bundle: EvalPolicyBundle, n_envs: int):
             init_state=None,
             render_obs_key=render_obs_key,
         )
+        trace_env = PrimitiveTraceWrapper(image_env)
+        filter_env = TranslationEMAFilterWrapper(
+            trace_env, ema_weight, n_action_steps)
         return TraceMultiStepWrapper(
-            PrimitiveTraceWrapper(image_env),
+            filter_env,
             n_obs_steps=n_obs_steps,
             n_action_steps=n_action_steps,
             max_episode_steps=max_steps,
@@ -417,9 +445,10 @@ def _rollout_batch(
     return records
 
 
-def rollout_policy(bundle, seed_start, n_seeds, n_envs, policy_seed):
+def rollout_policy(
+        bundle, seed_start, n_seeds, n_envs, policy_seed, ema_weight=0.0):
     env, dataset_path, control_frequency, max_steps = _make_env_pool(
-        bundle, n_envs)
+        bundle, n_envs, ema_weight)
     seeds = list(range(seed_start, seed_start + n_seeds))
     rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
     records = []
@@ -582,6 +611,13 @@ def write_outputs(output_dir, metadata, summary, records, dt):
 @click.option('--n-seeds', default=150, show_default=True, type=click.IntRange(min=1))
 @click.option('--n-envs', default=50, show_default=True, type=click.IntRange(min=1))
 @click.option('--policy-seed', default=0, show_default=True, type=int)
+@click.option(
+    '--ema-weight',
+    default=0.0,
+    show_default=True,
+    type=click.FloatRange(min=0.0, max=1.0),
+    help='Translation EMA decay; newest weight is 1, 0 disables filtering.',
+)
 def main(
         policy_type,
         checkpoint,
@@ -592,6 +628,7 @@ def main(
         n_seeds,
         n_envs,
         policy_seed,
+        ema_weight,
         ):
     output_dir = pathlib.Path(output_dir)
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -605,7 +642,7 @@ def main(
         f"Loaded {policy_type} checkpoint for task {bundle.task_name}: "
         f"To={bundle.n_obs_steps}, Ta={bundle.n_action_steps}")
     result = rollout_policy(
-        bundle, seed_start, n_seeds, n_envs, policy_seed)
+        bundle, seed_start, n_seeds, n_envs, policy_seed, ema_weight)
     summary = aggregate_statistics(result['records'], result['dt'])
 
     digest = hashlib.sha256()
@@ -639,6 +676,8 @@ def main(
         'state_position_key': 'robot0_eef_pos',
         'success_threshold': SUCCESS_THRESHOLD,
         'success_chunk_policy': 'keep_full_chunk',
+        'translation_ema_weight': ema_weight,
+        'translation_ema_window': bundle.n_action_steps,
         'torch_version': torch.__version__,
         'numpy_version': np.__version__,
         'device': device,
