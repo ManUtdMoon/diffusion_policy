@@ -338,7 +338,8 @@ class SumPolicy:
 
     @torch.no_grad()
     def predict_action(self,
-            obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+            obs_dict: Dict[str, torch.Tensor],
+            return_base_action: bool = False) -> Dict[str, torch.Tensor]:
         normalizer = self.base_policy.normalizer
         base_res = self.base_policy.predict_action(obs_dict)
         obs_seq_emb = base_res['obs_emb']
@@ -358,9 +359,13 @@ class SumPolicy:
         # check shapes
         assert_shape(sum_action, (None, self.n_action_steps, self.action_dim))
 
-        return {
+        result = {
             'action': sum_action,
         }
+        if return_base_action:
+            result['base_action'] = normalizer['action'].unnormalize(
+                base_naction)
+        return result
 
     @torch.no_grad()
     def predict_train_action(self,

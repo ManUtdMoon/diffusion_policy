@@ -291,7 +291,8 @@ class SumPolicy:
 
     @torch.no_grad()
     def predict_action(self,
-            obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+            obs_dict: Dict[str, torch.Tensor],
+            return_base_action: bool = False) -> Dict[str, torch.Tensor]:
         # 1. Get latent mean from base policy's encoders
         obs_emb = self.base_policy.encode_obs(obs_dict)
         z_mean, z_logvar = self.base_policy.vib_encoder(obs_emb)
@@ -308,6 +309,10 @@ class SumPolicy:
 
         # 4. Generate action from the new conditional embedding
         result = self.base_policy.conditional_predict(modified_obs_emb)
+        if return_base_action:
+            base_obs_emb = self.base_policy.vib_decoder(z_mean)
+            base_result = self.base_policy.conditional_predict(base_obs_emb)
+            result['base_action'] = base_result['action']
 
         return result
 
