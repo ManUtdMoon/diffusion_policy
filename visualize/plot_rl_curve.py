@@ -2,8 +2,9 @@ import click
 import pandas as pd
 import numpy as np
 import seaborn as sns
-import matplotlib.pyplot as plt
 import matplotlib as mpl
+mpl.use('Agg')
+import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from pathlib import Path
 
@@ -17,9 +18,30 @@ PALETTE = {
     'ReinFlow': '#89c085',
     'Offline': '#000000',
     'DPPO': '#8aaeb2',
+    'Post-hoc': '#4f95cd',
+    'Joint': '#ff4000',
+    
+    'n200': '#984322',
+    'n100': '#c66a42',
+    'n50': '#d59f5e',
+    
+    'z4': '#e8cd81',
+    'z8': '#ff4000',
+    'z16': '#c66a42',
+    'z32': '#984322',
+    'z64': '#696fa2',
+    
+    'Deterministic': '#4f95cd',
+    'Stochastic': '#ff4000',
+    
+    's0.15': '#e8cd81',
+    's0.2': '#89c085',
+    's0.25': '#c66a42',
+    's0.3': '#696fa2',
+    's0.35': '#6a4a2b',
 }
 
-DS = 10  # Downsample factor
+DS = 20  # Downsample factor
 CI_ALPHA = 0.1
 
 LINEWIDTHS = {
@@ -29,6 +51,28 @@ LINEWIDTHS = {
     'ReinFlow': 1.5,
     'DPPO': 1.5,
     'Offline': 1.5,
+
+    'Post-hoc': 3,
+    'Joint': 3,
+
+    'n200': 2,
+    'n100': 2,
+    'n50': 2,
+    
+    'z4': 2,
+    'z8': 2,
+    'z16': 2,
+    'z32': 2,
+    'z64': 2,
+    
+    'Deterministic': 2,
+    'Stochastic': 2,
+    
+    's0.15': 2,
+    's0.2': 2,
+    's0.25': 2,
+    's0.3': 2,
+    's0.35': 2,
 }
 
 OFFLINE = {
@@ -40,6 +84,7 @@ OFFLINE = {
     'can': 0.8,
     'square': 0.42,
     'transport': 0.62,
+    'tool_hang': 0.3,
 }
 
 
@@ -153,13 +198,20 @@ def main(task, mode):
             ):
                 smooth_factor = 1
             elif mode == 'train':
-                smooth_factor = 5
+                if algo_name == 'ReinFlow':
+                    smooth_factor = 1
+                else:
+                    smooth_factor = 3
             else: # mode == 'eval'
-                smooth_factor = 2
+                smooth_factor = 1
                 if algo_name == 'DPPO' and 'metaworld' in task:
                     smooth_factor = 7
                 elif algo_name == 'ReinFlow':
                     smooth_factor = 3
+                elif 'metaworld' in task:
+                    smooth_factor = 2
+                elif task in ['door', 'pen', 'hammer']:
+                    smooth_factor = 2
             y_values = smooth(y_values, sm=smooth_factor)
             
             # Calculate x-axis steps
@@ -167,11 +219,14 @@ def main(task, mode):
             x_steps = (start + np.arange(num_points) * interval) * ta_multiplier / 1e6
 
             ds = DS
-            if mode == 'eval' or (task == 'can' and algo_name == 'ReinFlow'):
+            if mode == 'eval' or (algo_name == 'ReinFlow'):
                 ds = 1
-            x_steps = x_steps[::ds]
-            y_values = y_values[::ds]
-
+            ds_idxs = np.arange(0, num_points, ds)
+            if ds_idxs[-1] != num_points - 1:
+                ds_idxs = np.append(ds_idxs, num_points - 1)
+            x_steps = x_steps[ds_idxs]
+            y_values = y_values[ds_idxs]
+            
             # Create DataFrame for this run
             run_df = pd.DataFrame({
                 'Steps': x_steps,
@@ -222,6 +277,8 @@ def main(task, mode):
     ax.set_ylabel('Success Rate', fontsize=14)
     if task in ['door', 'hammer', 'pen']:
         task = 'adroit_' + task
+    if task in ['can', 'square', 'transport', 'tool_hang']:
+        task = 'robomimic_' + task
     ax.set_title(f'{task.capitalize()}', fontsize=12)
     ax.tick_params(axis='both', which='major', labelsize=14)
     ax.yaxis.set_major_formatter('{x:.1f}')
@@ -230,12 +287,14 @@ def main(task, mode):
     
     # Set reasonable limits, e.g., based on data range
     ax.set_xlim(left=0)
-    if task == 'can':
-        ax.set_xlim(right=5)
-    elif task == 'square':
-        ax.set_xlim(right=8)
-    elif task == 'transport':
-        ax.set_xlim(right=10)
+    if 'can' in task:
+        ax.set_xlim(right=1)
+    elif 'square' in task:
+        ax.set_xlim(right=3)
+    elif 'transport' in task:
+        ax.set_xlim(right=3)
+    elif 'tool_hang' in task:
+        ax.set_xlim(right=3)
     elif 'door' in task:
         ax.set_xlim(right=2)
     elif 'hammer' in task:
@@ -248,7 +307,30 @@ def main(task, mode):
 
     # Customize the legend
     handles, labels = ax.get_legend_handles_labels()
-    legend = ax.legend(handles=handles, labels=labels, fontsize=14, title='Algorithm')
+    label_order = {
+        'n50': 0, 'n100': 1, 'n200': 2,
+        'z4': 3, 'z8': 4, 'z16': 5, 'z32': 6, 'z64': 7
+    }
+    order = sorted(
+        range(len(labels)),
+        key=lambda idx: label_order.get(labels[idx], len(label_order) + idx),
+    )
+    handles = [handles[idx] for idx in order]
+    labels = [labels[idx] for idx in order]
+    display_labels = []
+    for label in labels:
+        if label.startswith('n'):
+            display_label = rf'$N_{{\mathrm{{demo}}}}={label[1:]}$'
+        elif label.startswith('z'):
+            display_label = rf'$\mathrm{{dim}}(z)={label[1:]}$'
+        elif label.startswith('s'):
+            display_label = rf'$\lambda={label[1:]}$'
+        # elif label == '...':
+        #     display_label = r'...'
+        else:
+            display_label = label
+        display_labels.append(display_label)
+    legend = ax.legend(handles=handles, labels=display_labels, fontsize=14, title='Algorithm')
     legend.set_title('')
     ax.get_legend().remove()  # remove legend
     plt.tight_layout()

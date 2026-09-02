@@ -22,11 +22,6 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.05/15.00.13_train_online_vib_robomimic_workspace_can_image',
             '2025.12.05/17.53.38_train_online_vib_robomimic_workspace_can_image',
         ],
-        'DSRL': [
-            '2025.12.05/22.47.33_train_online_noise_robomimic_workspace_can_image',
-            '2025.12.06/04.36.49_train_online_noise_robomimic_workspace_can_image',
-            '2025.12.06/01.42.29_train_online_noise_robomimic_workspace_can_image',
-        ],
     },
     'square': { # robomimic-square
         'Po-dec': [
@@ -40,9 +35,9 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.06/17.39.21_train_online_vib_robomimic_workspace_square_image',
         ],
         'DSRL': [
-            '2025.12.06/11.39.00_train_online_noise_robomimic_workspace_square_image',
-            '2025.12.06/14.41.13_train_online_noise_robomimic_workspace_square_image',
-            '2025.12.06/17.42.44_train_online_noise_robomimic_workspace_square_image',
+            '2026.08.24/21.17.14_train_online_noise_robomimic_workspace_square_image',
+            '2026.08.24/21.17.15_train_online_noise_robomimic_workspace_square_image',
+            '2026.08.24/21.17.17_train_online_noise_robomimic_workspace_square_image'
         ],
     },
     'transport': { # robomimic-transport
@@ -57,9 +52,51 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.10/17.09.40_train_online_vib_robomimic_workspace_transport_image',
         ],
         'DSRL': [
-            '2025.12.10/09.50.51_train_online_noise_robomimic_workspace_transport_image',
-            '2025.12.10/09.52.47_train_online_noise_robomimic_workspace_transport_image',
-            '2025.12.10/15.20.59_train_online_noise_robomimic_workspace_transport_image',
+            '2026.08.25/10.18.52_train_online_noise_robomimic_workspace_transport_image',
+            '2026.08.25/10.18.54_train_online_noise_robomimic_workspace_transport_image',
+            '2026.08.25/10.18.56_train_online_noise_robomimic_workspace_transport_image'
+        ],
+        'Post-hoc': [
+            'zprl_transport_posthoc_scale_grid_20260828_000410/transport/scale_0.125/seed_40',
+            'zprl_transport_posthoc_scale_grid_20260828_000410/transport/scale_0.125/seed_60',
+            'zprl_transport_posthoc_scale_grid_20260828_000410/transport/scale_0.125/seed_70'
+        ]
+    },
+    'tool_hang': {
+        'Deterministic': [
+            'zprl_tool_hang_ae_scale_02_20260830_124748/tool_hang/ae/scale_0.2/seed_40',
+            'zprl_tool_hang_ae_scale_02_20260830_124748/tool_hang/ae/scale_0.2/seed_50',
+            'zprl_tool_hang_ae_scale_02_20260830_124748/tool_hang/ae/scale_0.2/seed_60'
+        ],
+        'Stochastic': [
+            'zprl_tool_hang_grid_20260830_095814/tool_hang/scale_0.3/seed_40',
+            'zprl_tool_hang_grid_20260830_095814/tool_hang/scale_0.3/seed_50',
+            'zprl_tool_hang_grid_20260830_095814/tool_hang/scale_0.3/seed_60'
+        ],
+        's0.15': [
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.15/seed_40',
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.15/seed_50',
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.15/seed_60'
+        ],
+        's0.2': [
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.2/seed_40',
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.2/seed_50',
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.2/seed_60'
+        ],
+        's0.25': [
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.25/seed_40',
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.25/seed_50',
+            'zprl_tool_hang_grid_20260829_222240/tool_hang/scale_0.25/seed_60'
+        ],
+        's0.3': [
+            'zprl_tool_hang_grid_20260830_095814/tool_hang/scale_0.3/seed_40',
+            'zprl_tool_hang_grid_20260830_095814/tool_hang/scale_0.3/seed_50',
+            'zprl_tool_hang_grid_20260830_095814/tool_hang/scale_0.3/seed_60'
+        ],
+        's0.35': [
+            'zprl_tool_hang_ae015_vib035_20260830_151440/tool_hang/scale_0.35/seed_40',
+            'zprl_tool_hang_ae015_vib035_20260830_151440/tool_hang/scale_0.35/seed_50',
+            'zprl_tool_hang_ae015_vib035_20260830_151440/tool_hang/scale_0.35/seed_60'
         ],
     },
     'door': { # adroit_door
@@ -74,9 +111,19 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.16/10.58.17_train_online_vib_adroit_workspace_adroit_door',
         ],
         'DSRL': [
-            '2026.03.16/19.26.52_train_online_noise_workspace_adroit_door',
-            '2026.03.16/19.05.46_train_online_noise_workspace_adroit_door',
-            '2026.03.16/17.09.11_train_online_noise_workspace_adroit_door',
+            'dsrl_door_n_action_steps_4_20260901_004839/seed_40',
+            'dsrl_door_n_action_steps_4_20260901_004839/seed_50',
+            'dsrl_door_n_action_steps_4_20260901_004839/seed_60'
+        ],
+        'n100': [
+            'zprl_adroit_grid_20260828_154206/door/scale_0.75/seed_40',
+            'zprl_adroit_grid_20260828_154206/door/scale_0.75/seed_50',
+            'zprl_adroit_grid_20260828_154206/door/scale_0.75/seed_60'
+        ],
+        'n50': [
+            'zprl_adroit_grid_20260828_171127/door/scale_0.8/seed_40',
+            'zprl_adroit_grid_20260828_171127/door/scale_0.8/seed_50',
+            'zprl_adroit_grid_20260828_171127/door/scale_0.8/seed_60'
         ]
     },
     'hammer' : { # adroit_hammer
@@ -89,6 +136,11 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.15/20.57.19_train_online_vib_adroit_workspace_adroit_hammer',
             '2025.12.16/14.57.18_train_online_vib_adroit_workspace_adroit_hammer',
             '2025.12.16/16.00.19_train_online_vib_adroit_workspace_adroit_hammer',
+        ],
+        'DSRL': [
+            'dsrl_hammer_noise_grid_20260831_224317/hammer/n_noise_steps_1/seed_40',
+            'dsrl_hammer_noise_grid_20260831_224317/hammer/n_noise_steps_1/seed_50',
+            'dsrl_hammer_noise_grid_20260831_224317/hammer/n_noise_steps_1/seed_60'
         ]
     },
     'pen' : { # adroit_pen
@@ -103,34 +155,74 @@ TASK_TO_ALGO_EXP_MAP = {
             '2025.12.17/02.16.25_train_online_vib_adroit_workspace_adroit_pen',
         ],
         'DSRL': [
-            '2026.03.16/16.59.18_train_online_noise_workspace_adroit_pen',
-            '2026.03.16/18.23.27_train_online_noise_workspace_adroit_pen',
-            '2026.03.16/19.25.31_train_online_noise_workspace_adroit_pen',
+            'dsrl_door_pen_noise_grid_20260831_233020/pen/n_noise_steps_1/seed_40',
+            'dsrl_door_pen_noise_grid_20260831_233020/pen/n_noise_steps_1/seed_50',
+            'dsrl_door_pen_noise_grid_20260831_233020/pen/n_noise_steps_1/seed_60'
+        ],
+        'Deterministic': [
+            'zprl_adroit_ae_scale_grid_20260829_131006/pen/recon/scale_0.4/alpha_0.1/q_unb/seed_40',
+            'zprl_adroit_ae_scale_grid_20260829_131006/pen/recon/scale_0.4/alpha_0.1/q_unb/seed_50',
+            'zprl_adroit_ae_scale_grid_20260829_131006/pen/recon/scale_0.4/alpha_0.1/q_unb/seed_60'
         ]
     },
     'metaworld_push-wall': {
         'Po-dec': [
-            '2025.12.18/18.52.53_train_online_workspace_push-wall',
-            '2025.12.18/19.57.15_train_online_workspace_push-wall',
-            '2025.12.18/21.01.37_train_online_workspace_push-wall',
+            'resrl_mw_scale_grid_20260902_082502/push-wall/scale_0.2/seed_40',
+            'resrl_mw_scale_grid_20260902_082502/push-wall/scale_0.2/seed_50',
+            'resrl_mw_scale_grid_20260902_082502/push-wall/scale_0.2/seed_60'
         ],
         'ZPRL': [
-            '2025.12.19/11.16.42_train_online_vib_workspace_push-wall',
-            '2025.12.19/14.19.56_train_online_vib_workspace_push-wall',
-            '2025.12.19/16.23.35_train_online_vib_workspace_push-wall',
+            'zprl_mw_scale_grid_20260826_145902/push-wall/scale_0.5/alpha_0.01/q_unb/seed_40',
+            'zprl_mw_scale_grid_20260826_145902/push-wall/scale_0.5/alpha_0.01/q_unb/seed_50',
+            'zprl_mw_scale_grid_20260826_145902/push-wall/scale_0.5/alpha_0.01/q_unb/seed_60',
+        ],
+        'DSRL': [
+            'dsrl_push_wall_noise_grid_20260826_205447/n_noise_steps_1/seed_40',
+            'dsrl_push_wall_noise_grid_20260826_205447/n_noise_steps_1/seed_50',
+            'dsrl_push_wall_noise_grid_20260826_205447/n_noise_steps_1/seed_60',
+        ],
+        'z8': [
+            'zprl_mw_scale_grid_20260826_145902/push-wall/scale_0.5/alpha_0.01/q_unb/seed_40',
+            'zprl_mw_scale_grid_20260826_145902/push-wall/scale_0.5/alpha_0.01/q_unb/seed_50',
+            'zprl_mw_scale_grid_20260826_145902/push-wall/scale_0.5/alpha_0.01/q_unb/seed_60',
+        ],
+        'z4': [
+            'zprl_mw_base_grid_20260828_210507/push-wall/dz/z4/seed_40',
+            'zprl_mw_base_grid_20260828_210507/push-wall/dz/z4/seed_50',
+            'zprl_mw_base_grid_20260828_210507/push-wall/dz/z4/seed_60'
+        ],
+        'z32': [
+            'zprl_mw_bs_grid_20260828_234358/push-wall/dz/z32/seed_40',
+            'zprl_mw_bs_grid_20260828_234358/push-wall/dz/z32/seed_50',
+            'zprl_mw_bs_grid_20260828_234358/push-wall/dz/z32/seed_60'
+        ],
+        'z64': [
+            'zprl_mw_bs_grid_20260828_234358/push-wall/dz/z64/seed_40',
+            'zprl_mw_bs_grid_20260828_234358/push-wall/dz/z64/seed_50',
+            'zprl_mw_bs_grid_20260828_234358/push-wall/dz/z64/seed_60'
         ],
     },
     'metaworld_box-close': {
         'Po-dec': [
-            '2025.12.18/17.14.18_train_online_workspace_box-close',
-            '2025.12.18/22.09.03_train_online_workspace_box-close',
-            '2025.12.18/23.14.37_train_online_workspace_box-close',
+            'resrl_mw_scale_grid_20260902_082502/box-close/scale_0.3/seed_40',
+            'resrl_mw_scale_grid_20260902_082502/box-close/scale_0.3/seed_50',
+            'resrl_mw_scale_grid_20260902_082502/box-close/scale_0.3/seed_60'
         ],
         'ZPRL': [
-            '2025.12.19/11.20.08_train_online_vib_workspace_box-close',
-            '2025.12.19/22.10.47_train_online_vib_workspace_box-close',
-            '2025.12.19/23.15.12_train_online_vib_workspace_box-close',
+            'zprl_mw_scale_grid_20260826_145902/box-close/scale_1.25/alpha_0.1/q_unb/seed_40',
+            'zprl_mw_scale_grid_20260826_145902/box-close/scale_1.25/alpha_0.1/q_unb/seed_50',
+            'zprl_mw_scale_grid_20260826_145902/box-close/scale_1.25/alpha_0.1/q_unb/seed_60',
         ],
+        'DSRL': [
+            'dsrl_mw_noise_grid_20260826_190503/box-close/n_noise_steps_2/seed_40',
+            'dsrl_mw_noise_grid_20260826_190503/box-close/n_noise_steps_2/seed_50',
+            'dsrl_mw_noise_grid_20260826_190503/box-close/n_noise_steps_2/seed_60',
+        ],
+        'Post-hoc': [
+            'zprl_mw_scale_grid_20260828_121053/box-close/scale_1.25/alpha_0.1/q_unb/seed_40',
+            'zprl_mw_scale_grid_20260828_121053/box-close/scale_1.25/alpha_0.1/q_unb/seed_50',
+            'zprl_mw_scale_grid_20260828_121053/box-close/scale_1.25/alpha_0.1/q_unb/seed_60'
+        ]
     },
     'metaworld_': {
     },
@@ -203,7 +295,7 @@ def process_algo_mode(task, mode, algo, algo_exp_map):
             config = yaml.safe_load(f)
 
         if mode == 'train':
-            interval = config["training"].get('log_every')
+            interval = config["training"].get('training_freq')
             start = config["training"].get('learning_start', 0)
         else:  # mode == 'eval'
             interval = config["training"].get('eval_every')
@@ -267,7 +359,34 @@ def process_algo_mode(task, mode, algo, algo_exp_map):
     print(f"\nProcessing for {algo} {mode} complete.")
 
 
-@click.command()
+class MultiValueOptionCommand(click.Command):
+    """Expand grouped --algo/--mode values into repeated Click options."""
+
+    grouped_options = {'--algo', '--mode'}
+
+    def parse_args(self, ctx, args):
+        expanded_args = []
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg not in self.grouped_options:
+                expanded_args.append(arg)
+                i += 1
+                continue
+
+            i += 1
+            if i == len(args) or args[i].startswith('--'):
+                expanded_args.append(arg)
+                continue
+
+            while i < len(args) and not args[i].startswith('--'):
+                expanded_args.extend([arg, args[i]])
+                i += 1
+
+        return super().parse_args(ctx, expanded_args)
+
+
+@click.command(cls=MultiValueOptionCommand)
 @click.option('--task', required=True, help='Name of the task (e.g., can, square).')
 @click.option('--mode', required=True, type=click.Choice(['train', 'eval']), help='Mode to process: "train" or "eval".', multiple=True)
 @click.option('--algo', required=True, help='Algorithm name to process from the experiment map for the given task.', multiple=True)
@@ -282,6 +401,7 @@ def main(task, mode, algo):
     interval and start step.
 
     This script supports processing multiple algorithms and modes in a single run.
+    Example: --algo Po-dec ZPRL --mode train eval
     """
     if task not in TASK_TO_ALGO_EXP_MAP:
         raise click.BadParameter(f"Task '{task}' not found. Available tasks: {list(TASK_TO_ALGO_EXP_MAP.keys())}")
