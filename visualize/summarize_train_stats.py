@@ -8,6 +8,9 @@ THRESHOLDS = (0.9, 0.95)
 TAIL_POINTS = 5
 SMOOTH_WINDOW = 3
 PLOT_ROOT = Path(__file__).resolve().parent.parent / "data" / "plot"
+TABLE_PATH = Path(__file__).resolve().parent.parent / "data" / "cfg_ref" / "train_stats.csv"
+TABLE_ALGORITHMS = ("DSRL", "Po-dec", "ZPRL")
+TABLE_ALGO_NAMES = {"Po-dec": "Po-Dec"}
 END_STEP_BY_TASK = {
     "can": 1e6,
     "square": 3e6,
@@ -155,6 +158,51 @@ def summarize_algo(task_name: str, algo_dir: Path, end_step: float | None):
     return summary, missing_by_threshold
 
 
+def format_table_rows(rows) -> list[list[str]]:
+    """Reported table rows: DSRL, Po-Dec, ZPRL per task, steps and sr with two decimals."""
+    table_rows = []
+    for task in dict.fromkeys(row["task"] for row in rows):
+        task_rows = [row for row in rows if row["task"] == task]
+        selected = [
+            row for algo in TABLE_ALGORITHMS for row in task_rows if row["algorithm"] == algo
+        ]
+        if not selected:  # ablation tables use their own algorithm names
+            selected = sorted(task_rows, key=lambda row: row["algorithm"])
+        for row in selected:
+            values = [
+                task.replace("metaworld_", ""),
+                TABLE_ALGO_NAMES.get(row["algorithm"], row["algorithm"]),
+            ]
+            for threshold in THRESHOLDS:
+                steps = row[f"steps_to_{threshold:g}"]
+                values.append("N/A" if pd.isna(steps) else f"{steps:.2f}")
+            values.append(f"{row['final_sr']:.2f}")
+            table_rows.append(values)
+    return table_rows
+
+
+def write_table(rows, out_file: Path) -> None:
+    header = ["task", "algorithm"]
+    header += [f"steps(M)_to_sr{threshold:g}" for threshold in THRESHOLDS]
+    header += ["Final_sr"]
+    table_rows = format_table_rows(rows)
+
+    widths = [
+        max(len(header[i]), *(len(row[i]) for row in table_rows))
+        for i in range(len(header))
+    ]
+    lines = [", ".join(
+        name.ljust(width) if i < 2 else name.rjust(width)
+        for i, (name, width) in enumerate(zip(header, widths))
+    )]
+    for values in table_rows:
+        head = ", ".join(value.ljust(width) for value, width in zip(values[:2], widths[:2]))
+        # numbers keep the padding of the existing table: no space after the comma
+        tail = "".join("," + value.rjust(width) for value, width in zip(values[2:], widths[2:]))
+        lines.append(head + tail)
+    out_file.write_text("\n".join(lines) + "\n")
+
+
 def parse_tasks(tasks) -> list[str]:
     """Accept repeated --task flags and/or comma/space separated task lists."""
     parsed = []
@@ -170,7 +218,11 @@ def parse_tasks(tasks) -> list[str]:
     '--task', 'tasks', required=True, multiple=True,
     help='Task(s) to summarize, e.g. --task can --task square, or --task can,square',
 )
-def main(tasks):
+@click.option(
+    '--out', 'out_path', default=str(TABLE_PATH), show_default=True,
+    help='Path of the CSV file to write the reported table to.',
+)
+def main(tasks, out_path):
     """Summarize train stats from processed plot data for one or more tasks."""
     rows = []
     warnings = []
@@ -208,6 +260,11 @@ def main(tasks):
     df["final_sr"] = df["final_sr"].map(lambda x: f"{x:.3f}")
 
     click.echo(df.to_string(index=False))
+
+    out_file = Path(out_path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    write_table(rows, out_file)
+    click.echo(f"\nWrote table to {out_file}")
 
     if warnings:
         click.echo("")
