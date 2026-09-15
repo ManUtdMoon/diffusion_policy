@@ -29,7 +29,7 @@ base_ckpt: null
 subtask:
   enabled: true
   stages: [grasp, hover]
-  reward_mode: semi_sparse
+  reward_mode: semi_sparse  # sparse, semi_sparse (stage bonus), pbrs
   reward_scale: 1.0
   stage_weights: [0.5, 0.5]
   hover_threshold: 0.65
@@ -54,6 +54,7 @@ env_runner:
   max_steps: ${eval:'400 if "${online_task.dataset_type}" == "mh" else 200'}
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
+  gamma: ${oc.select:single_gamma,0.99}
   render_obs_key: 'agentview_image'
   fps: 10
   crf: 22

@@ -6,6 +6,18 @@ from omegaconf import OmegaConf
 
 
 class RobomimicSubtaskConfigTest(unittest.TestCase):
+    def test_pbrs_discount_tracks_single_gamma(self):
+        OmegaConf.register_new_resolver('eval', eval, replace=True)
+        config_dir = pathlib.Path(__file__).parents[1] / 'zprl' / 'config'
+        with initialize_config_dir(
+                version_base=None, config_dir=str(config_dir)):
+            cfg = compose(
+                config_name='train_online_robomimic_workspace',
+                overrides=['single_gamma=0.913', 'n_action_steps=4'])
+        self.assertEqual(cfg.online_task.subtask.reward_mode, 'pbrs')
+        self.assertEqual(cfg.online_task.env_runner.gamma, 0.913)
+        self.assertEqual(cfg.res_policy.gamma, 0.913 ** 4)
+
     def test_runner_subtask_tracks_online_task_overrides(self):
         OmegaConf.register_new_resolver('eval', eval, replace=True)
         config_dir = pathlib.Path(__file__).parents[1] / 'zprl' / 'config'

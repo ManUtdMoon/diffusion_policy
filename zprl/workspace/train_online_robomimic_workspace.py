@@ -67,6 +67,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         cfg = copy.deepcopy(self.cfg)
         subtask = cfg.online_task.subtask
         d_mask = get_subtask_dim(subtask)
+        if subtask.enabled and subtask.reward_mode == 'pbrs':
+            assert cfg.training.bootstrap_at_done == 'truncated', (
+                "PBRS requires timeout bootstrapping; MultiStepWrapper applies the time limit")
 
         # configure policies
         ## load base policy
@@ -149,11 +152,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 render_obs_key=cfg.online_task.env_runner.render_obs_key
             )
             return MultiStepWrapper(
-                SquareSubtaskWrapper(image_env, subtask),
+                SquareSubtaskWrapper(image_env, subtask, gamma=cfg.single_gamma),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
                 reward_agg_method='discounted_sum',
+                gamma=cfg.single_gamma,
                 reward_offset=cfg.training.reward_offset
             )
         def dummy_env_fn():
@@ -170,11 +174,12 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 render_obs_key=cfg.online_task.env_runner.render_obs_key
             )
             return MultiStepWrapper(
-                SquareSubtaskWrapper(image_env, subtask),
+                SquareSubtaskWrapper(image_env, subtask, gamma=cfg.single_gamma),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
                 reward_agg_method='discounted_sum',
+                gamma=cfg.single_gamma,
                 reward_offset=cfg.training.reward_offset
             )
         env_fns = [env_fn] * cfg.training.n_envs
@@ -335,10 +340,11 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
 
                     ## pi-dec progressive exploration
-                    res_ratio = min(
-                        max(self.global_step, 0) / cfg.training.prog_explore, 1)
-                    ## uncomment to disable progressive exploration
-                    res_ratio = 1.0
+                    if cfg.training.prog_explore > 0:
+                        res_ratio = min(
+                            max(self.global_step, 0) / cfg.training.prog_explore, 1)
+                    else:    
+                        res_ratio = 1.0
 
                     ## prepare masks for progressive exploration
                     if self.global_step < learning_start:

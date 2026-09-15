@@ -52,7 +52,7 @@ training:
   n_envs: ${online_task.n_envs}
   # residue progress
   res_scale: 0.05
-  prog_explore: 10000
+  prog_explore: 0
   reward_offset: 0.0
   bootstrap_at_done: truncated  # never, truncated
   # training loop control in steps

@@ -10,7 +10,7 @@ def get_subtask_dim(subtask_config):
 
 
 class SquareSubtaskWrapper(gym.Wrapper):
-    def __init__(self, env, subtask_config):
+    def __init__(self, env, subtask_config, gamma=None):
         super().__init__(env)
 
         assert isinstance(env.observation_space, spaces.Dict)
@@ -18,6 +18,7 @@ class SquareSubtaskWrapper(gym.Wrapper):
         self.enabled = subtask_config.enabled
         self.stages = tuple(subtask_config.stages)
         self.reward_mode = subtask_config.reward_mode
+        self.gamma = gamma
         self.reward_scale = float(subtask_config.reward_scale)
         self.stage_weights = np.asarray(
             subtask_config.stage_weights, dtype=np.float32)
@@ -25,7 +26,9 @@ class SquareSubtaskWrapper(gym.Wrapper):
         self.obs_key = subtask_config.obs_key
 
         assert self.stages in (('grasp',), ('grasp', 'hover'))
-        assert self.reward_mode in ('sparse', 'semi_sparse')
+        assert self.reward_mode in ('sparse', 'semi_sparse', 'pbrs')
+        if self.enabled and self.reward_mode == 'pbrs':
+            assert gamma is not None and 0.0 <= gamma <= 1.0
         assert self.stage_weights.shape == (len(self.stages),)
 
         self.task = env
@@ -52,6 +55,7 @@ class SquareSubtaskWrapper(gym.Wrapper):
         return self._augment_observation(obs)
 
     def step(self, action):
+        phi = float(np.dot(self.stage_weights, self.completed_stage_mask))
         obs, task_reward, done, info = self.env.step(action)
         predicates = self._get_stage_predicates()
         completion_delta = self._commit_stages(predicates)
@@ -60,6 +64,11 @@ class SquareSubtaskWrapper(gym.Wrapper):
         if self.enabled and self.reward_mode == 'semi_sparse':
             stage_reward = self.reward_scale * float(
                 np.dot(self.stage_weights, completion_delta))
+        elif self.enabled and self.reward_mode == 'pbrs':
+            next_phi = float(np.dot(self.stage_weights, self.completed_stage_mask))
+            if done and not info.get('TimeLimit.truncated', False):
+                next_phi = 0.0
+            stage_reward = self.reward_scale * (self.gamma * next_phi - phi)
         reward = task_reward + stage_reward
 
         info = info.copy()

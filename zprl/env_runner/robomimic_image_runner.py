@@ -95,7 +95,8 @@ class RobomimicImageRunner(BaseImageRunner):
             abs_action=False,
             action_pose_repr=None,
             tqdm_interval_sec=5.0,
-            n_envs=None
+            n_envs=None,
+            gamma=0.99
         ):
         super().__init__(output_dir)
 
@@ -137,7 +138,7 @@ class RobomimicImageRunner(BaseImageRunner):
                 init_state=None,
                 render_obs_key=render_obs_key
             )
-            image_env = SquareSubtaskWrapper(image_env, subtask)
+            image_env = SquareSubtaskWrapper(image_env, subtask, gamma=gamma)
             wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
                     image_env,
@@ -154,7 +155,8 @@ class RobomimicImageRunner(BaseImageRunner):
                 ),
                 n_obs_steps=n_obs_steps,
                 n_action_steps=n_action_steps,
-                max_episode_steps=max_steps
+                max_episode_steps=max_steps,
+                gamma=gamma
             )
             if action_pose_repr == 'relative':
                 wrapped_env = RobomimicImageRelativeWrapper(
@@ -179,7 +181,7 @@ class RobomimicImageRunner(BaseImageRunner):
                 init_state=None,
                 render_obs_key=render_obs_key
             )
-            image_env = SquareSubtaskWrapper(image_env, subtask)
+            image_env = SquareSubtaskWrapper(image_env, subtask, gamma=gamma)
             wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
                     image_env,
@@ -196,7 +198,8 @@ class RobomimicImageRunner(BaseImageRunner):
                 ),
                 n_obs_steps=n_obs_steps,
                 n_action_steps=n_action_steps,
-                max_episode_steps=max_steps
+                max_episode_steps=max_steps,
+                gamma=gamma
             )
             if action_pose_repr == 'relative':
                 wrapped_env = RobomimicImageRelativeWrapper(
