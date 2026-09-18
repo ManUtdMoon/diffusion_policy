@@ -54,7 +54,7 @@ env_runner:
   max_steps: ${eval:'400 if "${online_task.dataset_type}" == "mh" else 200'}
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
-  gamma: ${oc.select:single_gamma,0.99}
+  gamma: ${single_gamma}
   render_obs_key: 'agentview_image'
   fps: 10
   crf: 22

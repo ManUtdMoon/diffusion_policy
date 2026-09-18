@@ -42,11 +42,21 @@ base_ckpt: null
 # train
 n_envs: 20
 
+subtask:
+  enabled: true
+  stages: [trash_in_trash_bin, payload_in_target_bin]
+  reward_mode: semi_sparse  # sparse, semi_sparse (stage bonus), pbrs
+  reward_scale: 1.0
+  stage_weights: [0.5, 0.5]
+  obs_key: completed_stage_mask
+
 # eval
 env_runner:
   _target_: zprl.env_runner.robomimic_image_runner.RobomimicImageRunner
   dataset_path: *dataset_path
   shape_meta: *shape_meta
+  subtask: ${online_task.subtask}
+  gamma: ${single_gamma}
   # costs 1GB per env
   n_train: 0
   n_train_vis: 0

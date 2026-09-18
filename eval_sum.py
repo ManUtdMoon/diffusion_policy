@@ -24,7 +24,7 @@ from zprl.policy.residue_policy import (
     ResiduePolicy as ActionResiduePolicy,
     SumPolicy as ActionSumPolicy,
 )
-from zprl.env.robomimic.robomimic_square_subtask_wrapper import get_subtask_dim
+from zprl.env.robomimic.robomimic_subtask_wrapper import get_subtask_dim
 
 
 # a patch due to uploaded checkpoints using a absolute specified dataset path.

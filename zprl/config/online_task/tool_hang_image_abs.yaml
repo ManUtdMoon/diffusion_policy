@@ -28,10 +28,20 @@ base_ckpt: data/outputs/2026.03.26/16.31.53_train_flow_match_vib_unet_image_tool
 
 n_envs: 20
 
+subtask:
+  enabled: true
+  stages: [frame_assembled]
+  reward_mode: semi_sparse  # sparse, semi_sparse (stage bonus), pbrs
+  reward_scale: 1.0
+  stage_weights: [1.0]
+  obs_key: completed_stage_mask
+
 env_runner:
   _target_: zprl.env_runner.robomimic_image_runner.RobomimicImageRunner
   dataset_path: *dataset_path
   shape_meta: *shape_meta
+  subtask: ${online_task.subtask}
+  gamma: ${single_gamma}
   # costs 1GB per env
   n_train: 0
   n_train_vis: 0

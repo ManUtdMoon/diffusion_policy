@@ -177,7 +177,7 @@ class SquareSubtaskWrapperTest(unittest.TestCase):
         for expected in (0.9, -0.1, 0.8, -0.2):
             obs, reward, _, info = wrapper.step(np.zeros(1))
             self.assertAlmostEqual(reward, expected)
-            self.assertAlmostEqual(info['stage_reward'], expected)
+            self.assertAlmostEqual(info['stage_reward'], expected / config.reward_scale)
             self.assertEqual(info['task_reward'], 0.0)
         np.testing.assert_array_equal(obs['completed_stage_mask'], [1.0, 1.0])
         np.testing.assert_array_equal(

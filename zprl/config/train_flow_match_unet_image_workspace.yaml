@@ -88,8 +88,10 @@ training:
   debug: False
   resume: True
   # optimization
-  lr_scheduler: cosine
+  lr_scheduler: cosine_with_min_lr
   lr_warmup_steps: 100
+  lr_scheduler_kwargs:
+    min_lr_ratio: 0.1
   num_epochs: 1001
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
@@ -122,7 +124,7 @@ checkpoint:
     monitor_key: test_mean_score
     mode: max
     k: 2
-    format_str: 'epoch={epoch:04d}-score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch_{epoch:04d}-score_{test_mean_score:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

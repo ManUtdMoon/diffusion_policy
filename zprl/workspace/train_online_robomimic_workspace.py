@@ -37,8 +37,8 @@ from zprl.env_runner.robomimic_image_runner import create_env
 from zprl.gym_util.async_vector_env import AsyncVectorEnv
 from zprl.gym_util.multistep_wrapper import MultiStepWrapper
 from zprl.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper, RobomimicEarlyStopWrapper
-from zprl.env.robomimic.robomimic_square_subtask_wrapper import (
-    SquareSubtaskWrapper,
+from zprl.env.robomimic.robomimic_subtask_wrapper import (
+    make_subtask_wrapper,
     get_subtask_dim,
 )
 import robomimic.utils.file_utils as FileUtils
@@ -152,7 +152,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 render_obs_key=cfg.online_task.env_runner.render_obs_key
             )
             return MultiStepWrapper(
-                SquareSubtaskWrapper(image_env, subtask, gamma=cfg.single_gamma),
+                make_subtask_wrapper(image_env, subtask, env_meta['env_name'], gamma=cfg.single_gamma),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,
@@ -174,7 +174,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 render_obs_key=cfg.online_task.env_runner.render_obs_key
             )
             return MultiStepWrapper(
-                SquareSubtaskWrapper(image_env, subtask, gamma=cfg.single_gamma),
+                make_subtask_wrapper(image_env, subtask, env_meta['env_name'], gamma=cfg.single_gamma),
                 n_obs_steps=cfg.n_obs_steps,
                 n_action_steps=cfg.n_action_steps,
                 max_episode_steps=cfg.online_task.env_runner.max_steps,

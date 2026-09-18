@@ -20,7 +20,7 @@ from zprl.common.pytorch_util import dict_apply
 from zprl.env_runner.base_image_runner import BaseImageRunner
 from zprl.env.robomimic.robomimic_image_wrapper import RobomimicImageWrapper
 from zprl.env.robomimic.robomimic_image_relative_wrapper import RobomimicImageRelativeWrapper
-from zprl.env.robomimic.robomimic_square_subtask_wrapper import SquareSubtaskWrapper
+from zprl.env.robomimic.robomimic_subtask_wrapper import make_subtask_wrapper
 import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.obs_utils as ObsUtils
@@ -78,7 +78,7 @@ class RobomimicImageRunner(BaseImageRunner):
             output_dir,
             dataset_path,
             shape_meta:dict,
-            subtask,
+            subtask=None,
             n_train=10,
             n_train_vis=3,
             train_start_idx=0,
@@ -138,7 +138,7 @@ class RobomimicImageRunner(BaseImageRunner):
                 init_state=None,
                 render_obs_key=render_obs_key
             )
-            image_env = SquareSubtaskWrapper(image_env, subtask, gamma=gamma)
+            image_env = make_subtask_wrapper(image_env, subtask, env_meta['env_name'], gamma=gamma)
             wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
                     image_env,
@@ -181,7 +181,7 @@ class RobomimicImageRunner(BaseImageRunner):
                 init_state=None,
                 render_obs_key=render_obs_key
             )
-            image_env = SquareSubtaskWrapper(image_env, subtask, gamma=gamma)
+            image_env = make_subtask_wrapper(image_env, subtask, env_meta['env_name'], gamma=gamma)
             wrapped_env = MultiStepWrapper(
                 VideoRecordingWrapper(
                     image_env,
@@ -289,7 +289,7 @@ class RobomimicImageRunner(BaseImageRunner):
         self.rotation_transformer = rotation_transformer
         self.abs_action = abs_action
         self.action_pose_repr = action_pose_repr
-        self.subtask_stages = tuple(subtask.stages)
+        self.subtask_stages = tuple(subtask.stages) if subtask is not None else ()
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self, policy: BaseImagePolicy):
