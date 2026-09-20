@@ -1,0 +1,39 @@
+defaults:
+  - train_flow_match_vib_unet_image_workspace
+  - override task: metaworld_box-close
+  - _self_
+
+name: train_soe
+_target_: zprl.workspace.train_soe_workspace.TrainSoeWorkspace
+exp_name: soe_round_${soe.round}
+
+soe:
+  task: metaworld_box-close
+  round: 1
+  run_dir: data/soe/${soe.task}/seed_${training.seed}/round_${soe.round}
+
+task:
+  dataset:
+    zarr_path: ${soe.run_dir}/success_dataset/dataset.zarr
+    seed: ${training.seed}
+    max_train_episodes: null
+    val_ratio: 0.0
+  env_runner:
+    n_epi_vis: 0
+    test_start_seed: 10000
+
+training:
+  seed: 0
+  resume: false
+  max_grad_steps: 50000
+
+logging:
+  project: metaworld_offline_debug
+  name: ${name}_${soe.task}_seed_${training.seed}_round_${soe.round}
+
+multi_run:
+  run_dir: ${soe.run_dir}/train
+
+hydra:
+  run:
+    dir: ${soe.run_dir}/train
