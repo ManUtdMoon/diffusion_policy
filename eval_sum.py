@@ -24,6 +24,7 @@ from zprl.policy.residue_policy import (
     ResiduePolicy as ActionResiduePolicy,
     SumPolicy as ActionSumPolicy,
 )
+from zprl.policy.reactive_policy import SumPolicy as ReactiveSumPolicy
 from zprl.env.robomimic.robomimic_subtask_wrapper import get_subtask_dim
 
 
@@ -103,6 +104,7 @@ def main(checkpoint, output_dir, device, base_ckpt):
     da = int(cfg.shape_meta.action.shape[0])
     Da = int(Ta * da)
     res_target = str(cfg.res_policy._target_)
+    eval_action_steps = Ta
 
     if "latent_policy" in res_target:
         assert d_mask == 0
@@ -116,10 +118,20 @@ def main(checkpoint, output_dir, device, base_ckpt):
         )
         print(f"ZPRL (latent) with To={To}, do={do}, Do={Do_base}, "
               f"Ta={Ta}, da={da}, Da={Da}, z_dim={z_dim}")
-    elif "residue_policy" in res_target:
+    elif "residue_policy" in res_target or "reactive_policy" in res_target:
+        sum_policy_cls = ActionSumPolicy
+        sum_policy_kwargs = {}
+        if "reactive_policy" in res_target:
+            Tr = int(cfg.n_rl_steps)
+            assert Ta > 0 and Tr > 0 and Ta % Tr == 0, \
+                f"n_action_steps({Ta}) must be divisible by n_rl_steps({Tr})"
+            Da = int(Tr * da)
+            eval_action_steps = Tr
+            sum_policy_cls = ReactiveSumPolicy
+            sum_policy_kwargs['n_rl_steps'] = Tr
         res_policy = hydra.utils.instantiate(
             cfg.res_policy, obs_dim=Do_aug, action_dim=Da)
-        sum_policy = ActionSumPolicy(
+        sum_policy = sum_policy_cls(
             res_scale=cfg.training.res_scale,
             base_obs_emb_dim=Do_base,
             subtask_dim=d_mask,
@@ -127,9 +139,10 @@ def main(checkpoint, output_dir, device, base_ckpt):
             n_action_steps=Ta,
             base_policy=base_policy,
             res_policy=res_policy,
+            **sum_policy_kwargs,
         )
         print(f"ResRL (action) with To={To}, do={do}, Do={Do_aug}, "
-              f"Ta={Ta}, da={da}, Da={Da}")
+              f"Ta={Ta}, Tr={eval_action_steps}, da={da}, Da={Da}")
     else:
         raise ValueError(f"Unknown res_policy target: {res_target}")
 
@@ -146,6 +159,7 @@ def main(checkpoint, output_dir, device, base_ckpt):
     cfg.online_task.env_runner.n_test_vis = 5
     cfg.online_task.env_runner.test_start_seed = 100_000
     cfg.online_task.env_runner.n_envs = 50
+    cfg.online_task.env_runner.n_action_steps = eval_action_steps
     # reset dataset_path to avoid location mismatch between training and evaluation.
     # extract the filename from the original config to avoid hardcoding (e.g., tool_hang uses a different name).
     task_name = cfg.online_task.task_name

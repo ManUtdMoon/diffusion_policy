@@ -141,7 +141,10 @@ class ResiduePolicy(ModuleAttrMixin):
             if self.q_ent:
                 target_q_next -= alpha * next_log_prob
             assert_shape(target_q_next, (bs, 1))
-            target_q = batch.rewards.flatten() + (1 - batch.dones.flatten()) * self.gamma * target_q_next.view(-1) # (B,)
+            discounts = self.gamma if batch.discounts is None else batch.discounts.flatten()
+            if isinstance(discounts, torch.Tensor):
+                assert_shape(discounts, (bs,))
+            target_q = batch.rewards.flatten() + (1 - batch.dones.flatten()) * discounts * target_q_next.view(-1) # (B,)
             target_q = target_q.unsqueeze(0).expand(self.num_qs, -1) # broadcast to (num_qs, B)
             assert_shape(target_q, (self.num_qs, bs))
 

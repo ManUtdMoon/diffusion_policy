@@ -27,6 +27,11 @@ TASK_TO_ALGO_EXP_MAP = {
             'data/outputs/2026.09.14/15.50.42_train_online_robomimic_workspace_square_image',
             'data/outputs/2026.09.14/15.50.44_train_online_robomimic_workspace_square_image'
         ],
+        'V2 + 4-step return': [
+            'data/outputs/2026.09.22/20.04.44_train_online_reactive_robomimic_workspace_square_image',
+            'data/outputs/2026.09.22/20.04.46_train_online_reactive_robomimic_workspace_square_image',
+            'data/outputs/2026.09.22/20.04.48_train_online_reactive_robomimic_workspace_square_image'
+        ]
     },
 }
 

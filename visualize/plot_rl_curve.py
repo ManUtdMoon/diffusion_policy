@@ -12,13 +12,14 @@ from pathlib import Path
 # Plotting Configuration
 # =============================================================================
 PALETTE = {
-    'Ta4': '#ff4000', # '#c66a42'
-    'Ta4+stage_rew': '#696fa2',
-    'DSRL': '#e8cd81',
+    'Baseline': '#ff4000', # '#c66a42'
+    'V2 + mask + reward': '#696fa2',
+    'Ta=2,Tr=2 (V1)': '#e8cd81',
     'Tr2+stage_rew': '#89c085',
     'Offline': '#000000',
-    'DPPO': '#8aaeb2',
-    'Post-hoc': '#4f95cd',
+    'V2 + subtask mask': '#8aaeb2',
+    'Ta=4,Tr=2 (V2)': '#4f95cd',
+    'V2 + 4-step return': '#89c085',
     'Joint': '#ff4000',
     
     'n200': '#984322',
@@ -40,9 +41,12 @@ DS = 10  # Downsample factor
 CI_ALPHA = 0.1
 
 LINEWIDTHS = {
-    'Ta4': 2,
-    'Ta4+stage_rew': 2,
-    'Tr2+stage_rew': 2,
+    'Baseline': 2.5,
+    'V2 + mask + reward': 2.5,
+    'V2 + subtask mask': 2.5,
+    'Ta=2,Tr=2 (V1)': 2.5,
+    'Ta=4,Tr=2 (V2)': 2.5,
+    'V2 + 4-step return': 2.5,
 }
 
 OFFLINE = {
@@ -300,7 +304,7 @@ def main(task, mode):
         else:
             display_label = label
         display_labels.append(display_label)
-    legend = ax.legend(handles=handles, labels=display_labels, fontsize=14, title='Algorithm')
+    legend = ax.legend(handles=handles, labels=display_labels, fontsize=10, title='Algorithm')
     legend.set_title('')
     # ax.get_legend().remove()  # remove legend
     plt.tight_layout()
