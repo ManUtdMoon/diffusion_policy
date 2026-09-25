@@ -6,7 +6,7 @@ name: train_online_reactive_robomimic_workspace
 _target_: zprl.workspace.train_online_reactive_robomimic_workspace.TrainOnlineReactiveRobomimicWorkspace
 
 # Base plans span n_action_steps; residuals and replay transitions span n_rl_steps.
-n_rl_steps: 2
+n_rl_steps: 4
 
 online_task:
   env_runner:
@@ -17,6 +17,6 @@ res_policy:
   gamma: ${eval:"round(${single_gamma}**${n_rl_steps}, 4)"}
 
 training:
-  n_step: 4
-  learning_start: 4000
-  training_freq: 200
+  n_step: 1
+  learning_start: 2000
+  training_freq: 100

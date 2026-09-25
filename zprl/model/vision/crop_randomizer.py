@@ -36,6 +36,7 @@ class CropRandomizer(nn.Module):
         self.crop_width = crop_width
         self.num_crops = num_crops
         self.pos_enc = pos_enc
+        self.force_random_crop = False
 
     def output_shape_in(self, input_shape=None):
         """
@@ -84,7 +85,7 @@ class CropRandomizer(nn.Module):
         inputs to [B * N, ...].
         """
         assert len(inputs.shape) >= 3 # must have at least (C, H, W) dimensions
-        if self.training:
+        if self.training or self.force_random_crop:
             # generate random crops
             out, _ = sample_random_image_crops(
                 images=inputs,
@@ -272,6 +273,9 @@ class CropRandomizerV3(nn.Module):
     def __repr__(self):
         header = f'{self.__class__.__name__}'
         return header + f"(input_shape={self.input_shape}, crop_size=[{self.crop_height}, {self.crop_width}])"
+
+
+CROP_RANDOMIZER_TYPES = (CropRandomizer, CropRandomizerV2, CropRandomizerV3)
 
 
 def crop_image_from_indices(images, crop_indices, crop_height, crop_width):

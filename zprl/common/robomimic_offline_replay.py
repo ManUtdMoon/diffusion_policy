@@ -208,10 +208,10 @@ def load_robomimic_offline_data_into_replay_buffer(
 
     # ---- 4. encode obs through base policy in batches ----
     # temporarily disable random crop
-    from zprl.model.vision.crop_randomizer import CropRandomizerV2
+    from zprl.model.vision.crop_randomizer import CROP_RANDOMIZER_TYPES
     crop_randomizers = []
     for m in base_policy.modules():
-        if isinstance(m, CropRandomizerV2):
+        if isinstance(m, CROP_RANDOMIZER_TYPES):
             crop_randomizers.append(m)
     old_crop_modes = [m.force_random_crop for m in crop_randomizers]
     for m in crop_randomizers:

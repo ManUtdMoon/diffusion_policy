@@ -30,7 +30,7 @@ from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
 from zprl.common.pytorch_util import dict_apply, optimizer_to
 from zprl.model.common.rotation_transformer import RotationTransformer
-from zprl.model.vision.crop_randomizer import CropRandomizerV2
+from zprl.model.vision.crop_randomizer import CROP_RANDOMIZER_TYPES
 from zprl.env_runner.robomimic_image_runner import create_env
 from zprl.gym_util.async_vector_env import AsyncVectorEnv
 from zprl.gym_util.multistep_wrapper import MultiStepWrapper
@@ -76,7 +76,7 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
 
         crop_randomizers = list()
         for m in self.base_policy.modules():
-            if isinstance(m, CropRandomizerV2):
+            if isinstance(m, CROP_RANDOMIZER_TYPES):
                 crop_randomizers.append(m)
         def set_rand_crop(mode):
             for m in crop_randomizers:
@@ -265,8 +265,10 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
             eval_log = eval_env_runner.run(sum_policy)
             sum_policy.train()
             set_rand_crop(True)
+            eval_log['info/global_step'] = self.global_step * cfg.n_action_steps
+            eval_log['info/chunk_step'] = self.global_step
             logger.log(eval_log)
-            wandb_run.log(eval_log, step=self.global_step)
+            wandb_run.log(eval_log, step=self.global_step * cfg.n_action_steps)
 
             while self.global_step < n_steps:
                 step_log = dict()
@@ -357,7 +359,8 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
                     print("Q pre-training finished.")
 
                     pretrain_log = {
-                        'info/global_step':       self.global_step,
+                        'info/global_step':       self.global_step * cfg.n_action_steps,
+                        'info/chunk_step':       self.global_step,
                         'info/global_update':     self.global_update,
                         'info/q_target':          critic_info['q_target'],
                         'info/q_predicted':       critic_info['q_predicted'],
@@ -368,7 +371,7 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
                         'loss/critic_loss':       critic_loss.item() / 2.0,
                     }
                     logger.log(pretrain_log)
-                    wandb_run.log(pretrain_log, step=self.global_step)
+                    wandb_run.log(pretrain_log, step=self.global_step * cfg.n_action_steps)
                     continue
 
                 # training
@@ -415,7 +418,8 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
                 recent_done_count, recent_done_sr = get_recent_success_stats()
 
                 step_log = {
-                    'info/global_step':       self.global_step,
+                    'info/global_step':       self.global_step * cfg.n_action_steps,
+                    'info/chunk_step':       self.global_step,
                     'info/global_update':     self.global_update,
                     'info/res_ratio':         res_ratio,
                     'info/q_target':          critic_info['q_target'],
@@ -450,7 +454,7 @@ class TrainOnlineCondResWorkspace(BaseWorkspace):
                 # logging
                 logger.log(step_log)
                 if self.global_step % log_every == 0:
-                    wandb_run.log(step_log, step=self.global_step)
+                    wandb_run.log(step_log, step=self.global_step * cfg.n_action_steps)
 
                 # checkpointing
                 if self.global_step % checkpoint_every == 0:

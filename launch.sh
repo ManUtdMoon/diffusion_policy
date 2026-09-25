@@ -8,8 +8,8 @@
 SESSION="train"
 GPUS=(0 1 2)
 SEEDS=(40 50 60)
-EXP_NAME="resrl:u5_1-Tr4-buf_N1"
-BASE_CKPT="data/outputs-till-20260912/2026.08.17/15.16.27_train_diffusion_image_accelerate_square_image/checkpoints/epoch_0500-score_0.450.ckpt"
+EXP_NAME="resrl:u2_2-Tr4-buf_N1"
+BASE_CKPT="data/upload/offline/square/novib/checkpoints/epoch_0500-score_0.450.ckpt"
 
 # kill old session with the same name (optional, comment out if not wanted)
 tmux kill-session -t $SESSION 2>/dev/null
@@ -31,7 +31,8 @@ for i in "${!GPUS[@]}"; do
         training.num_steps=250000 \
         training.buffer_size=250000 \
         online_task.subtask.enabled=True \
-        online_task.subtask.reward_mode=sparse"
+        online_task.subtask.reward_mode=sparse \
+        training.utd=2"
 
     if [ $i -eq 0 ]; then
         tmux send-keys -t $SESSION "mamba activate zprl" Enter
