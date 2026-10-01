@@ -25,6 +25,7 @@ from zprl.policy.residue_policy import (
     SumPolicy as ActionSumPolicy,
 )
 from zprl.policy.reactive_policy import SumPolicy as ReactiveSumPolicy
+from zprl.policy.reactive_history_policy import HistorySumPolicy
 from zprl.env.robomimic.robomimic_subtask_wrapper import get_subtask_dim
 
 
@@ -118,16 +119,23 @@ def main(checkpoint, output_dir, device, base_ckpt):
         )
         print(f"ZPRL (latent) with To={To}, do={do}, Do={Do_base}, "
               f"Ta={Ta}, da={da}, Da={Da}, z_dim={z_dim}")
-    elif "residue_policy" in res_target or "reactive_policy" in res_target:
+    elif (
+        "residue_policy" in res_target
+        or "reactive_policy" in res_target
+        or "reactive_history_policy" in res_target
+    ):
         sum_policy_cls = ActionSumPolicy
         sum_policy_kwargs = {}
-        if "reactive_policy" in res_target:
+        if (
+            "reactive_policy" in res_target
+            or "reactive_history_policy" in res_target
+        ):
             Tr = int(cfg.n_rl_steps)
             assert Ta > 0 and Tr > 0 and Ta % Tr == 0, \
                 f"n_action_steps({Ta}) must be divisible by n_rl_steps({Tr})"
             Da = int(Tr * da)
             eval_action_steps = Tr
-            sum_policy_cls = ReactiveSumPolicy
+            sum_policy_cls = HistorySumPolicy if "reactive_history_policy" in res_target else ReactiveSumPolicy
             sum_policy_kwargs['n_rl_steps'] = Tr
         res_policy = hydra.utils.instantiate(
             cfg.res_policy, obs_dim=Do_aug, action_dim=Da)
@@ -177,6 +185,8 @@ def main(checkpoint, output_dir, device, base_ckpt):
     for key, value in runner_log.items():
         if isinstance(value, wandb.sdk.data_types.video.Video):
             json_log[key] = value._path
+        elif isinstance(value, np.generic):
+            json_log[key] = value.item()
         else:
             json_log[key] = value
     out_path = os.path.join(output_dir, 'eval_log.json')

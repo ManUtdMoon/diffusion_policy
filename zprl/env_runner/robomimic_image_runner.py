@@ -328,7 +328,12 @@ class RobomimicImageRunner(BaseImageRunner):
             # start rollout
             obs = env.reset()
             past_action = None
-            policy.reset()
+            if hasattr(policy, 'on_env_step'):
+                obs_dict = dict_apply(obs,
+                    lambda x: torch.from_numpy(x).to(device=device))
+                policy.reset(obs_dict)
+            else:
+                policy.reset()
 
             env_name = self.env_meta['env_name']
             pbar = tqdm.tqdm(total=self.max_steps, desc=f"Eval {env_name}Image {chunk_idx+1}/{n_chunks}", 
@@ -336,17 +341,14 @@ class RobomimicImageRunner(BaseImageRunner):
             
             done = False
             while not done:
-                # create obs dict
-                np_obs_dict = dict(obs)
-                if self.past_action and (past_action is not None):
-                    # TODO: not tested
-                    np_obs_dict['past_action'] = past_action[
-                        :,-(self.n_obs_steps-1):].astype(np.float32)
+                if not hasattr(policy, 'on_env_step'):
+                    # create obs dict
+                    np_obs_dict = dict(obs)
                 
-                # device transfer
-                obs_dict = dict_apply(np_obs_dict, 
-                    lambda x: torch.from_numpy(x).to(
-                        device=device))
+                    # device transfer
+                    obs_dict = dict_apply(np_obs_dict,
+                        lambda x: torch.from_numpy(x).to(
+                            device=device))
 
                 # run policy
                 with torch.no_grad():
@@ -367,6 +369,10 @@ class RobomimicImageRunner(BaseImageRunner):
                     env_action = self.undo_transform_action(action)
 
                 obs, reward, done, info = env.step(env_action)
+                if hasattr(policy, 'on_env_step'):
+                    obs_dict = dict_apply(obs,
+                        lambda x: torch.from_numpy(x).to(device=device))
+                    policy.on_env_step(obs_dict, done, info)
 
                 # collect rewards moved here
                 for i, (sublist, env_info) in enumerate(

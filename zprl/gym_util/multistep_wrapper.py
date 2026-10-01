@@ -145,6 +145,7 @@ class MultiStepWrapper(gym.Wrapper):
         info = dict_take_last_n(self.info, self.n_obs_steps)
         info['raw_reward'] = aggregate(env_rewards, 'sum')
         info['task_reward'] = aggregate(task_rewards, 'max')
+        info['executed_action_steps'] = len(chunk_rewards)
         if truncated:
             info['TimeLimit.truncated'] = True
             info['terminal_observation'] = observation

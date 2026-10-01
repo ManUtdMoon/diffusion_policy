@@ -1,0 +1,20 @@
+defaults:
+  - train_online_reactive_robomimic_workspace
+  - _self_
+
+name: train_online_reactive_history_robomimic_workspace
+_target_: zprl.workspace.train_online_reactive_history_robomimic_workspace.TrainOnlineReactiveHistoryRobomimicWorkspace
+
+res_policy:
+  _target_: zprl.policy.reactive_history_policy.HistoryResiduePolicy
+  history_length: 4
+  d_model: 256
+  nhead: 4
+  num_layers: 2
+  dim_feedforward: 1024
+  dropout: 0.0
+  causal_mask: true
+
+logging:
+  resume: false
+  id: null

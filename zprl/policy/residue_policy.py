@@ -1,3 +1,9 @@
+if __name__ == "__main__":
+    import sys
+    import pathlib
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+
 from typing import Dict, Optional, Union
 import logging
 import torch
@@ -83,7 +89,10 @@ class ResiduePolicy(ModuleAttrMixin):
         self.num_subset = num_subset
 
         logger.info(
-            "number of parameters: %.2f M", sum(p.numel() for p in self.parameters()) / 1e6
+            "Qs parameters: %.2f M", sum(p.numel() for p in self.qs.parameters()) / 1e6
+        )
+        logger.info(
+            "Actor parameters: %.2f M", sum(p.numel() for p in self.actor.parameters()) / 1e6
         )
 
     # training
@@ -361,3 +370,27 @@ class SumPolicy:
             'naction': sum_naction,
             'res_naction_flat': res_naction_flat, # (B,Ta*da)
         }
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    ResiduePolicy(
+        obs_dim=521,
+        action_dim=20,
+        actor_input='obs_action',
+        hidden_dim=512,
+        log_std_min=-10.0,
+        log_std_max=2.0,
+        gamma=0.97,
+        tau=0.01,
+        init_alpha=0.01,
+        auto_alpha=True,
+        res_scale=0.05,
+        q_ent=True,
+        num_qs=10,
+        num_subset=2
+    )
+
+
+if __name__ == "__main__":
+    main()
