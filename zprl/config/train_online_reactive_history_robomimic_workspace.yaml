@@ -14,6 +14,10 @@ res_policy:
   dim_feedforward: 1024
   dropout: 0.0
   causal_mask: true
+  debug: ${training.debug}
+
+training:
+  compile: true
 
 logging:
   resume: false

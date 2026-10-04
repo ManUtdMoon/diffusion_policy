@@ -69,6 +69,7 @@ def small_config(base_path, bootstrap='truncated'):
         'online_task.shape_meta.action.shape=[1]', 'training.device=cpu',
         'online_task.n_envs=3', 'n_rl_steps=2', 'training.training_freq=3',
         'training.num_steps=6', 'training.learning_start=6',
+        'training.compile=false',
         'training.log_every=3', 'training.eval_every=6',
         'training.checkpoint_every=6', 'training.utd=1',
         'training.batch_size=2', 'training.buffer_size=12',
@@ -148,11 +149,12 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertEqual(hydra.utils.get_class(cfg._target_),
                          workspace_module.TrainOnlineReactiveHistoryRobomimicWorkspace)
         self.assertEqual((cfg.res_policy.d_model, cfg.res_policy.nhead, cfg.res_policy.num_layers,
-                          cfg.res_policy.dim_feedforward), (256, 4, 4, 1024))
+                          cfg.res_policy.dim_feedforward), (256, 4, 2, 1024))
         self.assertEqual(cfg.res_policy.history_length, 4)
-        self.assertEqual(cfg.res_policy.dropout, 0.1)
-        self.assertFalse(cfg.res_policy.causal_mask)
+        self.assertEqual(cfg.res_policy.dropout, 0.0)
+        self.assertTrue(cfg.res_policy.causal_mask)
         self.assertEqual(cfg.training.n_step, 2)
+        self.assertTrue(cfg.training.compile)
         self.assertEqual(cfg.n_rl_steps, 2)
         self.assertFalse(cfg.online_task.subtask.enabled)
         self.assertEqual(cfg.online_task.subtask.reward_mode, 'sparse')
@@ -162,6 +164,7 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertEqual(old.training.n_step, 2)
         self.assertTrue(old.logging.resume)
         self.assertNotIn('history', old)
+        self.assertNotIn('compile', old.training)
 
     def test_history_and_segment_overrides_reach_policy_and_runner(self):
         for task, ta, tr in [('square', 4, 2), ('transport', 5, 1), ('tool_hang', 8, 4)]:
@@ -181,10 +184,11 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
 
 
 class ReactiveHistoryWorkspaceTest(unittest.TestCase):
-    def run_workspace(self, tmp, bootstrap='truncated', enable_eval=False):
+    def run_workspace(self, tmp, bootstrap='truncated', enable_eval=False, compile=False):
         module = workspace_with_eval_enabled() if enable_eval else workspace_module
         base_path = pathlib.Path(tmp) / 'base.ckpt'
         cfg = small_config(base_path, bootstrap)
+        cfg.training.compile = compile
         save_base(base_path, cfg)
         env = HistoryVectorEnv()
         buffers, policies, initial_weights = [], [], []
@@ -254,10 +258,21 @@ class ReactiveHistoryWorkspaceTest(unittest.TestCase):
                 self.assertFalse((pathlib.Path(tmp) / 'checkpoints').exists())
 
     def test_commented_eval_and_checkpoint_are_executable_and_isolated(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace, rb, policy, env, evaluation, _, _ = self.run_workspace(tmp, enable_eval=True)
+        compile = torch.compile
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(torch, 'compile', side_effect=lambda fn, **kwargs:
+                          compile(fn, backend='aot_eager', **kwargs)) as compile_mock:
+            workspace, rb, policy, env, evaluation, _, _ = self.run_workspace(
+                tmp, enable_eval=True, compile=True)
+            self.assertEqual(compile_mock.call_count, 3)
+            for call, module in zip(compile_mock.call_args_list,
+                                    (workspace.res_policy.actor, workspace.res_policy.qs,
+                                     workspace.res_policy.q_targets)):
+                self.assertIs(call.args[0].__self__, module)
+            self.assertFalse(any('_orig_mod' in key for key in workspace.res_policy.state_dict()))
             self.assertEqual(len(evaluation.policies), 2)
             eval_policy = evaluation.policies[-1]
+            self.assertIs(eval_policy.res_policy.actor.forward.__self__, eval_policy.res_policy.actor)
             self.assertIsNot(eval_policy, policy)
             self.assertNotEqual(eval_policy.base_policy.weight.data_ptr(), policy.base_policy.weight.data_ptr())
             self.assertNotEqual(eval_policy.res_policy.actor.mean.weight.data_ptr(),

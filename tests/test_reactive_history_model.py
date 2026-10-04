@@ -23,15 +23,15 @@ class ReactiveHistoryModelTest(unittest.TestCase):
         return (HistoryActor(action_dim=2, **common),
                 HistoryQEnsemble(num_qs=3, **common))
 
-    def test_model_interface_and_two_hidden_layer_heads(self):
+    def test_model_interface_and_three_hidden_layer_heads(self):
         actor, qs = self.make_models()
         self.assertTrue(all(layer.norm_first for layer in actor.encoder.transformer.layers))
         self.assertTrue(all(layer.norm_first for layer in qs.encoder.transformer.layers))
         self.assertEqual(actor.encoder.projection.in_features, 5)
         self.assertEqual(qs.encoder.projection.in_features, 5)
         self.assertNotIn('exec_steps', inspect.signature(HistoryEncoder.forward).parameters)
-        self.assertEqual(len([m for m in actor.net if isinstance(m, torch.nn.Linear)]), 2)
-        self.assertEqual(len([m for m in qs.net if isinstance(m, BatchedLinear)]), 3)
+        self.assertEqual(len([m for m in actor.net if isinstance(m, torch.nn.Linear)]), 3)
+        self.assertEqual(len([m for m in qs.net if isinstance(m, BatchedLinear)]), 4)
         self.assertEqual(qs.net[0].weight.shape, (3, 10, 8))
         self.assertEqual(sum(isinstance(m, HistoryEncoder) for m in qs.modules()), 1)
         self.assertIsNot(actor.encoder, qs.encoder)
@@ -99,6 +99,7 @@ class ReactiveHistoryModelTest(unittest.TestCase):
                 torch.testing.assert_close(original_q,
                                            qs(changed_obs, changed_exec, valid, base))
                 self.assertTrue(torch.isfinite(original_q).all())
+                actor.encoder.debug = True
                 valid[:, -1] = False
                 with self.assertRaises(AssertionError):
                     actor(obs, a_exec, valid, base)

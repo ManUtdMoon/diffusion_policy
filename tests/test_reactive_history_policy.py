@@ -72,6 +72,36 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
         optimizers['q_optimizer'].step()
         self.assertFalse(torch.equal(before, policy.qs.encoder.position.weight))
 
+    def test_deferred_metrics_and_debug_preserve_losses_and_gradients(self):
+        policy = self.make_policy()
+        checked = self.make_policy()
+        checked.load_state_dict(policy.state_dict())
+        for module in (checked.actor.encoder, checked.qs.encoder, checked.q_targets.encoder):
+            module.debug = True
+        batch = self.make_batch()
+        for method in ('compute_critic_loss', 'compute_actor_loss'):
+            policy.zero_grad()
+            checked.zero_grad()
+            torch.manual_seed(42)
+            with patch.object(torch.Tensor, 'item', side_effect=AssertionError('eager item')):
+                loss, info = getattr(policy, method)(batch)
+            torch.manual_seed(42)
+            checked_loss, checked_info = getattr(checked, method)(batch)
+            torch.testing.assert_close(loss, checked_loss, atol=0, rtol=0)
+            loss.backward()
+            checked_loss.backward()
+            self.assertIsNone(policy.log_alpha.grad)
+            for parameter, reference in zip(policy.parameters(), checked.parameters()):
+                if reference.grad is None:
+                    self.assertIsNone(parameter.grad)
+                else:
+                    torch.testing.assert_close(parameter.grad, reference.grad, atol=0, rtol=0)
+            for key, value in info.items():
+                self.assertIsInstance(value, torch.Tensor)
+                self.assertFalse(value.requires_grad)
+                self.assertIsNone(value.grad_fn)
+                torch.testing.assert_close(value, checked_info[key], atol=0, rtol=0)
+
     def test_actor_action_gradient_without_critic_parameter_gradient(self):
         policy = self.make_policy()
         policy.auto_alpha = False
@@ -195,7 +225,7 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
             _, info = policy.compute_critic_loss(batch)
         torch.testing.assert_close(current_exec[0], batch.a_base + 0.5 * batch.action)
         torch.testing.assert_close(target_exec[0], batch.next_a_base)
-        self.assertAlmostEqual(info['q_target'], 2.7, places=5)
+        self.assertAlmostEqual(info['q_target'].item(), 2.7, places=5)
 
         policy.q_ent = True
         policy.auto_alpha = False
@@ -204,7 +234,7 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
                           return_value=(next_res, torch.full((2, 1), -2.), None)), \
              patch.object(policy.q_targets, 'forward', return_value=target_values):
             _, entropy_info = policy.compute_critic_loss(batch)
-        self.assertAlmostEqual(entropy_info['q_target'], 2.9, places=5)
+        self.assertAlmostEqual(entropy_info['q_target'].item(), 2.9, places=5)
         policy.q_ent = False
 
         same_exec = batch._replace(a_base=batch.a_base + 1,

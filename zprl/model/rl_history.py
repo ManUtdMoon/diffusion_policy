@@ -20,7 +20,8 @@ def _parameters_m(module):
 
 class HistoryEncoder(nn.Module):
     def __init__(self, obs_dim, exec_dim, history_length, d_model=256, nhead=4,
-                 num_layers=4, dim_feedforward=1024, dropout=0.1, causal_mask=False):
+                 num_layers=4, dim_feedforward=1024, dropout=0.1, causal_mask=False,
+                 debug=False):
         super().__init__()
         assert history_length > 0
         assert d_model % nhead == 0
@@ -29,6 +30,7 @@ class HistoryEncoder(nn.Module):
         self.history_length = history_length
         self.nhead = nhead
         self.causal_mask = causal_mask
+        self.debug = debug
         self.projection = nn.Linear(obs_dim + exec_dim, d_model)
         self.position = nn.Embedding(history_length, d_model)
         layer = nn.TransformerEncoderLayer(
@@ -42,7 +44,9 @@ class HistoryEncoder(nn.Module):
         assert history_length == self.history_length and obs_dim == self.obs_dim
         assert a_exec.shape == (batch_size, history_length, self.exec_dim)
         assert obs_valid.shape == (batch_size, history_length)
-        assert obs_valid.dtype == torch.bool and torch.all(obs_valid[:, -1])
+        assert obs_valid.dtype == torch.bool
+        if self.debug:
+            assert torch.all(obs_valid[:, -1])
         assert obs.device == a_exec.device == obs_valid.device
         assert obs.dtype == a_exec.dtype
 
@@ -68,11 +72,12 @@ class HistoryEncoder(nn.Module):
 class HistoryActor(nn.Module):
     def __init__(self, obs_dim, exec_dim, action_dim, history_length, hidden_dim=256,
                  d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
-                 dropout=0.1, causal_mask=False, log_std_min=-10.0, log_std_max=2.0):
+                 dropout=0.1, causal_mask=False, log_std_min=-10.0, log_std_max=2.0,
+                 debug=False):
         super().__init__()
         self.encoder = HistoryEncoder(obs_dim, exec_dim, history_length, d_model,
                                       nhead, num_layers, dim_feedforward, dropout,
-                                      causal_mask)
+                                      causal_mask, debug)
         self.net = nn.Sequential(
             layer_init(nn.Linear(d_model + exec_dim, hidden_dim)),
             nn.GELU(),
@@ -105,11 +110,12 @@ class HistoryActor(nn.Module):
 
     def get_action(self, obs, a_exec, obs_valid, a_base):
         mean, logstd = self.forward(obs, a_exec, obs_valid, a_base)
-        dist = SquashedNormal(mean, logstd.exp())
+        dist = SquashedNormal(mean, logstd.exp(), validate_args=self.encoder.debug)
         sample = dist.rsample()
         log_prob = dist.log_prob(sample).sum(dim=-1, keepdim=True)
-        assert torch.all(torch.isfinite(sample))
-        assert torch.all(torch.isfinite(log_prob))
+        if self.encoder.debug:
+            assert torch.all(torch.isfinite(sample))
+            assert torch.all(torch.isfinite(log_prob))
         return {
             'sample': sample,
             'mean': dist.mean,
@@ -121,13 +127,13 @@ class HistoryActor(nn.Module):
 class HistoryQEnsemble(nn.Module):
     def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
                  d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
-                 dropout=0.1, causal_mask=False):
+                 dropout=0.1, causal_mask=False, debug=False):
         super().__init__()
         assert num_qs > 0
         self.num_qs = num_qs
         self.encoder = HistoryEncoder(obs_dim, exec_dim, history_length, d_model,
                                       nhead, num_layers, dim_feedforward, dropout,
-                                      causal_mask)
+                                      causal_mask, debug)
         self.net = nn.Sequential(
             BatchedLinear(num_qs, d_model + exec_dim, hidden_dim),
             BatchedLayerNorm(num_qs, hidden_dim),

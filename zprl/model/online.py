@@ -37,13 +37,13 @@ class TanhTransform(pyd.transforms.Transform):
 
 
 class SquashedNormal(pyd.transformed_distribution.TransformedDistribution):
-    def __init__(self, loc, scale):
+    def __init__(self, loc, scale, validate_args=None):
         self.loc = loc
         self.scale = scale
 
-        self.base_dist = pyd.Normal(loc, scale)
+        self.base_dist = pyd.Normal(loc, scale, validate_args=validate_args)
         transforms = [TanhTransform()]
-        super().__init__(self.base_dist, transforms)
+        super().__init__(self.base_dist, transforms, validate_args=validate_args)
 
     @property
     def mean(self):

@@ -53,7 +53,114 @@ def sample_at(buffer, batch_inds, env_indices=None):
         return buffer._get_samples(batch_inds)
 
 
+def scalar_samples(buffer, batch_inds, env_indices):
+    # The pre-vectorization algorithm is an independent indexing oracle.
+    def history(index, env_index, endpoint_obs=None):
+        length = buffer.history_length
+        obs = np.zeros((length, *buffer.obs_shape), dtype=np.float32)
+        a_exec = np.zeros((length, buffer.base_action_dim), dtype=np.float32)
+        obs_valid = np.zeros(length, dtype=bool)
+        exec_steps = np.zeros(length, dtype=np.int64)
+        obs[-1] = buffer.observations[index, env_index] if endpoint_obs is None else endpoint_obs
+        obs_valid[-1] = True
+        for offset in range(1, length):
+            candidate = (index - offset + (endpoint_obs is not None)) % buffer.buffer_size
+            if buffer.episode_ids[candidate, env_index] != buffer.episode_ids[index, env_index]:
+                break
+            position = length - 1 - offset
+            obs[position] = buffer.observations[candidate, env_index]
+            a_exec[position] = buffer.a_exec[candidate, env_index]
+            obs_valid[position] = True
+            exec_steps[position] = buffer.exec_steps[candidate, env_index]
+        return obs, a_exec, obs_valid, exec_steps
+
+    last_valid_index = (buffer.pos - 1) % buffer.buffer_size
+    last_indices = np.empty(len(batch_inds), dtype=np.int64)
+    lengths = np.empty(len(batch_inds), dtype=np.int64)
+    returns = np.zeros((len(batch_inds), 1), dtype=np.float32)
+    for row, (start, env_index) in enumerate(zip(batch_inds, env_indices)):
+        max_steps = min(buffer.n_steps, (last_valid_index - start) % buffer.buffer_size + 1)
+        for step in range(max_steps):
+            index = (start + step) % buffer.buffer_size
+            if buffer.episode_ids[index, env_index] != buffer.episode_ids[start, env_index]:
+                break
+            returns[row, 0] += buffer.gamma ** step * buffer.rewards[index, env_index]
+            last_indices[row] = index
+            lengths[row] = step + 1
+            if buffer.dones[index, env_index] or buffer.raw_timeouts[index, env_index]:
+                break
+    current = [history(index, env_index) for index, env_index in zip(batch_inds, env_indices)]
+    following = [history(index, env_index, buffer.next_observations[index, env_index])
+                 for index, env_index in zip(last_indices, env_indices)]
+    obs, a_exec, obs_valid, exec_steps = map(np.stack, zip(*current))
+    next_obs, next_a_exec, next_obs_valid, next_exec_steps = map(np.stack, zip(*following))
+    dones = buffer.dones[last_indices, env_indices] * (
+        1 - buffer.raw_timeouts[last_indices, env_indices]
+        if buffer.handle_timeout_termination else 1)
+    return HistoryReplayBufferSamples(*map(torch.from_numpy, (
+        obs, buffer.a_base[batch_inds, env_indices], a_exec, obs_valid, exec_steps,
+        next_obs, buffer.next_a_base[last_indices, env_indices], next_a_exec,
+        next_obs_valid, next_exec_steps, buffer.actions[batch_inds, env_indices],
+        returns, dones[:, None].astype(np.float32),
+        np.power(buffer.gamma, lengths, dtype=np.float32)[:, None])))
+
+
 class ReactiveHistoryReplayTest(unittest.TestCase):
+    def test_vectorized_samples_match_scalar_reference(self):
+        rng = np.random.default_rng(1234)
+        for n_steps in (1, 2, 7, 23):
+            for history_length in (1, 4, 19):
+                for n_envs in (1, 3):
+                    for bootstrap in (False, True):
+                        with self.subTest(n_steps=n_steps, history_length=history_length,
+                                          n_envs=n_envs, bootstrap=bootstrap):
+                            buffer = make_buffer(n_steps, history_length, n_envs,
+                                                 16 * n_envs, bootstrap)
+                            buffer.gamma = 0.9801
+                            episode_id = np.zeros(n_envs, dtype=np.int64)
+                            remaining = rng.integers(1, 6, size=n_envs)
+                            for step in range(32):
+                                remaining -= 1
+                                done = remaining == 0
+                                timeout = done & (rng.random(n_envs) < 0.5)
+                                values = rng.standard_normal((7, n_envs)).astype(np.float32)
+                                add_step(buffer, *values, episode_id, done, timeout,
+                                         exec_steps=rng.integers(0, 3, size=n_envs))
+                                episode_id += done
+                                remaining[done] = rng.integers(1, 6, size=done.sum())
+                                if step + 1 not in (3, 16, 23, 32):
+                                    continue
+                                size = buffer.buffer_size if buffer.full else buffer.pos
+                                batch_inds = np.concatenate([
+                                    np.repeat(np.arange(size), n_envs),
+                                    np.full(n_envs, (buffer.pos - 1) % buffer.buffer_size)])
+                                env_indices = np.concatenate([
+                                    np.tile(np.arange(n_envs), size), np.arange(n_envs)])
+                                raw = {key: value.copy() for key, value in vars(buffer).items()
+                                       if isinstance(value, np.ndarray)}
+                                expected = scalar_samples(buffer, batch_inds, env_indices)
+                                actual = sample_at(buffer, batch_inds, env_indices)
+                                for field in actual._fields:
+                                    atol, rtol = (1e-6, 1e-5) if field == 'rewards' else (0, 0)
+                                    torch.testing.assert_close(getattr(actual, field),
+                                                               getattr(expected, field),
+                                                               atol=atol, rtol=rtol)
+                                for key, value in raw.items():
+                                    np.testing.assert_array_equal(getattr(buffer, key), value)
+
+    def test_unwritten_nan_slots_do_not_leak_into_samples(self):
+        buffer = make_buffer(n_steps=7, history_length=9)
+        add_step(buffer, 1, 2, 3, 4, 5, 6, 7, 0)
+        buffer.rewards[1:] = np.nan
+        buffer.observations[1:] = np.nan
+        buffer.a_exec[1:] = np.nan
+        batch = sample_at(buffer, [0])
+        for value in batch:
+            self.assertTrue(torch.isfinite(value).all())
+        torch.testing.assert_close(batch.rewards, torch.tensor([[5.]]))
+        self.assertEqual(batch.obs_valid.sum(), 1)
+        self.assertEqual(batch.next_obs_valid.sum(), 2)
+
     def test_same_index_obs_exec_and_endpoint_fields(self):
         buffer = make_buffer()
         add_step(buffer, 0, 10, 100, 1000, 1, 1, 11, 0, exec_steps=1)

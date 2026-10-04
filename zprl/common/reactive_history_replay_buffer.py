@@ -55,23 +55,23 @@ class ReactiveHistoryReplayBuffer(NStepReplayBuffer):
 
     def _history(self, index, env_index, endpoint_obs=None):
         length = self.history_length
-        obs = np.zeros((length, *self.obs_shape), dtype=self.observations.dtype)
-        a_exec = np.zeros((length, self.base_action_dim), dtype=np.float32)
-        obs_valid = np.zeros(length, dtype=bool)
-        exec_steps = np.zeros(length, dtype=np.int64)
-        obs[-1] = (self.observations[index, env_index] if endpoint_obs is None
-                   else endpoint_obs)
-        obs_valid[-1] = True
-        episode_id = self.episode_ids[index, env_index]
-        for offset in range(1, length):
-            candidate = (index - offset + (endpoint_obs is not None)) % self.buffer_size
-            if self.episode_ids[candidate, env_index] != episode_id:
-                break
-            position = length - 1 - offset
-            obs[position] = self.observations[candidate, env_index]
-            a_exec[position] = self.a_exec[candidate, env_index]
-            exec_steps[position] = self.exec_steps[candidate, env_index]
-            obs_valid[position] = True
+        candidate = (index[:, None] - np.arange(length - 1, -1, -1)[None]
+                     + (endpoint_obs is not None)) % self.buffer_size
+        obs_valid = (self.episode_ids[candidate, env_index[:, None]]
+                     == self.episode_ids[index, env_index][:, None])
+        obs_valid[:, -1] = True
+        # Stop at the first episode mismatch when looking backwards.
+        obs_valid = np.logical_and.accumulate(obs_valid[:, ::-1], axis=1)[:, ::-1].copy()
+        obs = self.observations[candidate, env_index[:, None]]
+        a_exec = self.a_exec[candidate, env_index[:, None]]
+        exec_steps = self.exec_steps[candidate, env_index[:, None]]
+        obs[:, -1] = (self.observations[index, env_index] if endpoint_obs is None
+                      else endpoint_obs)
+        obs[~obs_valid] = 0
+        a_exec[~obs_valid] = 0
+        exec_steps[~obs_valid] = 0
+        a_exec[:, -1] = 0
+        exec_steps[:, -1] = 0
         return obs, a_exec, obs_valid, exec_steps
 
     def _get_samples(self, batch_inds: np.ndarray,
@@ -79,38 +79,31 @@ class ReactiveHistoryReplayBuffer(NStepReplayBuffer):
         assert env is None, 'ReactiveHistoryReplayBuffer does not support VecNormalize'
         batch_inds = np.asarray(batch_inds, dtype=np.int64)
         env_indices = np.random.randint(0, self.n_envs, size=batch_inds.shape)
-        batch_size = len(batch_inds)
         assert np.all((0 <= batch_inds) & (batch_inds < self.buffer_size))
         if not self.full:
             assert np.all(batch_inds < self.pos)
         assert np.all(self.episode_ids[batch_inds, env_indices] >= 0)
 
         last_valid_index = (self.pos - 1) % self.buffer_size
-        last_indices = np.empty(batch_size, dtype=np.int64)
-        lengths = np.empty(batch_size, dtype=np.int64)
-        returns = np.zeros((batch_size, 1), dtype=np.float32)
-        for row, (start, env_index) in enumerate(zip(batch_inds, env_indices)):
-            max_steps = min(self.n_steps,
-                            (last_valid_index - start) % self.buffer_size + 1)
-            episode_id = self.episode_ids[start, env_index]
-            for step in range(max_steps):
-                index = (start + step) % self.buffer_size
-                if self.episode_ids[index, env_index] != episode_id:
-                    break
-                returns[row, 0] += self.gamma ** step * self.rewards[index, env_index]
-                last_indices[row] = index
-                lengths[row] = step + 1
-                if self.dones[index, env_index] or self.raw_timeouts[index, env_index]:
-                    break
+        steps = np.arange(self.n_steps)[None]
+        indices = (batch_inds[:, None] + steps) % self.buffer_size
+        max_steps = (last_valid_index - batch_inds) % self.buffer_size + 1
+        valid = (steps < max_steps[:, None]) & (
+            self.episode_ids[indices, env_indices[:, None]]
+            == self.episode_ids[batch_inds, env_indices][:, None])
+        ended = np.logical_or(self.dones[indices, env_indices[:, None]],
+                              self.raw_timeouts[indices, env_indices[:, None]])
+        # Include the ending transition, but exclude everything after it.
+        valid[:, 1:] &= np.logical_and.accumulate(valid & ~ended, axis=1)[:, :-1]
+        lengths = valid.sum(axis=1)
+        last_indices = (batch_inds + lengths - 1) % self.buffer_size
+        rewards = np.where(valid, self.rewards[indices, env_indices[:, None]], 0)
+        returns = (rewards * np.power(self.gamma, steps, dtype=np.float32)).sum(
+            axis=1, keepdims=True)
 
-        current = [self._history(index, env_index)
-                   for index, env_index in zip(batch_inds, env_indices)]
-        next_history = [self._history(index, env_index,
-                                      self.next_observations[index, env_index])
-                        for index, env_index in zip(last_indices, env_indices)]
-        obs, a_exec, obs_valid, exec_steps = map(np.stack, zip(*current))
-        next_obs, next_a_exec, next_obs_valid, next_exec_steps = map(
-            np.stack, zip(*next_history))
+        obs, a_exec, obs_valid, exec_steps = self._history(batch_inds, env_indices)
+        next_obs, next_a_exec, next_obs_valid, next_exec_steps = self._history(
+            last_indices, env_indices, self.next_observations[last_indices, env_indices])
         dones = self.dones[last_indices, env_indices] * (
             1 - self.raw_timeouts[last_indices, env_indices]
             if self.handle_timeout_termination else 1)

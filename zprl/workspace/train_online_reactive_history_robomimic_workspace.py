@@ -217,6 +217,10 @@ class TrainOnlineReactiveHistoryRobomimicWorkspace(BaseWorkspace):
         actor_opt = optimizers['actor_optimizer']
         alpha_opt = optimizers['alpha_optimizer']
 
+        if cfg.training.get('compile', False) and not cfg.training.debug:
+            for module in (self.res_policy.actor, self.res_policy.qs, self.res_policy.q_targets):
+                module.forward = torch.compile(module.forward, fullgraph=True, dynamic=False)
+
         # replay buffer
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
@@ -444,9 +448,13 @@ class TrainOnlineReactiveHistoryRobomimicWorkspace(BaseWorkspace):
                             alpha_opt.zero_grad()
                             alpha_loss.backward()
                             alpha_opt.step()
-                            alpha = self.res_policy.log_alpha.exp().item()
+                            alpha = self.res_policy.log_alpha.detach().exp()
 
                 ## training metrics
+                critic_info = {key: value.item() for key, value in critic_info.items()}
+                actor_info = {key: value.item() for key, value in actor_info.items()}
+                if cfg.res_policy.auto_alpha:
+                    alpha = alpha.item()
                 recent_done_count, recent_done_sr, recent_stage_rates = \
                     get_recent_success_stats()
 

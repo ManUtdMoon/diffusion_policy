@@ -57,7 +57,8 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             res_scale: float = 0.05,
             q_ent: bool = True,
             num_qs: int = 2,
-            num_subset: int = 2):
+            num_subset: int = 2,
+            debug: bool = False):
         super().__init__()
         exec_dim = action_dim if exec_dim is None else exec_dim
         assert exec_dim == action_dim  # ResRL combines base and residual in exec space.
@@ -67,7 +68,7 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             obs_dim=obs_dim, exec_dim=exec_dim, history_length=history_length,
             hidden_dim=hidden_dim, d_model=d_model, nhead=nhead,
             num_layers=num_layers, dim_feedforward=dim_feedforward,
-            dropout=dropout, causal_mask=causal_mask)
+            dropout=dropout, causal_mask=causal_mask, debug=debug)
         self.actor = HistoryActor(action_dim=action_dim, log_std_min=log_std_min,
                                   log_std_max=log_std_max, **common)
         self.qs = HistoryQEnsemble(num_qs=num_qs, **common)
@@ -111,7 +112,7 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         bs = batch.rewards.shape[0]
         assert_shape(batch.action, (bs, self.action_dim))
         assert_shape(batch.a_base, (bs, self.exec_dim))
-        alpha = self.log_alpha.exp().item() if self.auto_alpha else self.init_alpha
+        alpha = self.log_alpha.detach().exp() if self.auto_alpha else self.init_alpha
 
         with _module_mode(self.actor, False), torch.no_grad():
             next_res, next_log_prob, _ = self._sample_naction_log_prob(
@@ -138,18 +139,18 @@ class HistoryResiduePolicy(ModuleAttrMixin):
                                   current_exec).squeeze(-1)
         critic_loss = F.mse_loss(all_q_preds, target_q, reduction='none').mean(dim=-1).sum()
         info = {
-            'q_target': target_q.mean().item(),
-            'q_predicted': all_q_preds.mean().item(),
-            'q_predicted_min': all_q_preds.mean(dim=0).min().item(),
-            'q_predicted_max': all_q_preds.mean(dim=0).max().item(),
-            'rewards': batch.rewards.mean().item(),
-            'dones': batch.dones.float().mean().item(),
+            'q_target': target_q.mean().detach(),
+            'q_predicted': all_q_preds.mean().detach(),
+            'q_predicted_min': all_q_preds.mean(dim=0).min().detach(),
+            'q_predicted_max': all_q_preds.mean(dim=0).max().detach(),
+            'rewards': batch.rewards.mean().detach(),
+            'dones': batch.dones.float().mean().detach(),
         }
         return critic_loss, info
 
     def compute_actor_loss(self, batch: HistoryReplayBufferSamples):
         bs = batch.rewards.shape[0]
-        alpha = self.log_alpha.exp().item() if self.auto_alpha else self.init_alpha
+        alpha = self.log_alpha.detach().exp() if self.auto_alpha else self.init_alpha
         with _module_mode(self.actor, True):
             res_action, log_prob, log_std = self._sample_naction_log_prob(
                 batch.obs, batch.a_exec, batch.obs_valid, batch.a_base)
@@ -162,11 +163,11 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             actor_loss = (alpha * log_prob - predicted_q).mean()
 
         info = {
-            'actor_entropy': -log_prob.mean().item(),
-            'res_naction_norm': torch.norm(res_action, dim=-1).mean().item(),
-            'res_n_rms': torch.sqrt((res_action ** 2).mean()).item(),
-            'base_n_rms': torch.sqrt((batch.a_base ** 2).mean()).item(),
-            'log_std': log_std.mean().item(),
+            'actor_entropy': -log_prob.mean().detach(),
+            'res_naction_norm': torch.norm(res_action, dim=-1).mean().detach(),
+            'res_n_rms': torch.sqrt((res_action ** 2).mean()).detach(),
+            'base_n_rms': torch.sqrt((batch.a_base ** 2).mean()).detach(),
+            'log_std': log_std.mean().detach(),
         }
         return actor_loss, info
 
