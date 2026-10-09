@@ -8,7 +8,7 @@
 SESSION="train"
 GPUS=(0 1 2)
 SEEDS=(40 50 60)
-EXP_NAME="resrl:his_causal-u1_2-Ta4-Tr2-buf_N2"
+EXP_NAME="resrl:h2mlp_xavier-u1_2-A4R2-bufN2"
 BASE_CKPT="data/upload/offline/square/novib/checkpoints/epoch_0500-score_0.450.ckpt"
 
 # kill old session with the same name (optional, comment out if not wanted)
@@ -28,8 +28,8 @@ for i in "${!GPUS[@]}"; do
         training.device=cuda:${GPU} \
         online_task.base_ckpt=${BASE_CKPT} \
         online_task=square_image_abs \
-        training.num_steps=250000 \
-        training.buffer_size=250000 \
+        training.num_steps=500000 \
+        training.buffer_size=500000 \
         online_task.subtask.enabled=False \
         online_task.subtask.reward_mode=sparse \
         training.utd=1.0"

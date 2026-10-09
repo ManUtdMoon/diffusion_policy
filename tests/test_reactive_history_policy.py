@@ -28,11 +28,10 @@ class DummyBasePolicy(torch.nn.Module):
 
 
 class ReactiveHistoryPolicyTest(unittest.TestCase):
-    def make_policy(self, dropout=0.0, tau=0.2):
+    def make_policy(self, tau=0.2):
         return HistoryResiduePolicy(
             obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
-            d_model=8, nhead=2, num_layers=2, dim_feedforward=16,
-            dropout=dropout, num_qs=3, num_subset=2, tau=tau,
+            num_qs=3, num_subset=2, tau=tau,
             res_scale=0.5)
 
     def make_batch(self):
@@ -60,17 +59,17 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
         self.assertTrue(all(not p.requires_grad for p in policy.q_targets.parameters()))
         self.assertFalse(policy.q_targets.training)
 
-        before = policy.qs.encoder.position.weight.detach().clone()
+        before = policy.qs.net[0].weight.detach().clone()
         loss, info = policy.compute_critic_loss(batch)
         optimizers['q_optimizer'].zero_grad()
         loss.backward()
         self.assertTrue(torch.isfinite(loss))
         self.assertIn('q_target', info)
-        self.assertGreater(policy.qs.encoder.position.weight.grad.abs().sum().item(), 0)
-        self.assertIsNone(policy.actor.encoder.position.weight.grad)
+        self.assertGreater(policy.qs.net[0].weight.grad.abs().sum().item(), 0)
+        self.assertIsNone(policy.actor.net[0].weight.grad)
         self.assertTrue(all(p.grad is None for p in policy.q_targets.parameters()))
         optimizers['q_optimizer'].step()
-        self.assertFalse(torch.equal(before, policy.qs.encoder.position.weight))
+        self.assertFalse(torch.equal(before, policy.qs.net[0].weight))
 
     def test_deferred_metrics_and_debug_preserve_losses_and_gradients(self):
         policy = self.make_policy()
@@ -109,16 +108,16 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
         batch = self.make_batch()
         policy.actor.eval()
         policy.qs.train()
-        before = policy.actor.encoder.position.weight.detach().clone()
+        before = policy.actor.net[0].weight.detach().clone()
         actor_loss, _ = policy.compute_actor_loss(batch)
         self.assertFalse(policy.actor.training)
         self.assertTrue(policy.qs.training)
         actor_loss.backward()
-        self.assertGreater(policy.actor.encoder.projection.weight.grad.abs().sum().item(), 0)
+        self.assertGreater(policy.actor.net[0].weight.grad.abs().sum().item(), 0)
         self.assertTrue(all(p.grad is None for p in policy.qs.parameters()))
         self.assertTrue(all(p.requires_grad for p in policy.qs.parameters()))
         policy.get_optimizer(1e-2, 1e-2)['actor_optimizer'].step()
-        self.assertFalse(torch.equal(before, policy.actor.encoder.position.weight))
+        self.assertFalse(torch.equal(before, policy.actor.net[0].weight))
         candidate = torch.randn(2, 2, requires_grad=True)
         q_value = policy.qs(batch.obs, batch.a_exec, batch.obs_valid, candidate)
         q_value.sum().backward()
@@ -127,7 +126,7 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
         self.assertGreater((changed - q_value).abs().max().item(), 1e-6)
 
     def test_modes_restore_and_target_stays_eval(self):
-        policy = self.make_policy(dropout=0.5)
+        policy = self.make_policy()
         batch = self.make_batch()
         policy.train()
         self.assertFalse(policy.q_targets.training)

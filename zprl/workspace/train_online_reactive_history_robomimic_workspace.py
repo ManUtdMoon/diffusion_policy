@@ -58,6 +58,8 @@ class TrainOnlineReactiveHistoryRobomimicWorkspace(BaseWorkspace):
         random.seed(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        torch.set_float32_matmul_precision('high')
+        torch.backends.cudnn.allow_tf32 = True
 
         # configure training state
         self.global_step = 0

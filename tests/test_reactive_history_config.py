@@ -74,8 +74,7 @@ def small_config(base_path, bootstrap='truncated'):
         'training.checkpoint_every=6', 'training.utd=1',
         'training.batch_size=2', 'training.buffer_size=12',
         'res_policy.hidden_dim=8', 'res_policy.num_qs=2',
-        'res_policy.d_model=8', 'res_policy.nhead=2', 'res_policy.num_layers=1',
-        'res_policy.dim_feedforward=16', 'res_policy.dropout=0.1',
+        'res_policy.history_length=4',
         f'training.bootstrap_at_done={bootstrap}',
     ])
 
@@ -148,11 +147,9 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         cfg = make_config()
         self.assertEqual(hydra.utils.get_class(cfg._target_),
                          workspace_module.TrainOnlineReactiveHistoryRobomimicWorkspace)
-        self.assertEqual((cfg.res_policy.d_model, cfg.res_policy.nhead, cfg.res_policy.num_layers,
-                          cfg.res_policy.dim_feedforward), (256, 4, 2, 1024))
-        self.assertEqual(cfg.res_policy.history_length, 4)
-        self.assertEqual(cfg.res_policy.dropout, 0.0)
-        self.assertTrue(cfg.res_policy.causal_mask)
+        self.assertEqual(cfg.res_policy.history_length, 2)
+        self.assertNotIn('network_type', cfg.res_policy)
+        self.assertNotIn('d_model', cfg.res_policy)
         self.assertEqual(cfg.training.n_step, 2)
         self.assertTrue(cfg.training.compile)
         self.assertEqual(cfg.n_rl_steps, 2)
@@ -171,15 +168,13 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
             with self.subTest(task=task):
                 cfg = make_config([f'online_task={task}_image_abs', f'n_action_steps={ta}',
                                    f'n_rl_steps={tr}', 'single_gamma=0.913',
-                                   'res_policy.history_length=3', 'res_policy.d_model=8', 'res_policy.nhead=2',
-                                   'res_policy.num_layers=1', 'res_policy.dim_feedforward=16',
-                                   'res_policy.causal_mask=true', 'res_policy.hidden_dim=8',
+                                   'res_policy.history_length=3', 'res_policy.hidden_dim=8',
                                    'res_policy.num_qs=2'])
                 policy = hydra.utils.instantiate(cfg.res_policy, obs_dim=1, action_dim=tr)
                 self.assertIsInstance(policy, HistoryResiduePolicy)
                 self.assertEqual(policy.history_length, 3)
                 self.assertEqual(policy.gamma, round(0.913 ** tr, 4))
-                self.assertTrue(policy.actor.encoder.causal_mask)
+                self.assertEqual(policy.actor.encoder.output_dim, 3)
                 self.assertEqual(cfg.online_task.env_runner.n_action_steps, tr)
 
 

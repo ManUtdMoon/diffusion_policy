@@ -180,13 +180,10 @@ class BatchedLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        # Simplified Kaiming uniform initialization for the batch
         for i in range(self.weight.size(0)):
-            nn.init.kaiming_uniform_(self.weight[i], a=5**0.5)
+            nn.init.xavier_uniform_(self.weight[i], gain=1.0)
             if self.use_bias:
-                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight[i])
-                bound = 1 / (fan_in**0.5) if fan_in > 0 else 0
-                nn.init.uniform_(self.bias[i], -bound, bound)
+                nn.init.zeros_(self.bias[i])
 
     def forward(self, x):
         # x: (num_batch, B, in_features)

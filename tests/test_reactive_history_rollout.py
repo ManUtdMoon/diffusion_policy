@@ -54,8 +54,7 @@ def make_obs(values, masks=None):
 def make_policy():
     residual = HistoryResiduePolicy(
         obs_dim=2, action_dim=2, history_length=4, hidden_dim=8,
-        d_model=8, nhead=2, num_layers=1, dim_feedforward=16,
-        dropout=0.1, num_qs=2)
+        num_qs=2)
     base = FakeBase()
     return HistorySumPolicy(0.5, 1, 1, 1, 4, base, residual, 2), base
 
@@ -200,8 +199,8 @@ class HistorySumRolloutTest(unittest.TestCase):
     def test_train_eval_copies_do_not_share_models_or_session_state(self):
         train, _ = make_policy()
         evaluation = copy.deepcopy(train)
-        self.assertNotEqual(train.res_policy.actor.encoder.projection.weight.data_ptr(),
-                            evaluation.res_policy.actor.encoder.projection.weight.data_ptr())
+        self.assertNotEqual(train.res_policy.actor.net[0].weight.data_ptr(),
+                            evaluation.res_policy.actor.net[0].weight.data_ptr())
         self.assertNotEqual(train.base_policy.weight.data_ptr(), evaluation.base_policy.weight.data_ptr())
         self.assertTrue(all(not p.requires_grad for p in train.base_policy.parameters()))
         self.assertTrue(all(not p.requires_grad for p in evaluation.base_policy.parameters()))

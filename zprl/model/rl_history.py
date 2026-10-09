@@ -9,7 +9,7 @@ import logging
 import torch
 import torch.nn as nn
 
-from zprl.model.online import BatchedLayerNorm, BatchedLinear, SquashedNormal, layer_init
+from zprl.model.online import Actor, BatchedLayerNorm, BatchedLinear, BatchedSoftQNet, SquashedNormal, layer_init
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,63 @@ class HistoryQEnsemble(nn.Module):
         x = torch.cat([h, candidate_exec], dim=-1)
         x = x.unsqueeze(0).expand(self.num_qs, -1, -1)
         return self.net(x)
+
+
+class FlattenHistoryEncoder(nn.Module):
+    def __init__(self, obs_dim, exec_dim, history_length, debug=False):
+        super().__init__()
+        assert history_length > 0
+        self.obs_dim = obs_dim
+        self.exec_dim = exec_dim
+        self.history_length = history_length
+        self.debug = debug
+        self.output_dim = history_length * obs_dim + (history_length - 1) * exec_dim
+
+    def forward(self, obs, a_exec, obs_valid):
+        batch_size = obs.shape[0]
+        assert obs.shape == (batch_size, self.history_length, self.obs_dim)
+        assert a_exec.shape == (batch_size, self.history_length, self.exec_dim)
+        assert obs_valid.shape == (batch_size, self.history_length)
+        assert obs_valid.dtype == torch.bool
+        assert obs.device == a_exec.device == obs_valid.device
+        assert obs.dtype == a_exec.dtype
+        if self.debug:
+            assert torch.all(obs_valid[:, -1])
+        obs = torch.where(obs_valid.unsqueeze(-1), obs, torch.zeros_like(obs))
+        past_exec = torch.where(obs_valid[:, :-1, None], a_exec[:, :-1],
+                                torch.zeros_like(a_exec[:, :-1]))
+        past = torch.cat([obs[:, :-1], past_exec], dim=-1).flatten(start_dim=1)
+        return torch.cat([past, obs[:, -1]], dim=-1)
+
+
+class HistoryMLPActor(HistoryActor):
+    def __init__(self, obs_dim, exec_dim, action_dim, history_length, hidden_dim=256,
+                 log_std_min=-10.0, log_std_max=2.0, debug=False):
+        nn.Module.__init__(self)
+        self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug)
+        actor = Actor(self.encoder.output_dim + exec_dim, action_dim, hidden_dim,
+                      log_std_min, log_std_max)
+        self.net = actor.net
+        self.mean = actor.mean
+        self.log_std = actor.log_std
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        logger.info(
+            "HistoryMLPActor parameters: %.4f M", _parameters_m(self)
+        )
+
+
+class HistoryMLPQEnsemble(HistoryQEnsemble):
+    def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
+                 debug=False):
+        nn.Module.__init__(self)
+        assert num_qs > 0
+        self.num_qs = num_qs
+        self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug)
+        self.net = BatchedSoftQNet(self.encoder.output_dim, exec_dim, num_qs, hidden_dim).net
+        logger.info(
+            "HistoryMLPQEnsemble parameters: %.4f M", _parameters_m(self)
+        )
 
 
 def main():
