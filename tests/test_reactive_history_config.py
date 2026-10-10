@@ -148,6 +148,7 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertEqual(hydra.utils.get_class(cfg._target_),
                          workspace_module.TrainOnlineReactiveHistoryRobomimicWorkspace)
         self.assertEqual(cfg.res_policy.history_length, 2)
+        self.assertEqual(cfg.res_policy.critic_action_input, 'base_res')
         self.assertNotIn('network_type', cfg.res_policy)
         self.assertNotIn('d_model', cfg.res_policy)
         self.assertEqual(cfg.training.n_step, 2)
@@ -174,7 +175,8 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
                 self.assertIsInstance(policy, HistoryResiduePolicy)
                 self.assertEqual(policy.history_length, 3)
                 self.assertEqual(policy.gamma, round(0.913 ** tr, 4))
-                self.assertEqual(policy.actor.encoder.output_dim, 3)
+                self.assertEqual(policy.actor.encoder.output_dim, 3 + 2 * tr)
+                self.assertEqual(policy.qs.net[0].weight.shape[1], 3 + 4 * tr)
                 self.assertEqual(cfg.online_task.env_runner.n_action_steps, tr)
 
 

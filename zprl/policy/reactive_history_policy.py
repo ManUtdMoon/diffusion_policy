@@ -52,7 +52,8 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             q_ent: bool = True,
             num_qs: int = 2,
             num_subset: int = 2,
-            debug: bool = False):
+            debug: bool = False,
+            critic_action_input: str = 'exec'):
         super().__init__()
         exec_dim = action_dim if exec_dim is None else exec_dim
         assert exec_dim == action_dim  # ResRL combines base and residual in exec space.
@@ -63,7 +64,8 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             hidden_dim=hidden_dim, debug=debug)
         self.actor = HistoryMLPActor(action_dim=action_dim, log_std_min=log_std_min,
                                   log_std_max=log_std_max, **common)
-        self.qs = HistoryMLPQEnsemble(num_qs=num_qs, **common)
+        self.qs = HistoryMLPQEnsemble(num_qs=num_qs,
+                                     critic_action_input=critic_action_input, **common)
         self.q_targets = copy.deepcopy(self.qs).requires_grad_(False).eval()
         self.log_alpha = nn.Parameter(torch.log(torch.tensor(init_alpha, dtype=torch.float32)))
 
@@ -72,6 +74,7 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         self.exec_dim = exec_dim
         self.history_length = history_length
         self.actor_input = actor_input
+        self.critic_action_input = critic_action_input
         self.num_qs = num_qs
         self.num_subset = num_subset
         self.gamma = gamma
@@ -100,6 +103,11 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         assert_shape(result['log_prob'], (obs.shape[0], 1))
         return result['sample'], result['log_prob'], result['log_std']
 
+    def _critic_values(self, critic, obs, a_exec, obs_valid, a_base, residual):
+        if self.critic_action_input == 'base_res':
+            return critic(obs, a_exec, obs_valid, a_base, residual)
+        return critic(obs, a_exec, obs_valid, a_base + self.res_scale * residual)
+
     def compute_critic_loss(self, batch: HistoryReplayBufferSamples, dist=None):
         bs = batch.rewards.shape[0]
         assert_shape(batch.action, (bs, self.action_dim))
@@ -110,9 +118,9 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             next_res, next_log_prob, _ = self._sample_naction_log_prob(
                 batch.next_obs, batch.next_a_exec, batch.next_obs_valid,
                 batch.next_a_base)
-            next_exec = batch.next_a_base + self.res_scale * next_res
-            target_q_all = self.q_targets(
-                batch.next_obs, batch.next_a_exec, batch.next_obs_valid, next_exec)
+            target_q_all = self._critic_values(
+                self.q_targets, batch.next_obs, batch.next_a_exec,
+                batch.next_obs_valid, batch.next_a_base, next_res)
             subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
             target_q_next = target_q_all[subset_indices].min(dim=0).values
             if self.q_ent:
@@ -125,10 +133,10 @@ class HistoryResiduePolicy(ModuleAttrMixin):
                 (1 - batch.dones.flatten()) * discounts * target_q_next.flatten())
             target_q = target_q.unsqueeze(0).expand(self.num_qs, -1)
 
-        current_exec = batch.a_base + self.res_scale * batch.action
         with _module_mode(self.qs, True):
-            all_q_preds = self.qs(batch.obs, batch.a_exec, batch.obs_valid,
-                                  current_exec).squeeze(-1)
+            all_q_preds = self._critic_values(
+                self.qs, batch.obs, batch.a_exec, batch.obs_valid,
+                batch.a_base, batch.action).squeeze(-1)
         critic_loss = F.mse_loss(all_q_preds, target_q, reduction='none').mean(dim=-1).sum()
         info = {
             'q_target': target_q.mean().detach(),
@@ -146,10 +154,10 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         with _module_mode(self.actor, True):
             res_action, log_prob, log_std = self._sample_naction_log_prob(
                 batch.obs, batch.a_exec, batch.obs_valid, batch.a_base)
-            candidate_exec = batch.a_base + self.res_scale * res_action
             with _module_mode(self.qs, False), _frozen_parameters(self.qs):
-                all_q_preds = self.qs(batch.obs, batch.a_exec, batch.obs_valid,
-                                      candidate_exec)
+                all_q_preds = self._critic_values(
+                    self.qs, batch.obs, batch.a_exec, batch.obs_valid,
+                    batch.a_base, res_action)
             predicted_q = all_q_preds.mean(dim=0)
             assert_shape(predicted_q, (bs, 1))
             actor_loss = (alpha * log_prob - predicted_q).mean()

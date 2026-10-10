@@ -8,6 +8,7 @@ _target_: zprl.workspace.train_online_reactive_history_robomimic_workspace.Train
 res_policy:
   _target_: zprl.policy.reactive_history_policy.HistoryResiduePolicy
   history_length: 2
+  critic_action_input: base_res
   debug: ${training.debug}
 
 training:

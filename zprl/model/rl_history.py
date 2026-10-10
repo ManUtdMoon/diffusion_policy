@@ -127,15 +127,20 @@ class HistoryActor(nn.Module):
 class HistoryQEnsemble(nn.Module):
     def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
                  d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
-                 dropout=0.1, causal_mask=False, debug=False):
+                 dropout=0.1, causal_mask=False, debug=False,
+                 critic_action_input='exec'):
         super().__init__()
         assert num_qs > 0
+        if critic_action_input not in ('exec', 'base_res'):
+            raise ValueError(f"Invalid critic_action_input: {critic_action_input}")
+        self.critic_action_input = critic_action_input
         self.num_qs = num_qs
         self.encoder = HistoryEncoder(obs_dim, exec_dim, history_length, d_model,
                                       nhead, num_layers, dim_feedforward, dropout,
                                       causal_mask, debug)
+        critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
         self.net = nn.Sequential(
-            BatchedLinear(num_qs, d_model + exec_dim, hidden_dim),
+            BatchedLinear(num_qs, d_model + critic_action_dim, hidden_dim),
             BatchedLayerNorm(num_qs, hidden_dim),
             nn.Tanh(),
             BatchedLinear(num_qs, hidden_dim, hidden_dim),
@@ -147,14 +152,21 @@ class HistoryQEnsemble(nn.Module):
             BatchedLinear(num_qs, hidden_dim, 1),
         )
         logger.info(
-            "HistoryQEnsemble parameters: encoder=%.4f M, net=%.4f M",
-            _parameters_m(self.encoder), _parameters_m(self.net))
+            "HistoryQEnsemble parameters: encoder=%.4f M, net=%.4f M, critic_action_input=%s",
+            _parameters_m(self.encoder), _parameters_m(self.net), critic_action_input)
 
-    def forward(self, obs, a_exec, obs_valid, candidate_exec):
+    def forward(self, obs, a_exec, obs_valid, candidate_action, candidate_res=None):
         h = self.encoder(obs, a_exec, obs_valid)
-        assert candidate_exec.shape == (obs.shape[0], self.encoder.exec_dim)
-        assert candidate_exec.device == h.device and candidate_exec.dtype == h.dtype
-        x = torch.cat([h, candidate_exec], dim=-1)
+        assert candidate_action.shape == (obs.shape[0], self.encoder.exec_dim)
+        assert candidate_action.device == h.device and candidate_action.dtype == h.dtype
+        if self.critic_action_input == 'base_res':
+            assert candidate_res is not None
+            assert candidate_res.shape == candidate_action.shape
+            assert candidate_res.device == h.device and candidate_res.dtype == h.dtype
+            x = torch.cat([h, candidate_action, candidate_res], dim=-1)
+        else:
+            assert candidate_res is None
+            x = torch.cat([h, candidate_action], dim=-1)
         x = x.unsqueeze(0).expand(self.num_qs, -1, -1)
         return self.net(x)
 
@@ -205,15 +217,20 @@ class HistoryMLPActor(HistoryActor):
 
 class HistoryMLPQEnsemble(HistoryQEnsemble):
     def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
-                 debug=False):
+                 debug=False, critic_action_input='exec'):
         nn.Module.__init__(self)
         assert num_qs > 0
+        if critic_action_input not in ('exec', 'base_res'):
+            raise ValueError(f"Invalid critic_action_input: {critic_action_input}")
+        self.critic_action_input = critic_action_input
         self.num_qs = num_qs
         self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug)
-        self.net = BatchedSoftQNet(self.encoder.output_dim, exec_dim, num_qs, hidden_dim).net
+        critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
+        self.net = BatchedSoftQNet(self.encoder.output_dim, critic_action_dim, num_qs, hidden_dim).net
         logger.info(
             "HistoryMLPQEnsemble parameters: %.4f M", _parameters_m(self)
         )
+        logger.info("Critic action input: %s", critic_action_input)
 
 
 def main():

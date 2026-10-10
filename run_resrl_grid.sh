@@ -7,6 +7,7 @@ SCRIPT_PATH="${ROOT_DIR}/run_resrl_grid.sh"
 SESSION="${SESSION:-resrl-grid}"
 GPUS=(0 1 2 3)
 CASES=(
+    "1"
     "2"
     "4"
 )
@@ -30,7 +31,7 @@ run_worker() {
                 continue
             fi
 
-            local exp_name="resrl:o_h${history_length}_mlp-u1_2-Ta4-Tr2-buf_N2"
+            local exp_name="resrl:oa_h${history_length}_mlp-qbr-A4R2-buf_N2"
             local job_dir="${run_root}/history_${history_length}/seed_${seed}"
             mkdir -p "${job_dir}"
             printf '%s\tSTART\tgpu=%s\thistory_length=%s\tseed=%s\n' \
@@ -50,6 +51,7 @@ run_worker() {
                 online_task.subtask.reward_mode=sparse \
                 n_action_steps=4 n_rl_steps=2 \
                 "res_policy.history_length=${history_length}" \
+                res_policy.critic_action_input=base_res \
                 training.utd=1.0 training.policy_freq=2 training.n_step=2 \
                 "exp_name=${exp_name}" \
                 "logging.name=${exp_name}_square_seed${seed}" \

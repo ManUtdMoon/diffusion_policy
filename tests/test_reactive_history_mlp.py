@@ -17,13 +17,13 @@ class ReactiveHistoryMLPTest(unittest.TestCase):
         actions = torch.tensor([[[10.], [20.], [float('nan')]]])
         valid = torch.ones(1, 3, dtype=torch.bool)
         torch.testing.assert_close(encoder(obs, actions, valid),
-                                   torch.tensor([[1., 2., 3., 4., 5., 6.]]))
-        self.assertEqual(encoder.output_dim, 6)
+                                   torch.tensor([[1., 2., 10., 3., 4., 20., 5., 6.]]))
+        self.assertEqual(encoder.output_dim, 8)
         valid[:, 0] = False
         obs[:, 0] = float('nan')
         actions[:, 0] = float('nan')
         torch.testing.assert_close(encoder(obs, actions, valid),
-                                   torch.tensor([[0., 0., 3., 4., 5., 6.]]))
+                                   torch.tensor([[0., 0., 0., 3., 4., 20., 5., 6.]]))
         current = FlattenHistoryEncoder(2, 1, 1)
         torch.testing.assert_close(current(obs[:, -1:], actions[:, -1:], valid[:, -1:]),
                                    torch.tensor([[5., 6.]]))
@@ -58,7 +58,9 @@ class ReactiveHistoryMLPTest(unittest.TestCase):
                     torch.testing.assert_close(result[key], reference[key], atol=0, rtol=0)
                 value = qs(obs, actions, valid, candidate)
                 torch.testing.assert_close(value, reference_q(flat, candidate), atol=0, rtol=0)
-                changed_actions = torch.full_like(actions, float('nan'))
+                changed_actions = actions.detach().clone()
+                changed_actions[~valid] = float('nan')
+                changed_actions[:, -1] = float('nan')
                 for actual, changed in zip(actor(obs, actions, valid, base),
                                            actor(obs, changed_actions, valid, base)):
                     torch.testing.assert_close(actual, changed, atol=0, rtol=0)
@@ -66,9 +68,10 @@ class ReactiveHistoryMLPTest(unittest.TestCase):
                                            atol=0, rtol=0)
                 (value.sum() + result['sample'].sum()).backward()
                 self.assertGreater(candidate.grad.abs().sum().item(), 0)
-                self.assertIsNone(actions.grad)
+                torch.testing.assert_close(actions.grad[:, -1], torch.zeros_like(actions.grad[:, -1]))
                 torch.testing.assert_close(obs.grad[~valid], torch.zeros_like(obs.grad[~valid]))
                 if length > 1:
+                    self.assertGreater(actions.grad[1, :-1].abs().sum().item(), 0)
                     self.assertGreater(obs.grad[1, :-1].abs().sum().item(), 0)
 
     def test_sac_loss_gradients_and_optimizer_step_match_original(self):
