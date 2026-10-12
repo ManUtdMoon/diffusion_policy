@@ -13,8 +13,8 @@ horizon: 16
 n_obs_steps: 1
 n_action_steps: 4 # 5 for transport, others 4
 n_latency_steps: 0
-single_gamma: 0.99  # single-step gamma; multi-step gamma for RL is computed from this
-num_inference_steps: 5
+single_gamma: 0.997  # single-step gamma; multi-step gamma for RL is computed from this
+num_inference_steps: 20
 
 res_policy:
   _target_: zprl.policy.residue_policy.ResiduePolicy

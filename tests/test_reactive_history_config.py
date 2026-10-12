@@ -15,6 +15,7 @@ from click.testing import CliRunner
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
+from tests import test_reactive_history_policy as policy_tests
 from tests.test_reactive_policy import DummyBasePolicy as BasePolicy, FakeVectorEnv
 from zprl.common.reactive_history_replay_buffer import ReactiveHistoryReplayBuffer
 from zprl.policy.reactive_history_policy import HistoryResiduePolicy, HistorySumPolicy
@@ -148,7 +149,9 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertEqual(hydra.utils.get_class(cfg._target_),
                          workspace_module.TrainOnlineReactiveHistoryRobomimicWorkspace)
         self.assertEqual(cfg.res_policy.history_length, 2)
+        self.assertEqual(cfg.res_policy.sub_ratio, 2)
         self.assertEqual(cfg.res_policy.critic_action_input, 'base_res')
+        self.assertIsNone(cfg.res_policy.target_clip)
         self.assertNotIn('network_type', cfg.res_policy)
         self.assertNotIn('d_model', cfg.res_policy)
         self.assertEqual(cfg.training.n_step, 2)
@@ -164,6 +167,30 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertNotIn('history', old)
         self.assertNotIn('compile', old.training)
 
+    def test_target_clip_override_and_checkpoint_roundtrip(self):
+        cfg = make_config(['res_policy.target_clip=[-1,2]',
+                           'res_policy.history_length=3',
+                           'res_policy.hidden_dim=8', 'res_policy.num_qs=3'])
+        policy = hydra.utils.instantiate(cfg.res_policy, obs_dim=3, action_dim=2)
+        self.assertEqual(policy.target_clip, (-1., 2.))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / 'online.ckpt'
+            torch.save({'cfg': cfg, 'res_policy': policy.state_dict()}, path, pickle_module=dill)
+            payload = torch.load(path, pickle_module=dill)
+            restored = hydra.utils.instantiate(payload['cfg'].res_policy, obs_dim=3, action_dim=2)
+            restored.load_state_dict(payload['res_policy'])
+            self.assertEqual(restored.target_clip, policy.target_clip)
+            batch = policy_tests.ReactiveHistoryPolicyTest().make_batch()
+            torch.manual_seed(42)
+            expected, _ = policy.compute_critic_loss(batch)
+            torch.manual_seed(42)
+            actual, _ = restored.compute_critic_loss(batch)
+            torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+            del cfg.res_policy.target_clip
+            legacy = hydra.utils.instantiate(cfg.res_policy, obs_dim=3, action_dim=2)
+            legacy.load_state_dict(payload['res_policy'])
+            self.assertIsNone(legacy.target_clip)
+
     def test_history_and_segment_overrides_reach_policy_and_runner(self):
         for task, ta, tr in [('square', 4, 2), ('transport', 5, 1), ('tool_hang', 8, 4)]:
             with self.subTest(task=task):
@@ -174,9 +201,10 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
                 policy = hydra.utils.instantiate(cfg.res_policy, obs_dim=1, action_dim=tr)
                 self.assertIsInstance(policy, HistoryResiduePolicy)
                 self.assertEqual(policy.history_length, 3)
+                self.assertEqual(policy.sub_ratio, 2)
                 self.assertEqual(policy.gamma, round(0.913 ** tr, 4))
-                self.assertEqual(policy.actor.encoder.output_dim, 3 + 2 * tr)
-                self.assertEqual(policy.qs.net[0].weight.shape[1], 3 + 4 * tr)
+                self.assertEqual(policy.actor.encoder.output_dim, 2 + tr)
+                self.assertEqual(policy.qs.net[0].weight.shape[1], 2 + 3 * tr)
                 self.assertEqual(cfg.online_task.env_runner.n_action_steps, tr)
 
 

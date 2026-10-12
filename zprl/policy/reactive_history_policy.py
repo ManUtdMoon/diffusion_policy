@@ -53,15 +53,23 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             num_qs: int = 2,
             num_subset: int = 2,
             debug: bool = False,
-            critic_action_input: str = 'exec'):
+            critic_action_input: str = 'exec',
+            sub_ratio: int = 1,
+            target_clip: list = None):
         super().__init__()
+        if target_clip is not None:
+            if len(target_clip) != 2:
+                raise ValueError('target_clip must contain [lb, ub]')
+            target_clip = tuple(float(bound) for bound in target_clip)
+            if not target_clip[0] <= target_clip[1]:
+                raise ValueError('target_clip lb must not exceed the ub')
         exec_dim = action_dim if exec_dim is None else exec_dim
         assert exec_dim == action_dim  # ResRL combines base and residual in exec space.
         assert actor_input == 'obs_action'
         assert 0 < num_subset <= num_qs
         common = dict(
             obs_dim=obs_dim, exec_dim=exec_dim, history_length=history_length,
-            hidden_dim=hidden_dim, debug=debug)
+            hidden_dim=hidden_dim, debug=debug, sub_ratio=sub_ratio)
         self.actor = HistoryMLPActor(action_dim=action_dim, log_std_min=log_std_min,
                                   log_std_max=log_std_max, **common)
         self.qs = HistoryMLPQEnsemble(num_qs=num_qs,
@@ -73,6 +81,7 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         self.action_dim = action_dim
         self.exec_dim = exec_dim
         self.history_length = history_length
+        self.sub_ratio = sub_ratio
         self.actor_input = actor_input
         self.critic_action_input = critic_action_input
         self.num_qs = num_qs
@@ -84,6 +93,7 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         self.target_entropy = -action_dim / 2
         self.res_scale = res_scale
         self.q_ent = q_ent
+        self.target_clip = target_clip
 
     def train(self, mode=True):
         super().train(mode)
@@ -131,6 +141,8 @@ class HistoryResiduePolicy(ModuleAttrMixin):
                 assert_shape(discounts, (bs,))
             target_q = batch.rewards.flatten() + (
                 (1 - batch.dones.flatten()) * discounts * target_q_next.flatten())
+            if self.target_clip is not None:
+                target_q = target_q.clamp(*self.target_clip)
             target_q = target_q.unsqueeze(0).expand(self.num_qs, -1)
 
         with _module_mode(self.qs, True):

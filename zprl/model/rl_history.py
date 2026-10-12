@@ -18,21 +18,29 @@ def _parameters_m(module):
     return sum(p.numel() for p in module.parameters()) / 1e6
 
 
+def _subsample_history(obs, a_exec, obs_valid, sub_ratio):
+    # Anchor at the current observation and keep chronological oa pairs.
+    start = (obs.shape[1] - 1) % sub_ratio
+    return obs[:, start::sub_ratio], a_exec[:, start::sub_ratio], obs_valid[:, start::sub_ratio]
+
+
 class HistoryEncoder(nn.Module):
     def __init__(self, obs_dim, exec_dim, history_length, d_model=256, nhead=4,
                  num_layers=4, dim_feedforward=1024, dropout=0.1, causal_mask=False,
-                 debug=False):
+                 debug=False, sub_ratio=1):
         super().__init__()
         assert history_length > 0
+        assert isinstance(sub_ratio, int) and sub_ratio > 0
         assert d_model % nhead == 0
         self.obs_dim = obs_dim
         self.exec_dim = exec_dim
         self.history_length = history_length
+        self.sub_ratio = sub_ratio
         self.nhead = nhead
         self.causal_mask = causal_mask
         self.debug = debug
         self.projection = nn.Linear(obs_dim + exec_dim, d_model)
-        self.position = nn.Embedding(history_length, d_model)
+        self.position = nn.Embedding((history_length - 1) // sub_ratio + 1, d_model)
         layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
             dropout=dropout, batch_first=True, norm_first=True)
@@ -50,6 +58,8 @@ class HistoryEncoder(nn.Module):
         assert obs.device == a_exec.device == obs_valid.device
         assert obs.dtype == a_exec.dtype
 
+        obs, a_exec, obs_valid = _subsample_history(obs, a_exec, obs_valid, self.sub_ratio)
+        history_length = obs.shape[1]
         # The action for the decision being evaluated is never part of its history.
         a_exec = torch.cat([a_exec[:, :-1], torch.zeros_like(a_exec[:, -1:])], dim=1)
         obs = torch.where(obs_valid.unsqueeze(-1), obs, torch.zeros_like(obs))
@@ -73,11 +83,11 @@ class HistoryActor(nn.Module):
     def __init__(self, obs_dim, exec_dim, action_dim, history_length, hidden_dim=256,
                  d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
                  dropout=0.1, causal_mask=False, log_std_min=-10.0, log_std_max=2.0,
-                 debug=False):
+                 debug=False, sub_ratio=1):
         super().__init__()
         self.encoder = HistoryEncoder(obs_dim, exec_dim, history_length, d_model,
                                       nhead, num_layers, dim_feedforward, dropout,
-                                      causal_mask, debug)
+                                      causal_mask, debug, sub_ratio)
         self.net = nn.Sequential(
             layer_init(nn.Linear(d_model + exec_dim, hidden_dim)),
             nn.GELU(),
@@ -128,7 +138,7 @@ class HistoryQEnsemble(nn.Module):
     def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
                  d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
                  dropout=0.1, causal_mask=False, debug=False,
-                 critic_action_input='exec'):
+                 critic_action_input='exec', sub_ratio=1):
         super().__init__()
         assert num_qs > 0
         if critic_action_input not in ('exec', 'base_res'):
@@ -137,7 +147,7 @@ class HistoryQEnsemble(nn.Module):
         self.num_qs = num_qs
         self.encoder = HistoryEncoder(obs_dim, exec_dim, history_length, d_model,
                                       nhead, num_layers, dim_feedforward, dropout,
-                                      causal_mask, debug)
+                                      causal_mask, debug, sub_ratio)
         critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
         self.net = nn.Sequential(
             BatchedLinear(num_qs, d_model + critic_action_dim, hidden_dim),
@@ -172,14 +182,17 @@ class HistoryQEnsemble(nn.Module):
 
 
 class FlattenHistoryEncoder(nn.Module):
-    def __init__(self, obs_dim, exec_dim, history_length, debug=False):
+    def __init__(self, obs_dim, exec_dim, history_length, debug=False, sub_ratio=1):
         super().__init__()
         assert history_length > 0
+        assert isinstance(sub_ratio, int) and sub_ratio > 0
         self.obs_dim = obs_dim
         self.exec_dim = exec_dim
         self.history_length = history_length
+        self.sub_ratio = sub_ratio
         self.debug = debug
-        self.output_dim = history_length * obs_dim + (history_length - 1) * exec_dim
+        sampled_length = (history_length - 1) // sub_ratio + 1
+        self.output_dim = sampled_length * obs_dim + (sampled_length - 1) * exec_dim
 
     def forward(self, obs, a_exec, obs_valid):
         batch_size = obs.shape[0]
@@ -191,6 +204,7 @@ class FlattenHistoryEncoder(nn.Module):
         assert obs.dtype == a_exec.dtype
         if self.debug:
             assert torch.all(obs_valid[:, -1])
+        obs, a_exec, obs_valid = _subsample_history(obs, a_exec, obs_valid, self.sub_ratio)
         obs = torch.where(obs_valid.unsqueeze(-1), obs, torch.zeros_like(obs))
         past_exec = torch.where(obs_valid[:, :-1, None], a_exec[:, :-1],
                                 torch.zeros_like(a_exec[:, :-1]))
@@ -200,9 +214,9 @@ class FlattenHistoryEncoder(nn.Module):
 
 class HistoryMLPActor(HistoryActor):
     def __init__(self, obs_dim, exec_dim, action_dim, history_length, hidden_dim=256,
-                 log_std_min=-10.0, log_std_max=2.0, debug=False):
+                 log_std_min=-10.0, log_std_max=2.0, debug=False, sub_ratio=1):
         nn.Module.__init__(self)
-        self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug)
+        self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug, sub_ratio)
         actor = Actor(self.encoder.output_dim + exec_dim, action_dim, hidden_dim,
                       log_std_min, log_std_max)
         self.net = actor.net
@@ -217,14 +231,14 @@ class HistoryMLPActor(HistoryActor):
 
 class HistoryMLPQEnsemble(HistoryQEnsemble):
     def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
-                 debug=False, critic_action_input='exec'):
+                 debug=False, critic_action_input='exec', sub_ratio=1):
         nn.Module.__init__(self)
         assert num_qs > 0
         if critic_action_input not in ('exec', 'base_res'):
             raise ValueError(f"Invalid critic_action_input: {critic_action_input}")
         self.critic_action_input = critic_action_input
         self.num_qs = num_qs
-        self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug)
+        self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug, sub_ratio)
         critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
         self.net = BatchedSoftQNet(self.encoder.output_dim, critic_action_dim, num_qs, hidden_dim).net
         logger.info(

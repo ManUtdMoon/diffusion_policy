@@ -8,7 +8,9 @@ _target_: zprl.workspace.train_online_reactive_history_robomimic_workspace.Train
 res_policy:
   _target_: zprl.policy.reactive_history_policy.HistoryResiduePolicy
   history_length: 2
+  sub_ratio: 1  # Keep t, t-ratio, ... within the history_length window.
   critic_action_input: base_res
+  target_clip: [0, 1]  # [lb, ub] for the complete TD target; null disables clipping.
   debug: ${training.debug}
 
 training:

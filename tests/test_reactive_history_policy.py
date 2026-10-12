@@ -28,11 +28,11 @@ class DummyBasePolicy(torch.nn.Module):
 
 
 class ReactiveHistoryPolicyTest(unittest.TestCase):
-    def make_policy(self, tau=0.2):
+    def make_policy(self, tau=0.2, target_clip=None):
         return HistoryResiduePolicy(
             obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
             num_qs=3, num_subset=2, tau=tau,
-            res_scale=0.5)
+            res_scale=0.5, target_clip=target_clip)
 
     def make_batch(self):
         obs = torch.randn(2, 3, 3)
@@ -244,6 +244,60 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
         torch.manual_seed(7)
         same_exec_loss, _ = policy.compute_critic_loss(same_exec)
         torch.testing.assert_close(original_loss, same_exec_loss)
+
+    def test_target_clip_applies_to_complete_critic_targets(self):
+        batch = self.make_batch()
+        batch = batch._replace(**{name: torch.cat([value, value], dim=0)
+                                  for name, value in batch._asdict().items()})
+        batch = batch._replace(
+            rewards=torch.tensor([[-4.], [0.], [1.], [4.]]),
+            dones=torch.tensor([[0.], [0.], [0.], [1.]]),
+            discounts=torch.tensor([[0.8], [0.4], [0.9], [0.6]]))
+        target_values = torch.tensor([[[2.], [1.], [3.], [100.]]]).expand(3, -1, -1)
+        for target_clip, expected in ((None, [-2., 0.6, 4.15, 4.]),
+                                      ([-1., 2.], [-1., 0.6, 2., 2.])):
+            with self.subTest(target_clip=target_clip):
+                policy = self.make_policy(target_clip=target_clip)
+                policy.auto_alpha = False
+                policy.init_alpha = 0.25
+                original_q = policy.qs.forward
+                with patch.object(policy, '_sample_naction_log_prob',
+                                  return_value=(torch.zeros(4, 2), torch.full((4, 1), -2.), None)), \
+                     patch.object(policy.q_targets, 'forward', return_value=target_values), \
+                     patch.object(policy.qs, 'forward', side_effect=lambda *args: original_q(*args) + 10), \
+                     patch('zprl.policy.reactive_history_policy.F.mse_loss',
+                           wraps=torch.nn.functional.mse_loss) as mse_loss:
+                    loss, info = policy.compute_critic_loss(batch)
+                predictions, targets = mse_loss.call_args.args[:2]
+                expected = torch.tensor(expected)[None].expand(policy.num_qs, -1)
+                torch.testing.assert_close(targets, expected)
+                torch.testing.assert_close(info['q_target'], expected.mean())
+                self.assertGreater(predictions.min().item(), 2)
+                self.assertFalse(targets.requires_grad)
+                loss.backward()
+                self.assertGreater(policy.qs.net[0].weight.grad.abs().sum().item(), 0)
+                self.assertTrue(all(p.grad is None for p in policy.actor.parameters()))
+                self.assertTrue(all(p.grad is None for p in policy.q_targets.parameters()))
+                self.assertIsNone(policy.log_alpha.grad)
+
+    def test_target_clip_does_not_change_actor_or_alpha_loss(self):
+        policy = self.make_policy()
+        clipped = self.make_policy(target_clip=[0., 0.])
+        clipped.load_state_dict(policy.state_dict())
+        batch = self.make_batch()
+        for method in ('compute_actor_loss', 'compute_alpha_loss'):
+            torch.manual_seed(42)
+            expected = getattr(policy, method)(batch)
+            torch.manual_seed(42)
+            actual = getattr(clipped, method)(batch)
+            expected = expected[0] if isinstance(expected, tuple) else expected
+            actual = actual[0] if isinstance(actual, tuple) else actual
+            torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+    def test_invalid_target_clip_is_rejected(self):
+        for bounds in ([0.], [0., 1., 2.], [2., -1.]):
+            with self.subTest(bounds=bounds), self.assertRaises(ValueError):
+                self.make_policy(target_clip=bounds)
 
     def test_alpha_optimizer_and_sum_policy_freeze(self):
         policy = self.make_policy()
