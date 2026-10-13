@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from zprl.common.reactive_history import HistoryReplayBufferSamples, HistoryWindow
 from zprl.model.common.module_attr_mixin import ModuleAttrMixin
 from zprl.model.common.shape_util import assert_shape
-from zprl.model.rl_history import HistoryMLPActor, HistoryMLPQEnsemble
+from zprl.model.rl_history import HistoryActor, HistoryQEnsemble
 from zprl.policy.reactive_policy import SumPolicy as ReactiveSumPolicy
 
 
@@ -55,7 +55,13 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             debug: bool = False,
             critic_action_input: str = 'exec',
             sub_ratio: int = 1,
-            target_clip: list = None):
+            target_clip: list = None,
+            d_model: int = 256,
+            nhead: int = 4,
+            num_layers: int = 2,
+            dim_feedforward: int = 1024,
+            dropout: float = 0.0,
+            causal_mask: bool = True):
         super().__init__()
         if target_clip is not None:
             if len(target_clip) != 2:
@@ -69,10 +75,12 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         assert 0 < num_subset <= num_qs
         common = dict(
             obs_dim=obs_dim, exec_dim=exec_dim, history_length=history_length,
-            hidden_dim=hidden_dim, debug=debug, sub_ratio=sub_ratio)
-        self.actor = HistoryMLPActor(action_dim=action_dim, log_std_min=log_std_min,
+            hidden_dim=hidden_dim, debug=debug, sub_ratio=sub_ratio,
+            d_model=d_model, nhead=nhead, num_layers=num_layers,
+            dim_feedforward=dim_feedforward, dropout=dropout, causal_mask=causal_mask)
+        self.actor = HistoryActor(action_dim=action_dim, log_std_min=log_std_min,
                                   log_std_max=log_std_max, **common)
-        self.qs = HistoryMLPQEnsemble(num_qs=num_qs,
+        self.qs = HistoryQEnsemble(num_qs=num_qs,
                                      critic_action_input=critic_action_input, **common)
         self.q_targets = copy.deepcopy(self.qs).requires_grad_(False).eval()
         self.log_alpha = nn.Parameter(torch.log(torch.tensor(init_alpha, dtype=torch.float32)))

@@ -32,7 +32,8 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
         return HistoryResiduePolicy(
             obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
             num_qs=3, num_subset=2, tau=tau,
-            res_scale=0.5, target_clip=target_clip)
+            res_scale=0.5, target_clip=target_clip, d_model=8, nhead=2,
+            num_layers=2, dim_feedforward=16)
 
     def make_batch(self):
         obs = torch.randn(2, 3, 3)

@@ -18,6 +18,7 @@ from omegaconf import OmegaConf
 from tests import test_reactive_history_policy as policy_tests
 from tests.test_reactive_policy import DummyBasePolicy as BasePolicy, FakeVectorEnv
 from zprl.common.reactive_history_replay_buffer import ReactiveHistoryReplayBuffer
+from zprl.model.rl_history import HistoryActor, HistoryQEnsemble
 from zprl.policy.reactive_history_policy import HistoryResiduePolicy, HistorySumPolicy
 from zprl.policy.reactive_policy import SumPolicy as ReactiveSumPolicy
 from zprl.policy.residue_policy import SumPolicy as ActionSumPolicy
@@ -151,9 +152,15 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertEqual(cfg.res_policy.history_length, 2)
         self.assertEqual(cfg.res_policy.sub_ratio, 2)
         self.assertEqual(cfg.res_policy.critic_action_input, 'base_res')
-        self.assertIsNone(cfg.res_policy.target_clip)
+        self.assertEqual(list(cfg.res_policy.target_clip), [0, 1])
         self.assertNotIn('network_type', cfg.res_policy)
-        self.assertNotIn('d_model', cfg.res_policy)
+        self.assertEqual(hydra.utils.get_class(cfg.res_policy._target_), HistoryResiduePolicy)
+        self.assertEqual(cfg.res_policy.d_model, 128)
+        self.assertEqual(cfg.res_policy.nhead, 4)
+        self.assertEqual(cfg.res_policy.num_layers, 2)
+        self.assertEqual(cfg.res_policy.dim_feedforward, 512)
+        self.assertEqual(cfg.res_policy.dropout, 0)
+        self.assertTrue(cfg.res_policy.causal_mask)
         self.assertEqual(cfg.training.n_step, 2)
         self.assertTrue(cfg.training.compile)
         self.assertEqual(cfg.n_rl_steps, 2)
@@ -197,14 +204,17 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
                 cfg = make_config([f'online_task={task}_image_abs', f'n_action_steps={ta}',
                                    f'n_rl_steps={tr}', 'single_gamma=0.913',
                                    'res_policy.history_length=3', 'res_policy.hidden_dim=8',
-                                   'res_policy.num_qs=2'])
+                                   'res_policy.num_qs=2', 'res_policy.sub_ratio=2'])
                 policy = hydra.utils.instantiate(cfg.res_policy, obs_dim=1, action_dim=tr)
                 self.assertIsInstance(policy, HistoryResiduePolicy)
+                self.assertIs(type(policy.actor), HistoryActor)
+                self.assertIs(type(policy.qs), HistoryQEnsemble)
                 self.assertEqual(policy.history_length, 3)
                 self.assertEqual(policy.sub_ratio, 2)
                 self.assertEqual(policy.gamma, round(0.913 ** tr, 4))
-                self.assertEqual(policy.actor.encoder.output_dim, 2 + tr)
-                self.assertEqual(policy.qs.net[0].weight.shape[1], 2 + 3 * tr)
+                self.assertEqual(policy.actor.encoder.position.num_embeddings, 2)
+                self.assertEqual(policy.actor.net[0].in_features, cfg.res_policy.d_model + 1 + tr)
+                self.assertEqual(policy.qs.net[0].weight.shape[1], cfg.res_policy.d_model + 1 + 2 * tr)
                 self.assertEqual(cfg.online_task.env_runner.n_action_steps, tr)
 
 

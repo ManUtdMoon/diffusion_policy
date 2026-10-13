@@ -8,11 +8,10 @@ SESSION="${SESSION:-resrl-grid}"
 GPUS=(0 1 2 3)
 CASES=(
     "1"
-    "2"
-    "4"
 )
 SEEDS=(40 50 60)
-BASE_CKPT="data/upload/offline/square/novib/checkpoints/epoch_0500-score_0.450.ckpt"
+CRITIC_ACTION_INPUTS=(base_res)
+BASE_CKPT="data/upload/offline/tool_hang/novib/checkpoints/latest.ckpt"
 
 run_worker() {
     local gpu="$1"
@@ -24,53 +23,56 @@ run_worker() {
     cd "${ROOT_DIR}"
     eval "$(mamba shell hook --shell bash)"
     mamba activate zprl
-    for history_length in "${CASES[@]}"; do
-        for seed in "${SEEDS[@]}"; do
-            if (( job_idx % ${#GPUS[@]} != worker_id )); then
+    for critic_action_input in "${CRITIC_ACTION_INPUTS[@]}"; do
+        for history_length in "${CASES[@]}"; do
+            for seed in "${SEEDS[@]}"; do
+                if (( job_idx % ${#GPUS[@]} != worker_id )); then
+                    ((job_idx += 1))
+                    continue
+                fi
+
+                local exp_name="resrl:oa_h${history_length}s2_tfog-hoa_clipq-qbr-a8r1-buf8"
+                local job_dir="${run_root}/critic_${critic_action_input}/a8r1-history_${history_length}/seed_${seed}"
+                mkdir -p "${job_dir}"
+                printf '%s\tSTART\tgpu=%s\thistory_length=%s\tseed=%s\tcritic_action_input=%s\n' \
+                    "$(date --iso-8601=seconds)" "${gpu}" "${history_length}" "${seed}" "${critic_action_input}" \
+                    >> "${run_root}/status_gpu${gpu}.tsv"
+
+                MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID="${gpu}" \
+                    python train.py \
+                    --config-name=train_online_reactive_history_robomimic_workspace \
+                    online_task=tool_hang_image_abs \
+                    "online_task.base_ckpt=${BASE_CKPT}" \
+                    "training.device=cuda:${gpu}" \
+                    "training.seed=${seed}" \
+                    training.num_steps=500000 \
+                    training.buffer_size=500000 \
+                    online_task.subtask.enabled=False \
+                    online_task.subtask.reward_mode=sparse \
+                    n_action_steps=8 n_rl_steps=1 \
+                    "res_policy.history_length=${history_length}" \
+                    "res_policy.critic_action_input=${critic_action_input}" \
+                    training.utd=0.5 training.policy_freq=2 \
+                    training.n_step=8 training.learning_start=40000 training.training_freq=1000 \
+                    "exp_name=${exp_name}" \
+                    "logging.name=${exp_name}_tool_hang_seed${seed}" \
+                    "hydra.run.dir=${job_dir}" \
+                    2>&1 | tee "${job_dir}/console.log"
+                local train_status=${PIPESTATUS[0]}
+
+                if (( train_status == 0 )); then
+                    printf '%s\tDONE\tgpu=%s\thistory_length=%s\tseed=%s\tcritic_action_input=%s\n' \
+                        "$(date --iso-8601=seconds)" "${gpu}" "${history_length}" "${seed}" "${critic_action_input}" \
+                        >> "${run_root}/status_gpu${gpu}.tsv"
+                else
+                    printf '%s\tFAILED(%s)\tgpu=%s\thistory_length=%s\tseed=%s\tcritic_action_input=%s\n' \
+                        "$(date --iso-8601=seconds)" "${train_status}" "${gpu}" \
+                        "${history_length}" "${seed}" "${critic_action_input}" \
+                        >> "${run_root}/status_gpu${gpu}.tsv"
+                    ((failures += 1))
+                fi
                 ((job_idx += 1))
-                continue
-            fi
-
-            local exp_name="resrl:oa_h${history_length}_mlp-qbr-A4R2-buf_N2"
-            local job_dir="${run_root}/history_${history_length}/seed_${seed}"
-            mkdir -p "${job_dir}"
-            printf '%s\tSTART\tgpu=%s\thistory_length=%s\tseed=%s\n' \
-                "$(date --iso-8601=seconds)" "${gpu}" "${history_length}" "${seed}" \
-                >> "${run_root}/status_gpu${gpu}.tsv"
-
-            MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID="${gpu}" \
-                python train.py \
-                --config-name=train_online_reactive_history_robomimic_workspace \
-                online_task=square_image_abs \
-                "online_task.base_ckpt=${BASE_CKPT}" \
-                "training.device=cuda:${gpu}" \
-                "training.seed=${seed}" \
-                training.num_steps=500000 \
-                training.buffer_size=500000 \
-                online_task.subtask.enabled=False \
-                online_task.subtask.reward_mode=sparse \
-                n_action_steps=4 n_rl_steps=2 \
-                "res_policy.history_length=${history_length}" \
-                res_policy.critic_action_input=base_res \
-                training.utd=1.0 training.policy_freq=2 training.n_step=2 \
-                "exp_name=${exp_name}" \
-                "logging.name=${exp_name}_square_seed${seed}" \
-                "hydra.run.dir=${job_dir}" \
-                2>&1 | tee "${job_dir}/console.log"
-            local train_status=${PIPESTATUS[0]}
-
-            if (( train_status == 0 )); then
-                printf '%s\tDONE\tgpu=%s\thistory_length=%s\tseed=%s\n' \
-                    "$(date --iso-8601=seconds)" "${gpu}" "${history_length}" "${seed}" \
-                    >> "${run_root}/status_gpu${gpu}.tsv"
-            else
-                printf '%s\tFAILED(%s)\tgpu=%s\thistory_length=%s\tseed=%s\n' \
-                    "$(date --iso-8601=seconds)" "${train_status}" "${gpu}" \
-                    "${history_length}" "${seed}" \
-                    >> "${run_root}/status_gpu${gpu}.tsv"
-                ((failures += 1))
-            fi
-            ((job_idx += 1))
+            done
         done
     done
 
@@ -107,6 +109,6 @@ for worker_id in "${!GPUS[@]}"; do
 done
 
 printf 'Started %s jobs in tmux session %s.\n' \
-    "$((${#CASES[@]} * ${#SEEDS[@]}))" "${SESSION}"
+    "$((${#CASES[@]} * ${#SEEDS[@]} * ${#CRITIC_ACTION_INPUTS[@]}))" "${SESSION}"
 printf 'Run root: %s\n' "${RUN_ROOT}"
 printf 'Attach: tmux attach -t %s\n' "${SESSION}"

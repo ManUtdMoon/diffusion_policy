@@ -1,11 +1,13 @@
 import copy
 import inspect
 import unittest
+from unittest.mock import patch
 
 import torch
 
 from zprl.model.online import BatchedLinear
 from zprl.model.rl_history import HistoryActor, HistoryEncoder, HistoryQEnsemble
+from zprl.model.transformer import OutputGatedTransformerBlock, OutputGatedTransformerEncoder
 
 
 class ReactiveHistoryModelTest(unittest.TestCase):
@@ -25,6 +27,10 @@ class ReactiveHistoryModelTest(unittest.TestCase):
 
     def test_model_interface_and_three_hidden_layer_heads(self):
         actor, qs = self.make_models()
+        self.assertIsInstance(actor.encoder.transformer, OutputGatedTransformerEncoder)
+        self.assertIsInstance(qs.encoder.transformer, OutputGatedTransformerEncoder)
+        self.assertTrue(all(isinstance(layer, OutputGatedTransformerBlock)
+                            for layer in actor.encoder.transformer.layers))
         self.assertTrue(all(layer.norm_first for layer in actor.encoder.transformer.layers))
         self.assertTrue(all(layer.norm_first for layer in qs.encoder.transformer.layers))
         self.assertEqual(actor.encoder.projection.in_features, 5)
@@ -32,7 +38,9 @@ class ReactiveHistoryModelTest(unittest.TestCase):
         self.assertNotIn('exec_steps', inspect.signature(HistoryEncoder.forward).parameters)
         self.assertEqual(len([m for m in actor.net if isinstance(m, torch.nn.Linear)]), 3)
         self.assertEqual(len([m for m in qs.net if isinstance(m, BatchedLinear)]), 4)
-        self.assertEqual(qs.net[0].weight.shape, (3, 10, 8))
+        self.assertEqual(actor.encoder.output_dim, 11)
+        self.assertEqual(actor.net[0].in_features, 13)
+        self.assertEqual(qs.net[0].weight.shape, (3, 13, 8))
         self.assertEqual(sum(isinstance(m, HistoryEncoder) for m in qs.modules()), 1)
         self.assertIsNot(actor.encoder, qs.encoder)
         self.assertNotEqual(actor.encoder.projection.weight.data_ptr(),
@@ -52,6 +60,41 @@ class ReactiveHistoryModelTest(unittest.TestCase):
                 self.assertIn(f'{name}={count:.4f} M', message)
             self.assertNotIn('total=', message)
             self.assertNotIn('q_head_each=', message)
+
+    def test_current_observation_reaches_heads_without_transformer_features(self):
+        for length, ratio in ((1, 1), (4, 2)):
+            for mode in ('exec', 'base_res'):
+                with self.subTest(length=length, ratio=ratio, mode=mode):
+                    common = dict(obs_dim=3, exec_dim=2, history_length=length,
+                                  sub_ratio=ratio, hidden_dim=8, d_model=8, nhead=2,
+                                  num_layers=2, dim_feedforward=16, dropout=0)
+                    models = (HistoryActor(action_dim=2, **common).eval(),
+                              HistoryQEnsemble(num_qs=3, critic_action_input=mode,
+                                               **common).eval())
+                    for model in models:
+                        obs, a_exec, valid, base = self.make_inputs(length)
+                        obs.requires_grad_()
+                        residual = torch.randn_like(base, requires_grad=True)
+                        captured = []
+                        hook = model.net[0].register_forward_pre_hook(
+                            lambda module, args: captured.append(args[0]))
+                        candidate = (base, residual) if isinstance(model, HistoryQEnsemble) \
+                            and mode == 'base_res' else (base,)
+                        with patch.object(model.encoder.transformer, 'forward',
+                                          side_effect=lambda x, mask=None: torch.zeros_like(x)):
+                            result = model(obs, a_exec, valid, *candidate)
+                        hook.remove()
+                        expected = torch.cat([torch.zeros(2, 8), obs[:, -1], *candidate], dim=-1)
+                        if isinstance(model, HistoryQEnsemble):
+                            expected = expected[None].expand(3, -1, -1)
+                            loss = result.sum()
+                        else:
+                            loss = result[0].sum()
+                        torch.testing.assert_close(captured[0], expected, atol=0, rtol=0)
+                        loss.backward()
+                        self.assertGreater(obs.grad[:, -1].abs().sum().item(), 0)
+                        torch.testing.assert_close(obs.grad[:, :-1],
+                                                   torch.zeros_like(obs.grad[:, :-1]))
 
     def test_shapes_sampling_and_gradients(self):
         for history_length, causal_mask in ((1, False), (1, True), (4, False), (4, True)):

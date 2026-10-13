@@ -10,7 +10,7 @@ import torch
 from omegaconf import OmegaConf
 
 from tests import test_reactive_history_policy as policy_tests
-from zprl.model.rl_history import HistoryActor, HistoryQEnsemble, HistoryMLPQEnsemble
+from zprl.model.rl_history import HistoryActor, HistoryQEnsemble, HistoryMLPActor, HistoryMLPQEnsemble
 from zprl.policy.reactive_history_policy import HistoryResiduePolicy
 
 
@@ -18,13 +18,12 @@ class ReactiveHistoryStageATest(unittest.TestCase):
     def make_policy(self, transformer=False):
         policy = HistoryResiduePolicy(
             obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
-            num_qs=3, res_scale=0.05, critic_action_input='base_res')
-        if transformer:
-            common = dict(obs_dim=3, exec_dim=2, history_length=3, hidden_dim=8,
-                          d_model=8, nhead=2, num_layers=2, dim_feedforward=16,
-                          dropout=0)
-            policy.actor = HistoryActor(action_dim=2, **common)
-            policy.qs = HistoryQEnsemble(num_qs=3, critic_action_input='base_res', **common)
+            num_qs=3, res_scale=0.05, critic_action_input='base_res',
+            d_model=8, nhead=2, num_layers=2, dim_feedforward=16)
+        if not transformer:
+            common = dict(obs_dim=3, exec_dim=2, history_length=3, hidden_dim=8)
+            policy.actor = HistoryMLPActor(action_dim=2, **common)
+            policy.qs = HistoryMLPQEnsemble(num_qs=3, critic_action_input='base_res', **common)
             policy.q_targets = copy.deepcopy(policy.qs).requires_grad_(False).eval()
         return policy
 

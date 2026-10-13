@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 
 from zprl.model.online import Actor, BatchedLayerNorm, BatchedLinear, BatchedSoftQNet, SquashedNormal, layer_init
+from zprl.model.transformer import OutputGatedTransformerEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +37,15 @@ class HistoryEncoder(nn.Module):
         self.exec_dim = exec_dim
         self.history_length = history_length
         self.sub_ratio = sub_ratio
+        self.output_dim = d_model + obs_dim
         self.nhead = nhead
         self.causal_mask = causal_mask
         self.debug = debug
         self.projection = nn.Linear(obs_dim + exec_dim, d_model)
         self.position = nn.Embedding((history_length - 1) // sub_ratio + 1, d_model)
-        layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
-            dropout=dropout, batch_first=True, norm_first=True)
-        self.transformer = nn.TransformerEncoder(
-            layer, num_layers=num_layers, enable_nested_tensor=False)
+        self.transformer = OutputGatedTransformerEncoder(
+            d_model=d_model, nhead=nhead, num_layers=num_layers,
+            dim_feedforward=dim_feedforward, dropout=dropout)
 
     def forward(self, obs, a_exec, obs_valid):
         batch_size, history_length, obs_dim = obs.shape
@@ -76,7 +76,8 @@ class HistoryEncoder(nn.Module):
                                 dtype=torch.bool).triu(1)
             mask = mask | (obs_valid[:, :, None] & future)
         mask = mask.repeat_interleave(self.nhead, dim=0)
-        return self.transformer(x, mask=mask)[:, -1]
+        h = self.transformer(x, mask=mask)[:, -1]
+        return torch.cat([h, obs[:, -1]], dim=-1)
 
 
 class HistoryActor(nn.Module):
@@ -89,7 +90,7 @@ class HistoryActor(nn.Module):
                                       nhead, num_layers, dim_feedforward, dropout,
                                       causal_mask, debug, sub_ratio)
         self.net = nn.Sequential(
-            layer_init(nn.Linear(d_model + exec_dim, hidden_dim)),
+            layer_init(nn.Linear(self.encoder.output_dim + exec_dim, hidden_dim)),
             nn.GELU(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.GELU(),
@@ -150,7 +151,7 @@ class HistoryQEnsemble(nn.Module):
                                       causal_mask, debug, sub_ratio)
         critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
         self.net = nn.Sequential(
-            BatchedLinear(num_qs, d_model + critic_action_dim, hidden_dim),
+            BatchedLinear(num_qs, self.encoder.output_dim + critic_action_dim, hidden_dim),
             BatchedLayerNorm(num_qs, hidden_dim),
             nn.Tanh(),
             BatchedLinear(num_qs, hidden_dim, hidden_dim),

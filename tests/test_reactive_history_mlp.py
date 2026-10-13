@@ -1,3 +1,4 @@
+import copy
 import unittest
 
 import torch
@@ -86,6 +87,9 @@ class ReactiveHistoryMLPTest(unittest.TestCase):
                         next_obs_valid=batch.next_obs_valid[:, -1:])
                 policy = HistoryResiduePolicy(3, 2, length, hidden_dim=8,
                                               num_qs=3, res_scale=0.5)
+                policy.actor = HistoryMLPActor(3, 2, 2, length, hidden_dim=8)
+                policy.qs = HistoryMLPQEnsemble(3, 2, 3, length, hidden_dim=8)
+                policy.q_targets = copy.deepcopy(policy.qs).requires_grad_(False).eval()
                 reference = ResiduePolicy(policy.actor.encoder.output_dim, 2,
                                           hidden_dim=8, num_qs=3, res_scale=0.5)
                 policy.load_state_dict(reference.state_dict())
