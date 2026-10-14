@@ -54,14 +54,11 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             num_subset: int = 2,
             debug: bool = False,
             critic_action_input: str = 'exec',
-            sub_ratio: int = 1,
+            sub_ratio: int = 2,
             target_clip: list = None,
-            d_model: int = 256,
-            nhead: int = 4,
-            num_layers: int = 2,
-            dim_feedforward: int = 1024,
-            dropout: float = 0.0,
-            causal_mask: bool = True):
+            gru_input_dim: int = 128,
+            gru_hidden_dim: int = 128,
+            gru_num_layers: int = 2):
         super().__init__()
         if target_clip is not None:
             if len(target_clip) != 2:
@@ -76,8 +73,8 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         common = dict(
             obs_dim=obs_dim, exec_dim=exec_dim, history_length=history_length,
             hidden_dim=hidden_dim, debug=debug, sub_ratio=sub_ratio,
-            d_model=d_model, nhead=nhead, num_layers=num_layers,
-            dim_feedforward=dim_feedforward, dropout=dropout, causal_mask=causal_mask)
+            gru_input_dim=gru_input_dim, gru_hidden_dim=gru_hidden_dim,
+            gru_num_layers=gru_num_layers)
         self.actor = HistoryActor(action_dim=action_dim, log_std_min=log_std_min,
                                   log_std_max=log_std_max, **common)
         self.qs = HistoryQEnsemble(num_qs=num_qs,
@@ -108,10 +105,21 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         self.q_targets.eval()
         return self
 
-    def get_optimizer(self, policy_lr, q_lr):
+    def get_optimizer(self, policy_lr, q_lr, enc_lr=None):
+        def param_groups(module, head_lr):
+            if enc_lr is None:
+                return module.parameters()
+            encoder_parameters = list(module.encoder.parameters())
+            encoder_ids = {id(parameter) for parameter in encoder_parameters}
+            return [
+                {'params': [parameter for parameter in module.parameters()
+                            if id(parameter) not in encoder_ids], 'lr': head_lr},
+                {'params': encoder_parameters, 'lr': enc_lr},
+            ]
+
         return {
-            'actor_optimizer': torch.optim.Adam(self.actor.parameters(), lr=policy_lr),
-            'q_optimizer': torch.optim.Adam(self.qs.parameters(), lr=q_lr),
+            'actor_optimizer': torch.optim.Adam(param_groups(self.actor, policy_lr), lr=policy_lr),
+            'q_optimizer': torch.optim.Adam(param_groups(self.qs, q_lr), lr=q_lr),
             'alpha_optimizer': torch.optim.Adam([self.log_alpha], lr=q_lr),
         }
 

@@ -10,8 +10,10 @@ from omegaconf import OmegaConf
 from tests import test_reactive_history_policy as policy_tests
 from tests.test_reactive_history_replay import add_step, make_buffer, sample_at
 from zprl.common.reactive_history import HistoryWindow
+from zprl.model.gru_history_encoder import GRUHistoryEncoder
+from zprl.model.transformer import HistoryEncoder
 from zprl.model.rl_history import (
-    FlattenHistoryEncoder, HistoryActor, HistoryEncoder, HistoryMLPActor,
+    FlattenHistoryEncoder, HistoryActor, HistoryMLPActor,
     HistoryMLPQEnsemble, HistoryQEnsemble,
 )
 
@@ -55,10 +57,9 @@ class ReactiveHistorySubsamplingTest(unittest.TestCase):
                     common.update(dict(num_qs=3, critic_action_input='base_res') if critic
                                   else dict(action_dim=2))
                     if cls in (HistoryActor, HistoryQEnsemble):
-                        common.update(d_model=8, nhead=2, num_layers=2,
-                                      dim_feedforward=16, dropout=0, causal_mask=True)
+                        common.update(gru_input_dim=8, gru_hidden_dim=8, gru_num_layers=2)
                     model = cls(history_length=length, sub_ratio=2, **common).eval()
-                    reference = cls(history_length=2, **common).eval()
+                    reference = cls(history_length=2, sub_ratio=1, **common).eval()
                     reference.load_state_dict(model.state_dict())
                     obs = torch.randn(2, length, 3)
                     actions = torch.randn(2, length, 2)
@@ -124,7 +125,7 @@ class ReactiveHistorySubsamplingTest(unittest.TestCase):
                                     if p.grad is not None))
 
     def test_invalid_ratio_is_rejected(self):
-        for encoder in (FlattenHistoryEncoder, HistoryEncoder):
+        for encoder in (FlattenHistoryEncoder, HistoryEncoder, GRUHistoryEncoder):
             for ratio in (0, -1, 1.5):
                 with self.subTest(encoder=encoder.__name__, ratio=ratio):
                     with self.assertRaises(AssertionError):

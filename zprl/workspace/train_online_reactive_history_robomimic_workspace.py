@@ -213,7 +213,8 @@ class TrainOnlineReactiveHistoryRobomimicWorkspace(BaseWorkspace):
 
         optimizers = self.res_policy.get_optimizer(
             policy_lr=cfg.training.policy_lr,
-            q_lr=cfg.training.q_lr
+            q_lr=cfg.training.q_lr,
+            enc_lr=cfg.training.enc_lr
         )
         q_opt = optimizers['q_optimizer']
         actor_opt = optimizers['actor_optimizer']

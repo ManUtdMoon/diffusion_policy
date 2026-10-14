@@ -32,8 +32,8 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
         return HistoryResiduePolicy(
             obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
             num_qs=3, num_subset=2, tau=tau,
-            res_scale=0.5, target_clip=target_clip, d_model=8, nhead=2,
-            num_layers=2, dim_feedforward=16)
+            res_scale=0.5, target_clip=target_clip, gru_input_dim=8, gru_hidden_dim=8,
+            gru_num_layers=2, sub_ratio=1)
 
     def make_batch(self):
         obs = torch.randn(2, 3, 3)
@@ -47,6 +47,50 @@ class ReactiveHistoryPolicyTest(unittest.TestCase):
             next_exec_steps=torch.tensor([[0, 2, 0], [2, 2, 0]]),
             action=torch.randn(2, 2), rewards=torch.tensor([[1.], [2.]]),
             dones=torch.tensor([[0.], [1.]]), discounts=torch.tensor([[0.8], [0.6]]))
+
+    def test_encoder_learning_rate_groups_have_exact_parameter_ownership(self):
+        policy = self.make_policy()
+        for enc_lr in (None, 0, 1e-5):
+            with self.subTest(enc_lr=enc_lr):
+                optimizers = policy.get_optimizer(2e-4, 3e-4, enc_lr=enc_lr)
+                for name, model, head_lr in (('actor_optimizer', policy.actor, 2e-4),
+                                             ('q_optimizer', policy.qs, 3e-4)):
+                    groups = optimizers[name].param_groups
+                    self.assertEqual(len(groups), 1 if enc_lr is None else 2)
+                    parameters = [parameter for group in groups for parameter in group['params']]
+                    ids = [id(parameter) for parameter in parameters]
+                    self.assertEqual(len(ids), len(set(ids)))
+                    self.assertEqual(set(ids), {id(parameter) for parameter in model.parameters()})
+                    self.assertEqual(groups[0]['lr'], head_lr)
+                    if enc_lr is not None:
+                        self.assertEqual(groups[1]['lr'], enc_lr)
+                        self.assertEqual({id(parameter) for parameter in groups[1]['params']},
+                                         {id(parameter) for parameter in model.encoder.parameters()})
+                alpha_group = optimizers['alpha_optimizer'].param_groups[0]
+                self.assertEqual(alpha_group['lr'], 3e-4)
+                self.assertEqual(alpha_group['params'], [policy.log_alpha])
+
+    def test_encoder_learning_rate_changes_encoder_step_and_preserves_head_step(self):
+        policy, separate = self.make_policy(), self.make_policy()
+        separate.load_state_dict(policy.state_dict())
+        reference = policy.get_optimizer(2e-4, 3e-4)
+        reduced = separate.get_optimizer(2e-4, 3e-4, enc_lr=1e-5)
+        for name, module, other, lr in (('actor_optimizer', policy.actor, separate.actor, 2e-4),
+                                       ('q_optimizer', policy.qs, separate.qs, 3e-4)):
+            before = {key: parameter.detach().clone() for key, parameter in module.named_parameters()}
+            for parameter in module.parameters():
+                parameter.grad = torch.ones_like(parameter)
+            for parameter in other.parameters():
+                parameter.grad = torch.ones_like(parameter)
+            reference[name].step()
+            reduced[name].step()
+            for (key, parameter), (_, changed) in zip(module.named_parameters(), other.named_parameters()):
+                if key.startswith('encoder.'):
+                    expected = before[key] + (parameter - before[key]) * (1e-5 / lr)
+                    torch.testing.assert_close(changed, expected, rtol=0, atol=5e-8)
+                    self.assertGreater((changed - before[key]).abs().sum().item(), 0)
+                else:
+                    torch.testing.assert_close(changed, parameter, atol=0, rtol=0)
 
     def test_optimizer_ownership_and_real_history_step(self):
         policy = self.make_policy()

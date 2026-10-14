@@ -15,27 +15,27 @@ from zprl.policy.reactive_history_policy import HistoryResiduePolicy
 
 
 class ReactiveHistoryStageATest(unittest.TestCase):
-    def make_policy(self, transformer=False):
+    def make_policy(self, gru=False):
         policy = HistoryResiduePolicy(
             obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
             num_qs=3, res_scale=0.05, critic_action_input='base_res',
-            d_model=8, nhead=2, num_layers=2, dim_feedforward=16)
-        if not transformer:
+            gru_input_dim=8, gru_hidden_dim=8, gru_num_layers=2, sub_ratio=1)
+        if not gru:
             common = dict(obs_dim=3, exec_dim=2, history_length=3, hidden_dim=8)
             policy.actor = HistoryMLPActor(action_dim=2, **common)
             policy.qs = HistoryMLPQEnsemble(num_qs=3, critic_action_input='base_res', **common)
             policy.q_targets = copy.deepcopy(policy.qs).requires_grad_(False).eval()
         return policy
 
-    def test_mlp_and_transformer_head_receive_base_and_unscaled_residual(self):
-        for transformer in (False, True):
+    def test_mlp_and_gru_head_receive_base_and_unscaled_residual(self):
+        for gru in (False, True):
             for length in (1, 2, 4):
-                with self.subTest(transformer=transformer, history_length=length):
+                with self.subTest(gru=gru, history_length=length):
                     common = dict(obs_dim=3, exec_dim=2, num_qs=3, history_length=length,
                                   hidden_dim=8, critic_action_input='base_res')
-                    if transformer:
-                        qs = HistoryQEnsemble(**common, d_model=8, nhead=2, num_layers=2,
-                                             dim_feedforward=16, dropout=0).eval()
+                    if gru:
+                        qs = HistoryQEnsemble(**common, gru_input_dim=8, gru_hidden_dim=8,
+                                             gru_num_layers=2, sub_ratio=1).eval()
                     else:
                         qs = HistoryMLPQEnsemble(**common).eval()
                     obs = torch.randn(2, length, 3)
@@ -53,6 +53,8 @@ class ReactiveHistoryStageATest(unittest.TestCase):
                     values = qs(obs, history_exec, valid, base, residual)
                     hook.remove()
                     history = qs.encoder(obs, history_exec, valid)
+                    if gru:
+                        history = torch.cat([history, obs[:, -1]], dim=-1)
                     expected = torch.cat([history, base, residual], dim=-1)
                     torch.testing.assert_close(captured[0], expected[None].expand(3, -1, -1))
                     self.assertEqual(qs.net[0].weight.shape[1], history.shape[-1] + 4)
@@ -109,9 +111,9 @@ class ReactiveHistoryStageATest(unittest.TestCase):
         self.assertAlmostEqual(info['q_target'].item(), 2.9, places=5)
 
     def test_actor_gradient_reaches_raw_residual_with_frozen_q(self):
-        for transformer in (False, True):
-            with self.subTest(transformer=transformer):
-                policy = self.make_policy(transformer)
+        for gru in (False, True):
+            with self.subTest(gru=gru):
+                policy = self.make_policy(gru)
                 policy.auto_alpha = False
                 policy.init_alpha = 0
                 batch = policy_tests.ReactiveHistoryPolicyTest().make_batch()
@@ -168,9 +170,9 @@ class ReactiveHistoryStageATest(unittest.TestCase):
 
     @unittest.skipUnless(torch.cuda.is_available(), 'CUDA unavailable')
     def test_cuda_losses_and_backward_for_both_encoders(self):
-        for transformer in (False, True):
-            with self.subTest(transformer=transformer):
-                policy = self.make_policy(transformer).cuda()
+        for gru in (False, True):
+            with self.subTest(gru=gru):
+                policy = self.make_policy(gru).cuda()
                 batch = policy_tests.ReactiveHistoryPolicyTest().make_batch()
                 batch = batch._replace(**{name: value.cuda() for name, value in batch._asdict().items()
                                           if isinstance(value, torch.Tensor)})

@@ -9,17 +9,15 @@ res_policy:
   _target_: zprl.policy.reactive_history_policy.HistoryResiduePolicy
   history_length: 2
   sub_ratio: 2  # Keep t, t-ratio, ... within the history_length window.
-  d_model: 128
-  nhead: 4
-  num_layers: 2
-  dim_feedforward: 512
-  dropout: 0.0
-  causal_mask: true
+  gru_input_dim: 128
+  gru_hidden_dim: 128
+  gru_num_layers: 1
   critic_action_input: base_res
   target_clip: [0, 1]  # [lb, ub] for the complete TD target; null disables clipping.
   debug: ${training.debug}
 
 training:
+  enc_lr: 1e-5 # null, 1e-5
   compile: true
 
 logging:

@@ -9,16 +9,13 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 from tests import test_reactive_history_policy as policy_tests
-from zprl.model.transformer import OutputGate, OutputGatedTransformerBlock, OutputGatedTransformerEncoder
-from zprl.policy.reactive_history_policy import HistoryResiduePolicy
+from zprl.model.transformer import HistoryEncoder, OutputGate, OutputGatedTransformerBlock, OutputGatedTransformerEncoder
 
 
 class OutputGatedTransformerTest(unittest.TestCase):
     def make_policy(self):
-        return HistoryResiduePolicy(
-            obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
-            d_model=8, nhead=2, num_layers=2, dim_feedforward=16,
-            sub_ratio=2, critic_action_input='base_res', target_clip=[0, 1])
+        return HistoryEncoder(3, 2, 3, d_model=8, nhead=2, num_layers=2,
+                              dim_feedforward=16, dropout=0, sub_ratio=2)
 
     def test_gate_initialization_formula_and_direct_skip(self):
         gate = OutputGate(4)
@@ -43,6 +40,8 @@ class OutputGatedTransformerTest(unittest.TestCase):
         reference = torch.nn.TransformerEncoderLayer(
             d_model=8, nhead=2, dim_feedforward=16, dropout=0,
             batch_first=True, norm_first=True)
+        reference.norm1 = torch.nn.RMSNorm(8)
+        reference.norm2 = torch.nn.RMSNorm(8)
         torch.manual_seed(11)
         block = OutputGatedTransformerBlock(8, 2, 16, dropout=0)
         for name, value in reference.state_dict().items():
@@ -66,82 +65,51 @@ class OutputGatedTransformerTest(unittest.TestCase):
         result.sum().backward()
         torch.testing.assert_close(x.grad, torch.ones_like(x), atol=0, rtol=0)
 
-    def test_stacked_layers_have_independent_parameters_and_no_final_norm(self):
+    def test_stacked_layers_have_independent_parameters_and_bounded_output(self):
         encoder = OutputGatedTransformerEncoder(8, 2, 2, 16, dropout=0)
         self.assertEqual(len(encoder.layers), 2)
-        self.assertFalse(hasattr(encoder, 'norm'))
+        self.assertIsInstance(encoder.final_norm, torch.nn.RMSNorm)
+        self.assertTrue((encoder(torch.randn(2, 4, 8)).abs() <= 1).all())
         for name, parameter in encoder.layers[0].named_parameters():
             other = dict(encoder.layers[1].named_parameters())[name]
             self.assertNotEqual(parameter.data_ptr(), other.data_ptr())
             torch.testing.assert_close(parameter, other, atol=0, rtol=0)
 
-    def test_gate_ownership_gradients_and_target_polyak_update(self):
-        policy = self.make_policy()
+    def test_encoder_gate_ownership_and_gradients(self):
+        encoder = self.make_policy()
         batch = policy_tests.ReactiveHistoryPolicyTest().make_batch()
-        optimizers = policy.get_optimizer(1e-4, 1e-4)
-        for module, optimizer in ((policy.actor, optimizers['actor_optimizer']),
-                                   (policy.qs, optimizers['q_optimizer'])):
-            owned = {id(p) for group in optimizer.param_groups for p in group['params']}
-            gates = [p for name, p in module.named_parameters() if '_gate.' in name]
-            self.assertEqual(len(gates), 8)
-            self.assertTrue(all(id(p) in owned for p in gates))
-        for method, module in (('compute_critic_loss', policy.qs),
-                               ('compute_actor_loss', policy.actor)):
-            policy.zero_grad(set_to_none=True)
-            loss, _ = getattr(policy, method)(batch)
-            loss.backward()
-            for name, parameter in module.named_parameters():
-                if '_gate.' in name:
-                    self.assertIsNotNone(parameter.grad)
-                    self.assertTrue(torch.isfinite(parameter.grad).all())
-                    self.assertGreater(parameter.grad.abs().sum().item(), 0, name)
-            self.assertTrue(all(p.grad is None for p in policy.q_targets.parameters()))
-            if method == 'compute_actor_loss':
-                self.assertTrue(all(p.grad is None for p in policy.qs.parameters()))
-        before = {name: p.clone() for name, p in policy.q_targets.named_parameters()
-                  if '_gate.' in name}
-        with torch.no_grad():
-            for name, parameter in policy.qs.named_parameters():
-                if '_gate.' in name:
-                    parameter.add_(1)
-        policy.target_update()
-        online = dict(policy.qs.named_parameters())
-        for name, parameter in policy.q_targets.named_parameters():
-            if '_gate.' in name:
-                torch.testing.assert_close(parameter,
-                                           before[name] * (1 - policy.tau) + online[name] * policy.tau)
-                self.assertFalse(parameter.requires_grad)
-        self.assertFalse(policy.q_targets.training)
+        optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-4)
+        owned = {id(p) for group in optimizer.param_groups for p in group['params']}
+        gates = [p for name, p in encoder.named_parameters() if '_gate.' in name]
+        self.assertEqual(len(gates), 8)
+        self.assertTrue(all(id(p) in owned for p in gates))
+        encoder(batch.obs, batch.a_exec, batch.obs_valid).square().mean().backward()
+        for parameter in gates:
+            self.assertIsNotNone(parameter.grad)
+            self.assertTrue(torch.isfinite(parameter.grad).all())
+            self.assertGreater(parameter.grad.abs().sum().item(), 0)
 
     def test_checkpoint_contains_and_restores_gates(self):
         cfg = OmegaConf.create(dict(
-            _target_='zprl.policy.reactive_history_policy.HistoryResiduePolicy',
-            obs_dim=3, action_dim=2, history_length=3, hidden_dim=8,
-            d_model=8, nhead=2, num_layers=2, dim_feedforward=16,
-            dropout=0, causal_mask=True, sub_ratio=2, num_qs=3,
-            critic_action_input='base_res', target_clip=[0, 1]))
-        policy = hydra.utils.instantiate(cfg).eval()
+            _target_='zprl.model.transformer.HistoryEncoder',
+            obs_dim=3, exec_dim=2, history_length=3, d_model=8, nhead=2,
+            num_layers=2, dim_feedforward=16, dropout=0, causal_mask=True, sub_ratio=2))
+        encoder = hydra.utils.instantiate(cfg).eval()
         with torch.no_grad():
-            for name, parameter in policy.named_parameters():
+            for name, parameter in encoder.named_parameters():
                 if '_gate.' in name:
                     parameter.add_(0.1)
         batch = policy_tests.ReactiveHistoryPolicyTest().make_batch()
         with tempfile.TemporaryDirectory() as tmp:
-            checkpoint = Path(tmp) / 'online.ckpt'
-            torch.save({'cfg': cfg, 'res_policy': policy.state_dict()}, checkpoint, pickle_module=dill)
+            checkpoint = Path(tmp) / 'encoder.ckpt'
+            torch.save({'cfg': cfg, 'encoder': encoder.state_dict()}, checkpoint, pickle_module=dill)
             payload = torch.load(checkpoint, pickle_module=dill)
-            for prefix in ('actor.', 'qs.', 'q_targets.'):
-                self.assertTrue(any(name.startswith(prefix) and '_gate.' in name
-                                    for name in payload['res_policy']))
+            self.assertTrue(any('_gate.' in name for name in payload['encoder']))
             restored = hydra.utils.instantiate(payload['cfg']).eval()
-            restored.load_state_dict(payload['res_policy'])
-            for module in (restored.actor, restored.qs, restored.q_targets):
-                self.assertIsInstance(module.encoder.transformer, OutputGatedTransformerEncoder)
-            args = (batch.obs, batch.a_exec, batch.obs_valid, batch.a_base)
-            torch.testing.assert_close(restored.predict_res_naction(*args, argmax=True),
-                                       policy.predict_res_naction(*args, argmax=True), atol=0, rtol=0)
-            torch.testing.assert_close(restored.qs(*args, batch.action),
-                                       policy.qs(*args, batch.action), atol=0, rtol=0)
+            restored.load_state_dict(payload['encoder'])
+            self.assertIsInstance(restored.transformer, OutputGatedTransformerEncoder)
+            args = (batch.obs, batch.a_exec, batch.obs_valid)
+            torch.testing.assert_close(restored(*args), encoder(*args), atol=0, rtol=0)
 
 
 if __name__ == '__main__':

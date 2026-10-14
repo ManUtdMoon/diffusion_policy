@@ -7,7 +7,9 @@ SCRIPT_PATH="${ROOT_DIR}/run_resrl_grid.sh"
 SESSION="${SESSION:-resrl-grid}"
 GPUS=(0 1 2 3)
 CASES=(
-    "1"
+    "3"
+    "5"
+    "7"
 )
 SEEDS=(40 50 60)
 CRITIC_ACTION_INPUTS=(base_res)
@@ -31,7 +33,7 @@ run_worker() {
                     continue
                 fi
 
-                local exp_name="resrl:oa_h${history_length}s2_tfog-hoa_clipq-qbr-a8r1-buf8"
+                local exp_name="resrl:oa_h${history_length}s2_gru-hoa_clipq-qbr-a8r1-buf8"
                 local job_dir="${run_root}/critic_${critic_action_input}/a8r1-history_${history_length}/seed_${seed}"
                 mkdir -p "${job_dir}"
                 printf '%s\tSTART\tgpu=%s\thistory_length=%s\tseed=%s\tcritic_action_input=%s\n' \
@@ -45,8 +47,8 @@ run_worker() {
                     "online_task.base_ckpt=${BASE_CKPT}" \
                     "training.device=cuda:${gpu}" \
                     "training.seed=${seed}" \
-                    training.num_steps=500000 \
-                    training.buffer_size=500000 \
+                    training.num_steps=1000000 \
+                    training.buffer_size=1000000 \
                     online_task.subtask.enabled=False \
                     online_task.subtask.reward_mode=sparse \
                     n_action_steps=8 n_rl_steps=1 \

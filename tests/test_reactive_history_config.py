@@ -19,6 +19,7 @@ from tests import test_reactive_history_policy as policy_tests
 from tests.test_reactive_policy import DummyBasePolicy as BasePolicy, FakeVectorEnv
 from zprl.common.reactive_history_replay_buffer import ReactiveHistoryReplayBuffer
 from zprl.model.rl_history import HistoryActor, HistoryQEnsemble
+from zprl.model.gru_history_encoder import GRUHistoryEncoder
 from zprl.policy.reactive_history_policy import HistoryResiduePolicy, HistorySumPolicy
 from zprl.policy.reactive_policy import SumPolicy as ReactiveSumPolicy
 from zprl.policy.residue_policy import SumPolicy as ActionSumPolicy
@@ -155,13 +156,13 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertEqual(list(cfg.res_policy.target_clip), [0, 1])
         self.assertNotIn('network_type', cfg.res_policy)
         self.assertEqual(hydra.utils.get_class(cfg.res_policy._target_), HistoryResiduePolicy)
-        self.assertEqual(cfg.res_policy.d_model, 128)
-        self.assertEqual(cfg.res_policy.nhead, 4)
-        self.assertEqual(cfg.res_policy.num_layers, 2)
-        self.assertEqual(cfg.res_policy.dim_feedforward, 512)
-        self.assertEqual(cfg.res_policy.dropout, 0)
-        self.assertTrue(cfg.res_policy.causal_mask)
+        self.assertEqual(cfg.res_policy.gru_input_dim, 128)
+        self.assertEqual(cfg.res_policy.gru_hidden_dim, 128)
+        self.assertEqual(cfg.res_policy.gru_num_layers, 2)
+        for field in ('d_model', 'nhead', 'num_layers', 'dim_feedforward', 'dropout', 'causal_mask'):
+            self.assertNotIn(field, cfg.res_policy)
         self.assertEqual(cfg.training.n_step, 2)
+        self.assertIsNone(cfg.training.enc_lr)
         self.assertTrue(cfg.training.compile)
         self.assertEqual(cfg.n_rl_steps, 2)
         self.assertFalse(cfg.online_task.subtask.enabled)
@@ -204,7 +205,9 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
                 cfg = make_config([f'online_task={task}_image_abs', f'n_action_steps={ta}',
                                    f'n_rl_steps={tr}', 'single_gamma=0.913',
                                    'res_policy.history_length=3', 'res_policy.hidden_dim=8',
-                                   'res_policy.num_qs=2', 'res_policy.sub_ratio=2'])
+                                   'res_policy.num_qs=2', 'res_policy.sub_ratio=2',
+                                   'res_policy.gru_input_dim=5', 'res_policy.gru_hidden_dim=7',
+                                   'res_policy.gru_num_layers=3'])
                 policy = hydra.utils.instantiate(cfg.res_policy, obs_dim=1, action_dim=tr)
                 self.assertIsInstance(policy, HistoryResiduePolicy)
                 self.assertIs(type(policy.actor), HistoryActor)
@@ -212,18 +215,22 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
                 self.assertEqual(policy.history_length, 3)
                 self.assertEqual(policy.sub_ratio, 2)
                 self.assertEqual(policy.gamma, round(0.913 ** tr, 4))
-                self.assertEqual(policy.actor.encoder.position.num_embeddings, 2)
-                self.assertEqual(policy.actor.net[0].in_features, cfg.res_policy.d_model + 1 + tr)
-                self.assertEqual(policy.qs.net[0].weight.shape[1], cfg.res_policy.d_model + 1 + 2 * tr)
+                self.assertIsInstance(policy.actor.encoder, GRUHistoryEncoder)
+                self.assertEqual(len(policy.actor.encoder.cells), 3)
+                self.assertEqual(policy.actor.encoder.cells[0].input_size, 5)
+                self.assertEqual(policy.actor.encoder.cells[1].input_size, 7)
+                self.assertEqual(policy.actor.net[0].in_features, cfg.res_policy.gru_hidden_dim + 1 + tr)
+                self.assertEqual(policy.qs.net[0].weight.shape[1], cfg.res_policy.gru_hidden_dim + 1 + 2 * tr)
                 self.assertEqual(cfg.online_task.env_runner.n_action_steps, tr)
 
 
 class ReactiveHistoryWorkspaceTest(unittest.TestCase):
-    def run_workspace(self, tmp, bootstrap='truncated', enable_eval=False, compile=False):
+    def run_workspace(self, tmp, bootstrap='truncated', enable_eval=False, compile=False, enc_lr=None):
         module = workspace_with_eval_enabled() if enable_eval else workspace_module
         base_path = pathlib.Path(tmp) / 'base.ckpt'
         cfg = small_config(base_path, bootstrap)
         cfg.training.compile = compile
+        cfg.training.enc_lr = enc_lr
         save_base(base_path, cfg)
         env = HistoryVectorEnv()
         buffers, policies, initial_weights = [], [], []
@@ -258,6 +265,27 @@ class ReactiveHistoryWorkspaceTest(unittest.TestCase):
                              (0, 0, 0))
             workspace.run()
         return workspace, buffers[0], policies[0], env, eval_runner, initial_weights[0], wandb_mock
+
+    def test_encoder_lr_reaches_workspace_optimizers(self):
+        original = HistoryResiduePolicy.get_optimizer
+        captured = []
+
+        def record(policy, policy_lr, q_lr, enc_lr=None):
+            optimizers = original(policy, policy_lr, q_lr, enc_lr)
+            captured.append((enc_lr, optimizers))
+            return optimizers
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(HistoryResiduePolicy, 'get_optimizer', autospec=True, side_effect=record):
+            workspace, _, _, _, _, _, _ = self.run_workspace(tmp, enc_lr=1e-5)
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0][0], 1e-5)
+        for name, model, head_lr in (
+                ('actor_optimizer', workspace.res_policy.actor, workspace.cfg.training.policy_lr),
+                ('q_optimizer', workspace.res_policy.qs, workspace.cfg.training.q_lr)):
+            optimizer = captured[0][1][name]
+            self.assertEqual([group['lr'] for group in optimizer.param_groups], [head_lr, 1e-5])
+            self.assertTrue(all(parameter in optimizer.state for parameter in model.encoder.parameters()))
 
     def test_rollout_replay_update_and_episode_counts(self):
         for bootstrap in ['truncated', 'never']:
