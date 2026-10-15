@@ -20,6 +20,21 @@ class HistoryReplayBufferSamples(NamedTuple):
     discounts: Optional[torch.Tensor]
 
 
+class NoiseHistoryReplayBufferSamples(NamedTuple):
+    obs: torch.Tensor
+    a_exec: torch.Tensor
+    obs_valid: torch.Tensor
+    exec_steps: torch.Tensor
+    next_obs: torch.Tensor
+    next_a_exec: torch.Tensor
+    next_obs_valid: torch.Tensor
+    next_exec_steps: torch.Tensor
+    action: torch.Tensor
+    rewards: torch.Tensor
+    dones: torch.Tensor
+    discounts: Optional[torch.Tensor]
+
+
 class HistoryWindow:
     def __init__(self, length: int, exec_dim: int):
         assert length > 0 and exec_dim > 0

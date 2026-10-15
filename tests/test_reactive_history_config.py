@@ -158,11 +158,11 @@ class ReactiveHistoryConfigTest(unittest.TestCase):
         self.assertEqual(hydra.utils.get_class(cfg.res_policy._target_), HistoryResiduePolicy)
         self.assertEqual(cfg.res_policy.gru_input_dim, 128)
         self.assertEqual(cfg.res_policy.gru_hidden_dim, 128)
-        self.assertEqual(cfg.res_policy.gru_num_layers, 2)
+        self.assertEqual(cfg.res_policy.gru_num_layers, 1)
         for field in ('d_model', 'nhead', 'num_layers', 'dim_feedforward', 'dropout', 'causal_mask'):
             self.assertNotIn(field, cfg.res_policy)
         self.assertEqual(cfg.training.n_step, 2)
-        self.assertIsNone(cfg.training.enc_lr)
+        self.assertEqual(cfg.training.enc_lr, 1e-5)
         self.assertTrue(cfg.training.compile)
         self.assertEqual(cfg.n_rl_steps, 2)
         self.assertFalse(cfg.online_task.subtask.enabled)

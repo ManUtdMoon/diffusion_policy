@@ -160,6 +160,39 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         }
         return result
 
+    def conditional_predict_from_noise(self, obs_emb: torch.Tensor, noise: torch.Tensor) -> Dict[str, torch.Tensor]:
+        assert self.obs_as_global_cond
+        B = obs_emb.shape[0]
+        T = self.horizon
+        Da = self.action_dim
+        To = self.n_obs_steps
+        assert obs_emb.shape == (B, To * self.obs_feature_dim)
+        assert noise.shape == (B, T, Da)
+        trajectory = noise.to(device=self.device, dtype=self.dtype)
+
+        timesteps = torch.linspace(
+            1.0, 0.0, self.num_inference_steps + 1,
+            device=trajectory.device,
+            dtype=torch.float32)
+        dt = -1.0 / self.num_inference_steps
+
+        for t in timesteps[:-1]:
+            model_output = self.model(trajectory, t,
+                local_cond=None, global_cond=obs_emb)
+            trajectory = trajectory + dt * model_output
+
+        naction_pred = trajectory
+        action_pred = self.normalizer['action'].unnormalize(naction_pred)
+        start = To - 1
+        end = start + self.n_action_steps
+        return {
+            'action': action_pred[:,start:end],
+            'action_pred': action_pred,
+            'naction': naction_pred[:,start:end],
+            'naction_pred': naction_pred,
+            'obs_emb': obs_emb,
+        }
+
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key

@@ -1,0 +1,95 @@
+defaults:
+  - _self_
+  - online_task: transport_image_abs
+
+name: train_online_reactive_history_noise_robomimic_workspace
+_target_: zprl.workspace.train_online_reactive_history_noise_robomimic_workspace.TrainOnlineReactiveHistoryNoiseRobomimicWorkspace
+
+task_name: ${online_task.name}
+shape_meta: ${online_task.shape_meta}
+exp_name: "default"
+
+horizon: 16
+n_noise_steps: 1
+n_obs_steps: 1
+n_action_steps: 8 # n_rl_steps
+n_latency_steps: 0
+single_gamma: 0.997  # single-step gamma; multi-step gamma for RL is computed from this
+num_inference_steps: 20
+
+noise_policy:
+  _target_: zprl.policy.reactive_history_noise_policy.HistoryNoisePolicy
+  obs_dim: ???
+  action_dim: ???
+  exec_dim: ???
+  hidden_dim: 512
+  log_std_min: -10.0
+  log_std_max: 2.0
+  gamma: ${eval:"round(${single_gamma}**${n_action_steps}, 4)"}  # multi-step gamma for Bellman target
+  tau: 0.005
+  init_alpha: 0.001
+  auto_alpha: True
+  target_entropy: 0.0
+  num_qs: 10
+  num_subset: 2
+  q_ent: True # include entropy term in Q target
+  history_length: 1
+  sub_ratio: 1  # Keep t, t-ratio, ... within the history_length window.
+  gru_input_dim: 128
+  gru_hidden_dim: 128
+  gru_num_layers: 1
+  target_clip: [0, 1]  # [lb, ub] for the complete TD target; null disables clipping.
+  debug: ${training.debug}
+
+training:
+  device: "cuda:0"
+  seed: 42
+  debug: False
+  # optimization
+  batch_size: 256
+  policy_lr: 1e-4
+  q_lr: 1e-4
+  learning_start: 5000
+  # lr_scheduler: cosine
+  # lr_warmup_steps: 100
+  max_grad_norm: 50.0
+  policy_freq: 2
+  target_freq: 1
+  training_freq: 100
+  utd: 4.0
+  n_envs: ${online_task.n_envs}
+  # noise steering
+  noise_scale: 1.5
+  reward_offset: 0.0
+  bootstrap_at_done: truncated  # never, truncated
+  n_step: 1
+  enc_lr: 1e-5 # null, 1e-5
+  compile: true
+  # training loop control in steps
+  preload_offline_data: False
+  preload_shuffle: True
+  num_steps: 125000
+  buffer_size: 125000  # 500k for transport, 1M for others
+  log_every: 1000
+  eval_every: 50000
+  checkpoint_every: 100000
+  # misc
+  tqdm_interval_sec: 1.0
+
+logging:
+  project: online_debug
+  resume: false
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+  tags: ["${name}", "${task_name}", "${exp_name}"]
+  id: null
+  group: null
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}

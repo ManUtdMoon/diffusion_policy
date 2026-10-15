@@ -28,13 +28,16 @@ def _subsample_history(obs, a_exec, obs_valid, sub_ratio):
 class HistoryActor(nn.Module):
     def __init__(self, obs_dim, exec_dim, action_dim, history_length, hidden_dim=256,
                  gru_input_dim=128, gru_hidden_dim=128, gru_num_layers=2,
-                 log_std_min=-10.0, log_std_max=2.0, debug=False, sub_ratio=2):
+                 log_std_min=-10.0, log_std_max=2.0, debug=False, sub_ratio=2,
+                 condition_dim=None):
         super().__init__()
+        self.condition_dim = exec_dim if condition_dim is None else condition_dim
+        assert self.condition_dim >= 0
         self.encoder = GRUHistoryEncoder(obs_dim, exec_dim, history_length,
                                          gru_input_dim, gru_hidden_dim, gru_num_layers,
                                          sub_ratio, debug)
         self.net = nn.Sequential(
-            layer_init(nn.Linear(self.encoder.output_dim + obs_dim + exec_dim, hidden_dim)),
+            layer_init(nn.Linear(self.encoder.output_dim + obs_dim + self.condition_dim, hidden_dim)),
             nn.GELU(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.GELU(),
@@ -52,21 +55,26 @@ class HistoryActor(nn.Module):
     def _state_features(self, obs, a_exec, obs_valid):
         return torch.cat([self.encoder(obs, a_exec, obs_valid), obs[:, -1]], dim=-1)
 
-    def forward(self, obs, a_exec, obs_valid, a_base):
+    def forward(self, obs, a_exec, obs_valid, a_base=None):
         h = self._state_features(obs, a_exec, obs_valid)
-        assert a_base.shape == (obs.shape[0], self.encoder.exec_dim)
-        assert a_base.device == h.device and a_base.dtype == h.dtype
-        x = self.net(torch.cat([h, a_base], dim=-1))
+        if self.condition_dim:
+            assert a_base is not None
+            assert a_base.shape == (obs.shape[0], self.condition_dim)
+            assert a_base.device == h.device and a_base.dtype == h.dtype
+            h = torch.cat([h, a_base], dim=-1)
+        else:
+            assert a_base is None
+        x = self.net(h)
         mean = self.mean(x)
         logstd = torch.tanh(self.log_std(x))
         logstd = self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (logstd + 1)
         return mean, logstd
 
-    def get_eval_action(self, obs, a_exec, obs_valid, a_base):
+    def get_eval_action(self, obs, a_exec, obs_valid, a_base=None):
         mean, _ = self.forward(obs, a_exec, obs_valid, a_base)
         return torch.tanh(mean)
 
-    def get_action(self, obs, a_exec, obs_valid, a_base):
+    def get_action(self, obs, a_exec, obs_valid, a_base=None):
         mean, logstd = self.forward(obs, a_exec, obs_valid, a_base)
         dist = SquashedNormal(mean, logstd.exp(), validate_args=self.encoder.debug)
         sample = dist.rsample()
@@ -85,17 +93,21 @@ class HistoryActor(nn.Module):
 class HistoryQEnsemble(nn.Module):
     def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
                  gru_input_dim=128, gru_hidden_dim=128, gru_num_layers=2, debug=False,
-                 critic_action_input='exec', sub_ratio=2):
+                 critic_action_input='exec', sub_ratio=2, candidate_action_dim=None):
         super().__init__()
         assert num_qs > 0
-        if critic_action_input not in ('exec', 'base_res'):
+        if critic_action_input not in ('exec', 'base_res', 'noise'):
             raise ValueError(f"Invalid critic_action_input: {critic_action_input}")
         self.critic_action_input = critic_action_input
+        self.candidate_action_dim = exec_dim if candidate_action_dim is None else candidate_action_dim
+        assert self.candidate_action_dim > 0
+        if critic_action_input == 'base_res':
+            assert self.candidate_action_dim == exec_dim
         self.num_qs = num_qs
         self.encoder = GRUHistoryEncoder(obs_dim, exec_dim, history_length,
                                          gru_input_dim, gru_hidden_dim, gru_num_layers,
                                          sub_ratio, debug)
-        critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
+        critic_action_dim = self.candidate_action_dim * (2 if critic_action_input == 'base_res' else 1)
         self.net = nn.Sequential(
             BatchedLinear(num_qs, self.encoder.output_dim + obs_dim + critic_action_dim, hidden_dim),
             BatchedLayerNorm(num_qs, hidden_dim),
@@ -117,7 +129,7 @@ class HistoryQEnsemble(nn.Module):
 
     def forward(self, obs, a_exec, obs_valid, candidate_action, candidate_res=None):
         h = self._state_features(obs, a_exec, obs_valid)
-        assert candidate_action.shape == (obs.shape[0], self.encoder.exec_dim)
+        assert candidate_action.shape == (obs.shape[0], self.candidate_action_dim)
         assert candidate_action.device == h.device and candidate_action.dtype == h.dtype
         if self.critic_action_input == 'base_res':
             assert candidate_res is not None
@@ -169,6 +181,7 @@ class HistoryMLPActor(HistoryActor):
     def __init__(self, obs_dim, exec_dim, action_dim, history_length, hidden_dim=256,
                  log_std_min=-10.0, log_std_max=2.0, debug=False, sub_ratio=1):
         nn.Module.__init__(self)
+        self.condition_dim = exec_dim
         self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug, sub_ratio)
         actor = Actor(self.encoder.output_dim + exec_dim, action_dim, hidden_dim,
                       log_std_min, log_std_max)
@@ -194,6 +207,7 @@ class HistoryMLPQEnsemble(HistoryQEnsemble):
             raise ValueError(f"Invalid critic_action_input: {critic_action_input}")
         self.critic_action_input = critic_action_input
         self.num_qs = num_qs
+        self.candidate_action_dim = exec_dim
         self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug, sub_ratio)
         critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
         self.net = BatchedSoftQNet(self.encoder.output_dim, critic_action_dim, num_qs, hidden_dim).net
