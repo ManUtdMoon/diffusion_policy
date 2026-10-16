@@ -169,13 +169,15 @@ class OneLegEnvTest(unittest.TestCase):
                     if fail:
                         raise RuntimeError('camera creation failed')
                     return result
-                with mock.patch.dict('sys.modules', dict(modules, gym=SimpleNamespace(make=construct))):
+                logger = SimpleNamespace(WARN=30, set_level=mock.Mock())
+                with mock.patch.dict('sys.modules', dict(modules, gym=SimpleNamespace(make=construct, logger=logger))):
                     if fail:
                         with self.assertRaisesRegex(RuntimeError, 'camera creation failed'):
                             _make_native_env((640, 360), furniture='one_leg')
                     else:
                         _make_native_env((640, 360), furniture='one_leg')
                 self.assertIs(sim_config['camera'], camera)
+                logger.set_level.assert_called_once_with(logger.WARN)
 
     def test_invalid_image_contract_is_rejected(self):
         raw = raw_observation()

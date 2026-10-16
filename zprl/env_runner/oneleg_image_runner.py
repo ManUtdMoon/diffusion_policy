@@ -6,6 +6,7 @@ import time
 
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 
 from zprl.env.furniturebench.oneleg_env import OneLegEnv
 from zprl.env_runner.base_image_runner import BaseImageRunner
@@ -78,6 +79,9 @@ class OneLegImageRunner(BaseImageRunner):
             if self.record_video else 0
         step = 0
         with ExitStack() as stack:
+            progress = stack.enter_context(tqdm(total=self.max_steps,
+                desc=f"OneLeg {records[0]['rollout'] + 1}-{records[-1]['rollout'] + 1}/{self.n_rollouts}",
+                unit='step', mininterval=1.0, miniters=1))
             writers = []
             if n_videos:
                 writers, paths = self._open_videos(records[0]['rollout'], n_videos, video_dir)
@@ -98,6 +102,7 @@ class OneLegImageRunner(BaseImageRunner):
                 except RuntimeError as error:
                     return step, error
                 step += 1
+                progress.update(1)
                 self._write_frames(writers, obs, active)
                 finished = active & (success | done.reshape(self.n_envs))
                 for i in finished.nonzero().flatten().tolist():

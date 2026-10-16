@@ -60,6 +60,7 @@ def _make_native_env(render_size, **kwargs):
         return gym.make('FurnitureSim-v0', **kwargs)
     finally:
         sim_config['camera'] = camera
+        gym.logger.set_level(gym.logger.WARN)
 
 
 class OneLegEnv:
