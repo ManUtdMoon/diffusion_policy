@@ -11,6 +11,16 @@ from zprl.common.pytorch_util import dict_apply, replace_submodules
 
 logger = logging.getLogger(__name__)
 
+class TrainEvalTransform(nn.Module):
+    def __init__(self, train_transform, eval_transform):
+        super().__init__()
+        self.train_transform = train_transform
+        self.eval_transform = eval_transform
+
+    def forward(self, x):
+        transform = self.train_transform if self.training else self.eval_transform
+        return transform(x)
+
 class MultiImageObsEncoder(ModuleAttrMixin):
     def __init__(self,
             shape_meta: dict,
@@ -24,7 +34,8 @@ class MultiImageObsEncoder(ModuleAttrMixin):
             share_rgb_model: bool=False,
             # renormalize rgb input with imagenet normalization
             # assuming input in [0,1]
-            imagenet_norm: bool=False
+            imagenet_norm: bool=False,
+            rgb_transforms: Union[Dict[str,nn.Module], None]=None
         ):
         """
         Assumes rgb input: B,C,H,W
@@ -111,6 +122,8 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 
                 this_transform = nn.Sequential(this_resizer, this_randomizer, this_normalizer)
+                if rgb_transforms is not None:
+                    this_transform = nn.Sequential(rgb_transforms[key], this_normalizer)
                 key_transform_map[key] = this_transform
             elif type == 'low_dim':
                 low_dim_keys.append(key)

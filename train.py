@@ -12,7 +12,6 @@ sys.stderr = open(sys.stderr.fileno(), mode='w', buffering=1)
 import hydra
 from omegaconf import OmegaConf
 import pathlib
-from zprl.workspace.base_workspace import BaseWorkspace
 
 # allows arbitrary python code execution in configs using the ${eval:''} resolver
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -26,6 +25,11 @@ def main(cfg: OmegaConf):
     # resolve immediately so all the ${now:} resolvers
     # will use the same time.
     OmegaConf.resolve(cfg)
+
+    if OmegaConf.select(cfg, 'task_name') == 'oneleg_image' \
+            and OmegaConf.select(cfg, 'training.enable_rollout', default=False):
+        import isaacgym
+    from zprl.workspace.base_workspace import BaseWorkspace
 
     cls = hydra.utils.get_class(cfg._target_)
     workspace: BaseWorkspace = cls(cfg)

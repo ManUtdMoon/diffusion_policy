@@ -1,0 +1,177 @@
+defaults:
+  - task: oneleg_image
+  - _self_
+
+name: train_flow_match_oneleg_image
+_target_: zprl.workspace.train_diffusion_image_accelerate_workspace.TrainDiffusionImageAccelerateWorkspace
+
+task_name: ${task.name}
+shape_meta: ${task.shape_meta}
+exp_name: default
+
+horizon: 16
+n_obs_steps: 1
+# Execution prefix only; decoding horizon and dataset padding stay unchanged.
+n_action_steps: 8 # 1,2,4,8,16 to be tested
+
+policy:
+  _target_: zprl.policy.flow_match_unet_image_policy.FlowMatchUnetImagePolicy
+  shape_meta: ${shape_meta}
+  obs_encoder: ${obs_encoder}
+  horizon: ${horizon}
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  num_inference_steps: 5
+  obs_as_global_cond: true
+  diffusion_step_embed_dim: 128
+  down_dims: [256, 384, 512]
+  kernel_size: 5
+  n_groups: 8
+  cond_predict_scale: true
+
+obs_encoder:
+  _target_: zprl.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
+  shape_meta: ${shape_meta}
+  rgb_model:
+    # Instantiate independent randomly initialized backbones for both cameras.
+    _target_: builtins.dict
+    color_image1: &camera_model
+      _target_: zprl.model.vision.model_getter.ResNet18Pooling
+      input_shape: [3, 224, 224]
+      weights: null
+      pooling_type: spatial_learned_embeddings
+      num_spatial_blocks: 8
+      bottleneck_dim: 128
+    color_image2: *camera_model
+  resize_shape: null
+  crop_shape: null
+  # Deliberate difference from the author's R3M BatchNorm: GN with EMA.
+  use_group_norm: true
+  share_rgb_model: false
+  imagenet_norm: true
+  rgb_transforms:
+    _target_: builtins.dict
+    color_image1:
+      _target_: zprl.model.vision.multi_image_obs_encoder.TrainEvalTransform
+      train_transform:
+        _target_: torchvision.transforms.v2.Compose
+        transforms:
+          - &color_jitter
+            _target_: torchvision.transforms.v2.ColorJitter
+            brightness: 0.3
+            contrast: 0.3
+            saturation: 0.3
+            hue: 0.3
+          - &blur
+            _target_: torchvision.transforms.v2.GaussianBlur
+            kernel_size: 5
+            sigma: [0.01, 2.0]
+          - &wrist_resize
+            _target_: torchvision.transforms.v2.Resize
+            size: [224, 224]
+            antialias: true
+      eval_transform: *wrist_resize
+    color_image2:
+      _target_: zprl.model.vision.multi_image_obs_encoder.TrainEvalTransform
+      train_transform:
+        _target_: torchvision.transforms.v2.Compose
+        transforms:
+          - *color_jitter
+          - *blur
+          - _target_: torchvision.transforms.v2.CenterCrop
+            size: [240, 280]
+          - _target_: torchvision.transforms.v2.RandomCrop
+            size: [224, 224]
+      eval_transform:
+        _target_: torchvision.transforms.v2.CenterCrop
+        size: [224, 224]
+
+ema:
+  _target_: zprl.model.diffusion.ema_model.EMAModel
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
+
+dataloader:
+  batch_size: 64
+  num_workers: 8
+  shuffle: true
+  pin_memory: true
+  persistent_workers: true
+
+# Validation merges both sources; metrics are weighted by retained sample count.
+val_dataloader:
+  batch_size: 64
+  num_workers: 8
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+# Offline baseline settings selected by the user.
+training:
+  mixed_precision: "no" # no or bf16
+  gpu_ids: null # Optional local-rank mapping, e.g. [2,3]; keep all GPUs visible for Isaac Gym.
+  ddp_find_unused_parameters: true
+  ddp_timeout_seconds: 1800 # Other ranks wait for the main-process evaluation.
+  enable_rollout: false
+  device: cuda:0
+  seed: 10
+  debug: false
+  resume: true
+  lr_scheduler: cosine_with_min_lr
+  lr_warmup_steps: 500
+  lr_scheduler_kwargs:
+    min_lr_ratio: 0.1
+  num_epochs: null # Derived from max_train_steps and the prepared loader length.
+  gradient_accumulate_every: 1
+  gradient_clip_val: 1.0 # Maximum gradient norm before each optimizer update.
+  use_ema: true
+  freeze_encoder: false
+  rollout_every: 10
+  checkpoint_every: 5
+  val_every: 1
+  sample_every: 1
+  max_train_steps: 100000 # Total training batches across all epochs and resumes.
+  max_val_steps: null
+  tqdm_interval_sec: 1.0
+
+logging:
+  project: oneleg_debug
+  resume: true
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+  tags: ["${name}", "${task_name}", "${exp_name}"]
+  id: null
+  group: null
+
+checkpoint:
+  topk:
+    monitor_key: val_action_mse
+    mode: min
+    k: 3
+    format_str: 'epoch_{epoch:04d}-mse_{val_action_mse:.6f}.ckpt'
+  save_last_ckpt: true
+  save_last_snapshot: false
+
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: ${multi_run.run_dir}
+  sweep:
+    dir: ${multi_run.run_dir}
+    subdir: ${hydra.job.num}

@@ -12,12 +12,13 @@ import copy
 import os
 import pathlib
 import random
+from datetime import timedelta
 
 from accelerate import Accelerator
-from accelerate.utils import DistributedDataParallelKwargs, set_seed
+from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs, set_seed
 import hydra
 import numpy as np
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, ListConfig
 import torch
 from torch.utils.data import DataLoader
 import tqdm
@@ -26,6 +27,7 @@ import wandb
 from zprl.common.action_mse_util import action_mse_per_sample
 from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
+from zprl.common.training_budget import configure_training_budget
 from zprl.common.pytorch_util import dict_apply
 from zprl.dataset.base_dataset import BaseImageDataset
 from zprl.env_runner.base_image_runner import BaseImageRunner
@@ -72,6 +74,28 @@ def _action_mse_log(metric_samples, prefix):
     return result
 
 
+def _configure_cuda_devices(gpu_ids):
+    if gpu_ids is None:
+        return
+    if not isinstance(gpu_ids, (list, tuple, ListConfig)) or not gpu_ids \
+            or any(type(index) is not int for index in gpu_ids):
+        raise ValueError('training.gpu_ids must be a nonempty list of CUDA device indices')
+    local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', 1))
+    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    if len(gpu_ids) != local_world_size:
+        raise ValueError('training.gpu_ids must have one entry per local training process')
+    if len(set(gpu_ids)) != len(gpu_ids):
+        raise ValueError('training.gpu_ids must not contain duplicate devices')
+    device_count = torch.cuda.device_count()
+    if any(index < 0 or index >= device_count for index in gpu_ids):
+        raise ValueError(f'training.gpu_ids must be within the {device_count} visible CUDA devices')
+    index = gpu_ids[local_rank]
+    torch.cuda.set_device(index)
+    os.environ['ACCELERATE_TORCH_DEVICE'] = f'cuda:{index}'
+    # DDP must follow the model device instead of using LOCAL_RANK as a GPU ID.
+    os.environ['ACCELERATE_BYPASS_DEVICE_MAP'] = 'true'
+
+
 class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
@@ -100,11 +124,26 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
     def run(self):
         cfg = copy.deepcopy(self.cfg)
 
+        if cfg.training.debug:
+            cfg.training.num_epochs = 2
+            cfg.training.max_train_steps = 3
+            cfg.training.max_val_steps = 3
+            cfg.training.rollout_every = 1
+            cfg.training.checkpoint_every = 1
+            cfg.training.val_every = 1
+            cfg.training.sample_every = 1
+
+        if cfg.training.gradient_accumulate_every != 1:
+            raise ValueError('Accelerate workspace currently requires gradient_accumulate_every=1')
+
+        _configure_cuda_devices(cfg.training.get('gpu_ids'))
         ddp_kwargs = DistributedDataParallelKwargs(
             find_unused_parameters=cfg.training.ddp_find_unused_parameters)
+        process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(
+            seconds=cfg.training.get('ddp_timeout_seconds', 600)))
         accelerator = Accelerator(
             mixed_precision=cfg.training.mixed_precision,
-            kwargs_handlers=[ddp_kwargs]
+            kwargs_handlers=[ddp_kwargs, process_group_kwargs]
         )
         device = accelerator.device
         set_seed(cfg.training.seed, device_specific=True)
@@ -113,7 +152,9 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
             lastest_ckpt_path = self.get_checkpoint_path()
             if lastest_ckpt_path.is_file():
                 accelerator.print(f"Resuming from checkpoint {lastest_ckpt_path}")
-                self.load_checkpoint(path=lastest_ckpt_path)
+                self.load_checkpoint(path=lastest_ckpt_path,
+                    include_keys=self.include_keys)
+                self.epoch += 1
 
         dataset: BaseImageDataset
         dataset = hydra.utils.instantiate(cfg.task.dataset)
@@ -157,9 +198,10 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
             ema = hydra.utils.instantiate(
                 cfg.ema,
                 model=self.ema_model)
+            ema.optimization_step = self.global_step
 
         env_runner: BaseImageRunner = None
-        if accelerator.is_main_process:
+        if accelerator.is_main_process and cfg.training.get('enable_rollout', True):
             env_runner = hydra.utils.instantiate(
                 cfg.task.env_runner,
                 output_dir=self.output_dir)
@@ -196,8 +238,9 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
             model, optimizer, train_dataloader, val_dataloader)
         raw_model = accelerator.unwrap_model(model)
 
-        train_dataloader_len_after_prepare = len(train_dataloader)
-        num_training_steps = train_dataloader_len_after_prepare * cfg.training.num_epochs
+        batches_per_epoch = len(train_dataloader)
+        total_train_batches = configure_training_budget(
+            cfg.training, batches_per_epoch)
 
         lr_scheduler_kwargs = OmegaConf.to_container(
             OmegaConf.select(cfg, "training.lr_scheduler_kwargs", default={}),
@@ -206,7 +249,7 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
             cfg.training.lr_scheduler,
             optimizer=optimizer,
             num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=num_training_steps,
+            num_training_steps=total_train_batches,
             last_epoch=self.global_step-1,
             **lr_scheduler_kwargs
         )
@@ -214,28 +257,19 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
         if accelerator.is_main_process:
             wandb.config.update(
                 {
-                    "train_dataloader_len_after_prepare": train_dataloader_len_after_prepare,
-                    "num_training_steps": num_training_steps,
+                    "train_dataloader_len_after_prepare": batches_per_epoch,
+                    "num_training_steps": total_train_batches,
+                    "num_epochs": cfg.training.num_epochs,
                 }
             )
 
         train_sampling_batch = None
 
-        if cfg.training.debug:
-            cfg.training.num_epochs = 2
-            cfg.training.max_train_steps = 3
-            cfg.training.max_val_steps = 3
-            cfg.training.rollout_every = 1
-            cfg.training.checkpoint_every = 1
-            cfg.training.val_every = 1
-            cfg.training.sample_every = 1
-
         optimizer.zero_grad()
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         logger_context = JsonLogger(log_path) if accelerator.is_main_process else contextlib.nullcontext(_NullLogger())
         with logger_context as json_logger:
-            for local_epoch_idx in range(cfg.training.num_epochs):
-                del local_epoch_idx
+            while self.global_step < total_train_batches:
                 step_log = dict()
 
                 model.train()
@@ -255,6 +289,10 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                         raw_loss = loss.detach()
 
                         accelerator.backward(loss)
+                        grad_norm = None
+                        if cfg.training.get('gradient_clip_val') is not None:
+                            grad_norm = accelerator.clip_grad_norm_(
+                                model.parameters(), cfg.training.gradient_clip_val)
                         optimizer.step()
                         lr_scheduler.step()
                         if cfg.training.use_ema:
@@ -264,6 +302,7 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                         loss_cpu = _mean_scalar(accelerator, raw_loss, device)
                         tepoch.set_postfix(loss=loss_cpu, refresh=False)
                         train_losses.append(loss_cpu)
+                        self.global_step += 1
                         step_log = {
                             'train_loss': loss_cpu,
                             'global_step': self.global_step,
@@ -271,15 +310,17 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                             'lr': lr_scheduler.get_last_lr()[0]
                         }
 
-                        is_last_batch = (batch_idx == (len(train_dataloader)-1))
+                        if grad_norm is not None:
+                            step_log['grad_norm'] = _mean_scalar(accelerator, grad_norm, device)
+
+                        is_last_batch = (batch_idx == (len(train_dataloader)-1)) \
+                            or self.global_step >= total_train_batches
                         if not is_last_batch:
                             if accelerator.is_main_process:
                                 wandb_run.log(step_log, step=self.global_step)
                                 json_logger.log(step_log)
-                            self.global_step += 1
 
-                        if (cfg.training.max_train_steps is not None) \
-                            and batch_idx >= (cfg.training.max_train_steps-1):
+                        if self.global_step >= total_train_batches:
                             break
 
                 train_loss = float(np.mean(train_losses))
@@ -289,15 +330,20 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                 if self.ema_model is not None:
                     self.ema_model.eval()
 
-                if (self.epoch % cfg.training.rollout_every) == 0:
+                if cfg.training.get('enable_rollout', True) and (
+                    (self.epoch > 0 and self.epoch % cfg.training.rollout_every == 0)
+                    or self.global_step >= total_train_batches
+                ):
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
                         policy = self.ema_model if cfg.training.use_ema else raw_model
                         runner_log = env_runner.run(policy)
                         step_log.update(runner_log)
+                    accelerator.wait_for_everyone()
 
-                if (self.epoch % cfg.training.val_every) == 0:
-                    with torch.no_grad():
+                if (self.epoch % cfg.training.val_every) == 0 \
+                        or self.global_step >= total_train_batches:
+                    with torch.no_grad(), accelerator.autocast():
                         val_mse_samples = dict()
                         with tqdm.tqdm(
                                 val_dataloader,
@@ -324,7 +370,7 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                 if (self.epoch % cfg.training.sample_every) == 0:
                     accelerator.wait_for_everyone()
                     if train_sampling_batch is not None:
-                        with torch.no_grad():
+                        with torch.no_grad(), accelerator.autocast():
                             batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
                             policy = self.ema_model if cfg.training.use_ema else raw_model
                             result = policy.predict_action(batch["obs"])
@@ -338,7 +384,8 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                             step_log.update(_action_mse_log(
                                 mse_samples, "train_action_mse"))
 
-                if (self.epoch % cfg.training.checkpoint_every) == 0:
+                if (self.epoch % cfg.training.checkpoint_every) == 0 \
+                        or self.global_step >= total_train_batches:
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
                         if cfg.checkpoint.save_last_ckpt:
@@ -362,7 +409,7 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                 if accelerator.is_main_process:
                     wandb_run.log(step_log, step=self.global_step)
                     json_logger.log(step_log)
-                self.global_step += 1
+
                 self.epoch += 1
                 accelerator.wait_for_everyone()
 

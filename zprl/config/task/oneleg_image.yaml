@@ -1,0 +1,44 @@
+name: oneleg_image
+
+shape_meta:
+  obs:
+    color_image1:
+      shape: [3, 240, 320]
+      type: rgb
+    color_image2:
+      shape: [3, 240, 320]
+      type: rgb
+    robot_state:
+      shape: [16]
+      type: low_dim
+  action:
+    shape: [10]
+
+action_mse_groups:
+  pos: [[0, 3]]
+  rot: [[3, 9]]
+  gripper: [[9, null]]
+
+env_runner:
+  _target_: zprl.env_runner.oneleg_image_runner.OneLegImageRunner
+  n_rollouts: 100
+  n_envs: 20
+  max_steps: 700
+  render_size: [640, 360] # Native camera width, height; policy input remains 240x320.
+  n_action_steps: ${n_action_steps}
+  seed: 10000
+  record_video: false
+  n_vis: 5
+
+dataset:
+  _target_: zprl.dataset.oneleg_image_dataset.OneLegImageDataset
+  shape_meta: ${task.shape_meta}
+  zarr_paths:
+    - ./data_local/FurnitureSim/success_truncated_translated.zarr
+    - ./data_local/FurnitureSim/success_translated.zarr
+  horizon: ${horizon}
+  n_obs_steps: ${n_obs_steps}
+  pad_before: 0
+  pad_after: ${eval:'${horizon}-1'}
+  seed: ${training.seed}
+  val_ratio: 0.05
