@@ -1,0 +1,29 @@
+name: oneleg_image
+
+shape_meta:
+  obs:
+    color_image1:
+      shape: [3, 240, 320]
+      type: rgb
+    color_image2:
+      shape: [3, 240, 320]
+      type: rgb
+    robot_state:
+      shape: [16]
+      type: low_dim
+  action:
+    shape: [10]
+
+base_ckpt: data/upload/oneleg/checkpoints/epoch_0055-mse_0.020349.ckpt
+n_envs: 20
+max_steps: 700
+render_size: [640, 360]
+randomness: low
+
+# Settings for independent evaluation, without a training-time runner.
+evaluation:
+  n_rollouts: 100
+  n_envs: ${online_task.n_envs}
+  seed: 10000
+  record_video: false
+  n_vis: 5

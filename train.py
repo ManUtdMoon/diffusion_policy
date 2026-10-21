@@ -26,8 +26,11 @@ def main(cfg: OmegaConf):
     # will use the same time.
     OmegaConf.resolve(cfg)
 
-    if OmegaConf.select(cfg, 'task_name') == 'oneleg_image' \
-            and OmegaConf.select(cfg, 'training.enable_rollout', default=False):
+    # isaacgym shoule be imported before torch
+    oneleg_on = OmegaConf.select(cfg, 'online_task.name') == 'oneleg_image'
+    oneleg_off = OmegaConf.select(cfg, 'task_name') == 'oneleg_image'
+    enable_rollout = OmegaConf.select(cfg, 'training.enable_rollout', default=False)
+    if oneleg_on or (oneleg_off and enable_rollout):
         import isaacgym
     from zprl.workspace.base_workspace import BaseWorkspace
 

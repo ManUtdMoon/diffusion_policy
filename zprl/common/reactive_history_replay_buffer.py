@@ -1,13 +1,13 @@
 from typing import Optional
 
 import numpy as np
-from stable_baselines3.common.buffers import NStepReplayBuffer
 from stable_baselines3.common.vec_env import VecNormalize
 
+from zprl.common.history_replay_buffer import HistoryReplayBufferBase
 from zprl.common.reactive_history import HistoryReplayBufferSamples
 
 
-class ReactiveHistoryReplayBuffer(NStepReplayBuffer):
+class ReactiveHistoryReplayBuffer(HistoryReplayBufferBase):
     def __init__(self, *args, base_action_dim: int, action_step_dim: int,
                  history_length: int, **kwargs):
         super().__init__(*args, **kwargs)
