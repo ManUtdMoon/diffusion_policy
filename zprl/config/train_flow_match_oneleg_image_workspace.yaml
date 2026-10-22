@@ -123,11 +123,11 @@ training:
   gpu_ids: null # Optional local-rank mapping, e.g. [2,3]; keep all GPUs visible for Isaac Gym.
   ddp_find_unused_parameters: true
   ddp_timeout_seconds: 1800 # Other ranks wait for the main-process evaluation.
-  enable_rollout: false
+  enable_rollout: true
   device: cuda:0
   seed: 10
   debug: false
-  resume: true
+  resume: false
   lr_scheduler: cosine_with_min_lr
   lr_warmup_steps: 500
   lr_scheduler_kwargs:
@@ -147,7 +147,7 @@ training:
 
 logging:
   project: oneleg_debug
-  resume: true
+  resume: false
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
   tags: ["${name}", "${task_name}", "${exp_name}"]

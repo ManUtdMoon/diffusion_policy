@@ -44,7 +44,7 @@ class OneLegImageDataset(BaseImageDataset):
         self.sources = []
         for path in self.zarr_paths:
             buffer = ReplayBuffer.copy_from_path(path, store=zarr.MemoryStore(),
-                keys=[*self.rgb_keys, 'robot_state', 'action'])
+                keys=[*self.rgb_keys, 'robot_state', 'action_pos'])
             self.sources.append(zarr.open_group(store=buffer.root.store, mode='r'))
         self.episode_ends = []
         self.train_masks = []
@@ -61,9 +61,9 @@ class OneLegImageDataset(BaseImageDataset):
                 expected_dtype = np.uint8 if key in self.rgb_keys else np.float32
                 if array.dtype != expected_dtype:
                     raise ValueError(f'Invalid dtype for {key}: {array.dtype}')
-            action = source['data/action']
+            action = source['data/action_pos']
             if action.shape != (int(ends[-1]), 10) or action.dtype != np.float32:
-                raise ValueError('Stored action must be float32 (N, 10)')
+                raise ValueError('Stored action_pos must be float32 (N, 10)')
             self.episode_ends.append(ends)
             val_mask = get_val_mask(len(ends), val_ratio, seed)
             self.val_masks.append(val_mask)
@@ -93,16 +93,24 @@ class OneLegImageDataset(BaseImageDataset):
     def get_normalizer(self):
         # The author fits global min/max across both full sources, including val.
         normalizer = LinearNormalizer()
-        normalizer.fit({key: np.concatenate([source['data'][key][:]
-                       for source in self.sources])
-                       for key in ('action', 'robot_state')}, mode='limits')
+        normalizer.fit(
+            {
+                'action': self.get_all_actions(),
+                'robot_state': np.concatenate([source['data/robot_state'][:]
+                for source in self.sources])
+            },
+            mode='limits'
+        )
+        for key, stop in (('action', 10), ('robot_state', 9)):
+            normalizer[key].params_dict['scale'][3:stop] = 1.
+            normalizer[key].params_dict['offset'][3:stop] = 0.
         for key in self.rgb_keys:
             normalizer[key] = get_image_range_normalizer()
         return normalizer
 
     def get_all_actions(self):
         return torch.from_numpy(np.concatenate([
-            source['data/action'][:] for source in self.sources]))
+            source['data/action_pos'][:] for source in self.sources]))
 
     def __len__(self):
         return sum(len(rows) for rows in self.indices)
@@ -127,6 +135,6 @@ class OneLegImageDataset(BaseImageDataset):
             for key in self.rgb_keys}
         obs['robot_state'] = torch.from_numpy(data['robot_state'][start:start + 1])
         actions = np.empty((self.horizon, 10), dtype=np.float32)
-        actions[:sample_end] = data['action'][start:end]
+        actions[:sample_end] = data['action_pos'][start:end]
         actions[sample_end:] = actions[sample_end - 1]
         return {'obs': obs, 'action': torch.from_numpy(actions)}

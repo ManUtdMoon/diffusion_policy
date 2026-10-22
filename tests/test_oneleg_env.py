@@ -99,7 +99,7 @@ class OneLegEnvTest(unittest.TestCase):
         native = env.env
         self.assertEqual(native.kwargs['furniture'], 'one_leg')
         self.assertEqual(native.kwargs['act_rot_repr'], 'quat')
-        self.assertEqual(native.kwargs['action_type'], 'delta')
+        self.assertEqual(native.kwargs['action_type'], 'pos')
         self.assertFalse(native.kwargs['resize_img'])
         self.assertEqual(native.kwargs['render_size'], (640, 360))
         env.reset(seed=17)
@@ -111,15 +111,18 @@ class OneLegEnvTest(unittest.TestCase):
         env.reset(seed=17)
         self.assertEqual(probe, native.seed_probe)
         action = np.zeros((2, 10), dtype=np.float64)
-        # Public rot6d actions become native xyzw quaternions without rescaling
-        # translation or binarizing the gripper.
-        action[:, :3] = 0.04
-        action[:, 3:9] = [1, 0, 0, 0, 1, 0]
+        # Absolute targets are passed through, without adding current pose or
+        # applying the demonstration's delta translation/rotation clipping.
+        action[:, :3] = [0.45, -0.07, 0.2]
+        target_rotation = axis_angle_to_matrix(torch.tensor([[0., 0., 0.8]]))
+        action[:, 3:9] = target_rotation[:, :2, :].reshape(1, 6).numpy()
         action[:, -1] = -0.25
         obs, reward, done, info = env.step(action)
         self.assertEqual(len(native.actions), 1)
-        expected = torch.tensor([[0.04, 0.04, 0.04, 0, 0, 0, 1, -0.25]]).repeat(2, 1)
-        torch.testing.assert_close(native.actions[0], expected)
+        torch.testing.assert_close(native.actions[0][:, :3], torch.tensor(action[:, :3]).float())
+        torch.testing.assert_close(quaternion_to_matrix(native.actions[0][:, [6, 3, 4, 5]]),
+            target_rotation.expand(2, -1, -1))
+        torch.testing.assert_close(native.actions[0][:, -1], torch.full((2,), -0.25))
         self.assertIs(reward, native.reward)
         self.assertIs(done, native.done)
         self.assertEqual(native.reset_count, 2)

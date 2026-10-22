@@ -179,11 +179,13 @@ class HistoryMLPActor(HistoryActor):
         return self.encoder(obs, a_exec, obs_valid)
 
     def __init__(self, obs_dim, exec_dim, action_dim, history_length, hidden_dim=256,
-                 log_std_min=-10.0, log_std_max=2.0, debug=False, sub_ratio=1):
+                 log_std_min=-10.0, log_std_max=2.0, debug=False, sub_ratio=1,
+                 condition_dim=None):
         nn.Module.__init__(self)
-        self.condition_dim = exec_dim
+        self.condition_dim = exec_dim if condition_dim is None else condition_dim
+        assert self.condition_dim >= 0
         self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug, sub_ratio)
-        actor = Actor(self.encoder.output_dim + exec_dim, action_dim, hidden_dim,
+        actor = Actor(self.encoder.output_dim + self.condition_dim, action_dim, hidden_dim,
                       log_std_min, log_std_max)
         self.net = actor.net
         self.mean = actor.mean
@@ -200,16 +202,19 @@ class HistoryMLPQEnsemble(HistoryQEnsemble):
         return self.encoder(obs, a_exec, obs_valid)
 
     def __init__(self, obs_dim, exec_dim, num_qs, history_length, hidden_dim=256,
-                 debug=False, critic_action_input='exec', sub_ratio=1):
+                 debug=False, critic_action_input='exec', sub_ratio=1, candidate_action_dim=None):
         nn.Module.__init__(self)
         assert num_qs > 0
-        if critic_action_input not in ('exec', 'base_res'):
+        if critic_action_input not in ('exec', 'base_res', 'noise'):
             raise ValueError(f"Invalid critic_action_input: {critic_action_input}")
         self.critic_action_input = critic_action_input
         self.num_qs = num_qs
-        self.candidate_action_dim = exec_dim
+        self.candidate_action_dim = exec_dim if candidate_action_dim is None else candidate_action_dim
+        assert self.candidate_action_dim > 0
+        if critic_action_input == 'base_res':
+            assert self.candidate_action_dim == exec_dim
         self.encoder = FlattenHistoryEncoder(obs_dim, exec_dim, history_length, debug, sub_ratio)
-        critic_action_dim = exec_dim * (2 if critic_action_input == 'base_res' else 1)
+        critic_action_dim = self.candidate_action_dim * (2 if critic_action_input == 'base_res' else 1)
         self.net = BatchedSoftQNet(self.encoder.output_dim, critic_action_dim, num_qs, hidden_dim).net
         logger.info(
             "HistoryMLPQEnsemble parameters: %.4f M", _parameters_m(self)

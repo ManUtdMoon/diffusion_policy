@@ -64,7 +64,7 @@ def _make_native_env(render_size, **kwargs):
 
 
 class OneLegEnv:
-    """Current-frame observations and public 10D rot6d delta actions.
+    """Current-frame observations and public 10D rot6d absolute actions.
 
     Actions are batch-converted to native quaternion format before one step.
 
@@ -86,7 +86,7 @@ class OneLegEnv:
             headless=headless, randomness=randomness, resize_img=False,
             np_step_out=False, channel_first=False, concat_robot_state=False,
             robot_state_as_dict=True, squeeze_batch_dim=False,
-            act_rot_repr='quat', action_type='delta', ctrl_mode='osc')
+            act_rot_repr='quat', action_type='pos', ctrl_mode='osc')
         self.device = self.env.unwrapped.device
 
     @torch.no_grad()

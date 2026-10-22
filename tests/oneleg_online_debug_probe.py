@@ -18,6 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--method', choices=('resrl', 'dsrl'), required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--snapshot', type=Path, help='Save and verify an evaluation snapshot after training')
     args, training_args = parser.parse_known_args()
 
     import isaacgym
@@ -59,10 +60,16 @@ def main():
         return call
 
     load_base, make_env = module.load_oneleg_base, module.OneLegOnlineEnv
+    session_name = 'OneLegHistorySumPolicy' if args.method == 'resrl' else 'OneLegHistoryNoiseSumPolicy'
+    make_session = getattr(module, session_name)
     run, update = workspace_class.run, workspace_class._update
     discard = OneLegEpisodeCollector.discard_pending
     started = time.perf_counter()
     with ExitStack() as stack:
+        def observed_session(*a, **kw):
+            state['session'] = make_session(*a, **kw)
+            return state['session']
+
         def observed_load(*a, **kw):
             base, cfg = load_base(*a, **kw)
             state['base_before'] = fingerprint(base)
@@ -85,7 +92,11 @@ def main():
             def observed_reset(*a, **kw):
                 assert not a and not kw  # Training resets must not reseed layouts.
                 state['reset_calls'] += 1
-                return reset()
+                obs = reset()
+                if args.snapshot:
+                    state['probe_obs'] = obs
+                state['hold_pose'] = obs['robot_state'][:, 0, :9].clone()
+                return obs
 
             def observed_step(action):
                 assert action.shape == (env.num_envs, env.n_action_steps, 10)
@@ -97,8 +108,10 @@ def main():
             def observed_native_step(action):
                 assert action.shape == (env.num_envs, 10)
                 active = env.active.clone()
-                assert torch.equal(action[~active], env.hold_action.expand(int((~active).sum()), -1))
+                assert torch.equal(action[~active, :9], state['hold_pose'][~active])
+                assert (action[~active, 9] == 0).all()
                 output = native_step(action)
+                state['hold_pose'][active] = output[0]['robot_state'][active, :9]
                 state['clamp_counts'][0] += (action[active].abs() > 1).sum()
                 state['clamp_counts'][1] += active.sum() * 10
                 return output
@@ -153,6 +166,23 @@ def main():
             assert workspace.last_log['info/global_step'] == workspace.global_step * tr
             assert all(np.isfinite(value) for value in workspace.last_log.values())
             assert not list(Path(workspace.output_dir).glob('**/*.ckpt'))
+            if args.snapshot:
+                import dill
+                from zprl.common.oneleg_online import load_oneleg_online
+                torch.save(workspace.get_snapshot(), args.snapshot, pickle_module=dill)
+                restored, _, metadata = load_oneleg_online(args.snapshot, device=cfg.training.device)
+                assert fingerprint(getattr(restored, policy_key)) == fingerprint(policy)
+                assert fingerprint(restored.base_policy) == state['base_before']
+                actions = []
+                for session in (state['session'], restored):
+                    session.eval()
+                    torch.manual_seed(1234)
+                    session.reset(state['probe_obs'])
+                    actions.append(session.predict_action(state['probe_obs'], deterministic=True)['action'])
+                torch.testing.assert_close(actions[0], actions[1], rtol=0, atol=0)
+                result.update(snapshot=str(args.snapshot), snapshot_metadata=metadata,
+                    snapshot_action_max_error=float((actions[0] - actions[1]).abs().max()),
+                    snapshot_weights_and_normalizer_equal=True)
             clipped, components = state['clamp_counts'].tolist()
             assert components == env.solid_steps * 10
             parameters = dict(n_envs=env.num_envs, max_steps=env.max_steps,
@@ -179,6 +209,7 @@ def main():
 
         stack.enter_context(patch.object(module, 'load_oneleg_base', observed_load))
         stack.enter_context(patch.object(module, 'OneLegOnlineEnv', observed_env))
+        stack.enter_context(patch.object(module, session_name, observed_session))
         stack.enter_context(patch.object(OneLegEpisodeCollector, 'discard_pending', observed_discard))
         stack.enter_context(patch.object(workspace_class, '_update', timed('update', observed_update)))
         stack.enter_context(patch.object(workspace_class, 'run', observed_run))

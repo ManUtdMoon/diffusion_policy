@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from zprl.common.reactive_history import HistoryReplayBufferSamples, HistoryWindow
 from zprl.model.common.module_attr_mixin import ModuleAttrMixin
 from zprl.model.common.shape_util import assert_shape
-from zprl.model.rl_history import HistoryActor, HistoryQEnsemble
+from zprl.model.rl_history import HistoryActor, HistoryQEnsemble, HistoryMLPActor, HistoryMLPQEnsemble
 from zprl.policy.reactive_policy import SumPolicy as ReactiveSumPolicy
 
 
@@ -58,7 +58,8 @@ class HistoryResiduePolicy(ModuleAttrMixin):
             target_clip: list = None,
             gru_input_dim: int = 128,
             gru_hidden_dim: int = 128,
-            gru_num_layers: int = 2):
+            gru_num_layers: int = 2,
+            history_encoder: str = 'gru'):
         super().__init__()
         if target_clip is not None:
             if len(target_clip) != 2:
@@ -72,12 +73,18 @@ class HistoryResiduePolicy(ModuleAttrMixin):
         assert 0 < num_subset <= num_qs
         common = dict(
             obs_dim=obs_dim, exec_dim=exec_dim, history_length=history_length,
-            hidden_dim=hidden_dim, debug=debug, sub_ratio=sub_ratio,
-            gru_input_dim=gru_input_dim, gru_hidden_dim=gru_hidden_dim,
-            gru_num_layers=gru_num_layers)
-        self.actor = HistoryActor(action_dim=action_dim, log_std_min=log_std_min,
+            hidden_dim=hidden_dim, debug=debug, sub_ratio=sub_ratio)
+        if history_encoder == 'gru':
+            actor_cls, critic_cls = HistoryActor, HistoryQEnsemble
+            common.update(gru_input_dim=gru_input_dim, gru_hidden_dim=gru_hidden_dim,
+                          gru_num_layers=gru_num_layers)
+        elif history_encoder == 'mlp':
+            actor_cls, critic_cls = HistoryMLPActor, HistoryMLPQEnsemble
+        else:
+            raise ValueError(f"Invalid history_encoder: {history_encoder}")
+        self.actor = actor_cls(action_dim=action_dim, log_std_min=log_std_min,
                                   log_std_max=log_std_max, **common)
-        self.qs = HistoryQEnsemble(num_qs=num_qs,
+        self.qs = critic_cls(num_qs=num_qs,
                                      critic_action_input=critic_action_input, **common)
         self.q_targets = copy.deepcopy(self.qs).requires_grad_(False).eval()
         self.log_alpha = nn.Parameter(torch.log(torch.tensor(init_alpha, dtype=torch.float32)))

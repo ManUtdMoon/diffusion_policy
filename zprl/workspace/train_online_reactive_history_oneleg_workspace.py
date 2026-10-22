@@ -140,6 +140,7 @@ class TrainOnlineReactiveHistoryOneLegWorkspace(BaseWorkspace):
                 n_action_steps=cfg.n_rl_steps,
                 max_steps=cfg.online_task.max_steps,
                 single_gamma=cfg.single_gamma,
+                reward_offset=cfg.training.reward_offset,
                 num_envs=cfg.training.n_envs,
                 compute_device_id=device.index or 0,
                 graphics_device_id=device.index or 0,

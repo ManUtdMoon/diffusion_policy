@@ -1,10 +1,14 @@
-import copy
+import pathlib
 import unittest
 
+import hydra
 import torch
+from hydra import compose, initialize_config_dir
+from omegaconf import OmegaConf
 from stable_baselines3.common.type_aliases import ReplayBufferSamples
 
 from tests import test_reactive_history_policy as policy_tests
+from tests import test_reactive_history_noise_policy as noise_tests
 from zprl.model.online import Actor, BatchedSoftQNet
 from zprl.model.rl_history import FlattenHistoryEncoder, HistoryMLPActor, HistoryMLPQEnsemble
 from zprl.policy.reactive_history_policy import HistoryResiduePolicy
@@ -12,6 +16,71 @@ from zprl.policy.residue_policy import ResiduePolicy
 
 
 class ReactiveHistoryMLPTest(unittest.TestCase):
+    def test_oneleg_configs_mlp_inputs_optimizers_and_reload(self):
+        OmegaConf.register_new_resolver('eval', eval, replace=True)
+        config_dir = str(pathlib.Path(__file__).resolve().parents[1] / 'zprl/config')
+        for method in ('res', 'noise'):
+            name = 'train_online_reactive_history_' + ('noise_' if method == 'noise' else '') + 'oneleg_workspace'
+            with initialize_config_dir(version_base=None, config_dir=config_dir):
+                cfg = compose(config_name=name)
+            self.assertIsNone(cfg.training.enc_lr)
+            for length, ratio in ((1, 1), (5, 2)):
+                with self.subTest(method=method, length=length, ratio=ratio):
+                    kwargs = dict(obs_dim=3, action_dim=2, hidden_dim=8, num_qs=2,
+                                  history_length=length, sub_ratio=ratio)
+                    if method == 'noise':
+                        kwargs['exec_dim'] = 4
+                    policy_cfg = cfg[f'{method}_policy']
+                    policy = hydra.utils.instantiate(policy_cfg, **kwargs)
+                    self.assertIsInstance(policy.actor, HistoryMLPActor)
+                    self.assertIsInstance(policy.qs, HistoryMLPQEnsemble)
+                    obs = torch.randn(2, length, 3)
+                    actions = torch.randn(2, length, policy.exec_dim)
+                    valid = torch.ones(2, length, dtype=torch.bool)
+                    flat = policy.actor.encoder(obs, actions, valid)
+                    expected_dim = ((length - 1) // ratio + 1) * 3 + ((length - 1) // ratio) * policy.exec_dim
+                    self.assertEqual(flat.shape, (2, expected_dim))
+                    for module in (policy.actor, policy.qs, policy.q_targets):
+                        torch.testing.assert_close(module._state_features(obs, actions, valid), flat)
+                        self.assertEqual(list(module.encoder.parameters()), [])
+                    self.assertEqual(policy.actor.net[0].in_features,
+                                     expected_dim + (2 if method == 'res' else 0))
+                    self.assertEqual(policy.qs.net[0].weight.shape[1],
+                                     expected_dim + (4 if method == 'res' else 2))
+                    optimizers = policy.get_optimizer(cfg.training.policy_lr, cfg.training.q_lr,
+                                                      cfg.training.enc_lr)
+                    for key, module in (('actor_optimizer', policy.actor), ('q_optimizer', policy.qs)):
+                        self.assertEqual(len(optimizers[key].param_groups), 1)
+                        self.assertEqual({id(p) for p in optimizers[key].param_groups[0]['params']},
+                                         {id(p) for p in module.parameters()})
+                    restored = hydra.utils.instantiate(policy_cfg, **kwargs)
+                    restored.load_state_dict(policy.state_dict())
+                    base = torch.randn(2, 2) if method == 'res' else None
+                    torch.testing.assert_close(policy.actor(obs, actions, valid, base),
+                                               restored.actor(obs, actions, valid, base))
+                    policy.train()
+                    self.assertFalse(policy.q_targets.training)
+                    self.assertTrue(all(not p.requires_grad for p in policy.q_targets.parameters()))
+
+    def test_noise_mlp_losses_and_updates_with_distinct_action_dimensions(self):
+        for length in (1, 5):
+            policy = noise_tests.make_policy(history_length=length, history_encoder='mlp')
+            batch = noise_tests.make_batch(policy)
+            optimizers = policy.get_optimizer(1e-3, 1e-3)
+            for method, key in (('compute_critic_loss', 'q_optimizer'),
+                                ('compute_actor_loss', 'actor_optimizer'),
+                                ('compute_alpha_loss', 'alpha_optimizer')):
+                policy.zero_grad(set_to_none=True)
+                result = getattr(policy, method)(batch)
+                loss = result[0] if isinstance(result, tuple) else result
+                self.assertTrue(torch.isfinite(loss))
+                loss.backward()
+                parameters = optimizers[key].param_groups[0]['params']
+                self.assertTrue(any(p.grad is not None and p.grad.abs().sum() > 0 for p in parameters))
+                self.assertTrue(all(torch.isfinite(p.grad).all() for p in parameters if p.grad is not None))
+                optimizers[key].step()
+            policy.target_update()
+
     def test_flatten_order_padding_and_no_current_action_slot(self):
         encoder = FlattenHistoryEncoder(2, 1, 3, debug=True)
         obs = torch.tensor([[[1., 2.], [3., 4.], [5., 6.]]])
@@ -86,10 +155,8 @@ class ReactiveHistoryMLPTest(unittest.TestCase):
                         next_obs=batch.next_obs[:, -1:], next_a_exec=batch.next_a_exec[:, -1:],
                         next_obs_valid=batch.next_obs_valid[:, -1:])
                 policy = HistoryResiduePolicy(3, 2, length, hidden_dim=8,
-                                              num_qs=3, res_scale=0.5)
-                policy.actor = HistoryMLPActor(3, 2, 2, length, hidden_dim=8)
-                policy.qs = HistoryMLPQEnsemble(3, 2, 3, length, hidden_dim=8)
-                policy.q_targets = copy.deepcopy(policy.qs).requires_grad_(False).eval()
+                                              num_qs=3, res_scale=0.5,
+                                              history_encoder='mlp', sub_ratio=1)
                 reference = ResiduePolicy(policy.actor.encoder.output_dim, 2,
                                           hidden_dim=8, num_qs=3, res_scale=0.5)
                 policy.load_state_dict(reference.state_dict())
@@ -138,7 +205,8 @@ class ReactiveHistoryMLPTest(unittest.TestCase):
 
     @unittest.skipUnless(torch.cuda.is_available(), 'CUDA unavailable')
     def test_cuda_history_loss_and_backward(self):
-        policy = HistoryResiduePolicy(3, 2, 3, hidden_dim=8, num_qs=3).cuda()
+        policy = HistoryResiduePolicy(3, 2, 3, hidden_dim=8, num_qs=3,
+                                      history_encoder='mlp', sub_ratio=1).cuda()
         batch = policy_tests.ReactiveHistoryPolicyTest().make_batch()
         batch = batch._replace(**{name: value.cuda() for name, value in batch._asdict().items()
                                   if isinstance(value, torch.Tensor)})

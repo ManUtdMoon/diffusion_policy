@@ -14,7 +14,7 @@ shape_meta:
   action:
     shape: [10]
 
-base_ckpt: data/upload/oneleg/checkpoints/epoch_0055-mse_0.020349.ckpt
+base_ckpt: data/upload/oneleg_abs_128/checkpoints/epoch_0040-mse_0.024996.ckpt
 n_envs: 20
 max_steps: 700
 render_size: [640, 360]

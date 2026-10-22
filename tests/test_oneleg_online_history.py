@@ -112,6 +112,9 @@ class OneLegHistoryTest(unittest.TestCase):
                         if len(traces[1]) == 1:
                             self.assertEqual(replay.size(), 1)  # Only the short success is visible.
                         self.assertEqual(session.current_obs_emb.shape[0], 3)
+                    for action in native.actions[3:]:
+                        torch.testing.assert_close(action[0, :9], torch.full((9,), 3.))
+                        self.assertEqual(action[0, 9], 0.)
                     self.assertTrue(collector.closed.all())
                     self.assertEqual(replay.committed_episodes, 3)
                     self.assertEqual(replay.committed_transitions, global_step)

@@ -1,4 +1,5 @@
 import ast
+import io
 import os
 import pathlib
 import tempfile
@@ -12,6 +13,7 @@ import zarr
 from torch.utils.data import DataLoader
 
 from zprl.dataset.oneleg_image_dataset import OneLegImageDataset
+from zprl.model.common.normalizer import LinearNormalizer
 
 
 SHAPE_META = {
@@ -30,6 +32,7 @@ class OneLegDatasetTest(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.paths = []
         self.actions = []
+        self.states = []
         for i, ends in enumerate(([3, 7, 12], [2, 5, 9, 14])):
             path = str(pathlib.Path(self.directory.name) / f'{i}.zarr')
             root = zarr.open_group(path, mode='w')
@@ -37,10 +40,20 @@ class OneLegDatasetTest(unittest.TestCase):
             n = ends[-1]
             action = np.broadcast_to(
                 (100 * i + np.arange(n, dtype=np.float32))[:, None], (n, 10)).copy()
+            state = np.broadcast_to(action[:, :1], (n, 16)).copy()
+            state[:, 3:9] = [1, 0, 0, 0, 1, 0]
+            self.states.append(state)
+            root.create_dataset('data/robot_state', data=state)
+            root.create_dataset('data/action', data=np.zeros_like(action))
+            action[:, :3] = action[:, :3] * [0.01, 0.02, 0.03] + [0.3, -0.1, 0.05]
+            angle = 0.3 + np.arange(n) * 0.07 + i
+            action[:, 3:9] = np.stack([np.cos(angle), -np.sin(angle), np.zeros(n),
+                np.sin(angle), np.cos(angle), np.zeros(n)], axis=-1)
+            # Preserve stored rot6d even when it is not exactly orthonormal.
+            action[:, 3:6] *= 0.97
+            action[:, 9] = np.where(np.arange(n) % 2, 1., -1.)
             self.actions.append(action)
-            root.create_dataset('data/action', data=action)
-            root.create_dataset('data/robot_state', data=np.broadcast_to(
-                action[:, :1], (n, 16)).copy())
+            root.create_dataset('data/action_pos', data=action)
             # No reward, success, reset or simulator metadata is needed.
             for key, pixel in (('color_image1', 255), ('color_image2', 128)):
                 array = root.create_dataset('data/' + key,
@@ -83,7 +96,7 @@ class OneLegDatasetTest(unittest.TestCase):
                     self.assertEqual(set(sample), {'obs', 'action'})
                     self.assertEqual(set(sample['obs']), set(SHAPE_META['obs']))
                     np.testing.assert_array_equal(sample['obs']['robot_state'],
-                        np.full((1, 16), self.actions[source_index][start, 0]))
+                        self.states[source_index][start:start + 1])
                 self.assertEqual(choose.call_args.kwargs['p'].tolist(),
                     dataset.sample_probabilities.tolist())
                 torch.testing.assert_close(dataset[len(rows)]['action'], dataset[0]['action'])
@@ -101,8 +114,17 @@ class OneLegDatasetTest(unittest.TestCase):
 
     def test_validation_visits_every_window_once_and_supports_source_index(self):
         dataset = self.dataset.get_validation_dataset()
+        samples = []
         with mock.patch('numpy.random.choice', side_effect=AssertionError('random validation')):
-            starts = [dataset[i]['action'][0, 0].item() for i in range(len(dataset))]
+            for i in range(len(dataset)):
+                samples.append(dataset[i]['action'].numpy())
+        starts = [sample[0, 0].item() for sample in samples]
+        offset = 0
+        for i, rows in enumerate(dataset.indices):
+            for start, end, _, _ in rows:
+                np.testing.assert_array_equal(samples[offset], self.actions[i][
+                    np.minimum(np.arange(start, start + 16), end - 1)])
+                offset += 1
         expected = [self.actions[i][rows[:, 0], 0].tolist()
                     for i, rows in enumerate(dataset.indices)]
         self.assertEqual(starts, sum(expected, []))
@@ -113,18 +135,82 @@ class OneLegDatasetTest(unittest.TestCase):
 
     def test_normalizer_uses_both_complete_sources_and_roundtrips(self):
         normalizer = self.dataset.get_normalizer()
-        all_actions = torch.from_numpy(np.concatenate(self.actions))
-        torch.testing.assert_close(self.dataset.get_all_actions(), all_actions)
-        for key in ('action', 'robot_state'):
-            stats = normalizer[key].get_input_stats()
-            self.assertTrue(torch.all(stats['min'] == 0))
-            self.assertTrue(torch.all(stats['max'] == 113))
-        normalized = normalizer['action'].normalize(all_actions)
-        torch.testing.assert_close(normalized.amin(dim=0), -torch.ones(10))
-        torch.testing.assert_close(normalized.amax(dim=0), torch.ones(10))
-        torch.testing.assert_close(normalizer['action'].unnormalize(normalized),
-            all_actions, atol=1e-5, rtol=1e-5)
+        data = {'action': torch.from_numpy(np.concatenate(self.actions)),
+                'robot_state': torch.from_numpy(np.concatenate(self.states))}
+        limits = LinearNormalizer()
+        limits.fit(data, mode='limits')
+        for key, stop in (('action', 10), ('robot_state', 9)):
+            values = data[key]
+            params = normalizer[key].params_dict
+            self.assertEqual(tuple(params['scale'].shape), (values.shape[-1],))
+            self.assertEqual(params['scale'].dtype, torch.float32)
+            for stat, expected in dict(min=values.amin(0), max=values.amax(0),
+                    mean=values.mean(0), std=values.std(0)).items():
+                torch.testing.assert_close(normalizer[key].get_input_stats()[stat], expected)
+            normalized = normalizer[key].normalize(values)
+            torch.testing.assert_close(normalized[:, 3:stop], values[:, 3:stop], rtol=0, atol=0)
+            torch.testing.assert_close(params['scale'][3:stop], torch.ones(stop - 3))
+            torch.testing.assert_close(params['offset'][3:stop], torch.zeros(stop - 3))
+            for section in (slice(0, 3), slice(stop, values.shape[-1])):
+                torch.testing.assert_close(normalized[:, section],
+                    limits[key].normalize(values)[:, section], rtol=0, atol=0)
+            torch.testing.assert_close(normalizer[key].unnormalize(normalized),
+                values, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(normalizer['action'].normalize(data['action'])[:, :3].amin(0),
+            -torch.ones(3))
+        torch.testing.assert_close(normalizer['action'].normalize(data['action'])[:, :3].amax(0),
+            torch.ones(3))
+        for dataset in (self.dataset, self.dataset.get_validation_dataset(),
+                self.dataset.get_validation_dataset(index=1)):
+            torch.testing.assert_close(dataset.get_all_actions(), data['action'], rtol=0, atol=0)
+            for key, value in normalizer.state_dict().items():
+                torch.testing.assert_close(dataset.get_normalizer().state_dict()[key], value, rtol=0, atol=0)
+        stream = io.BytesIO()
+        torch.save(normalizer.state_dict(), stream)
+        stream.seek(0)
+        restored = LinearNormalizer()
+        restored.load_state_dict(torch.load(stream, weights_only=True), strict=True)
+        for key, value in normalizer.state_dict().items():
+            torch.testing.assert_close(restored.state_dict()[key], value, rtol=0, atol=0)
+        for key, values in data.items():
+            torch.testing.assert_close(restored[key].normalize(values),
+                normalizer[key].normalize(values), rtol=0, atol=0)
         self.assertTrue(self.dataset.sources[0].read_only)
+
+    def test_constant_gripper_command_remains_identity(self):
+        for path in self.paths:
+            zarr.open_group(path, mode='a')['data/action_pos'][:, 9] = 1.
+        dataset = OneLegImageDataset(SHAPE_META, self.paths, horizon=16)
+        normalizer = dataset.get_normalizer()['action']
+        self.assertEqual(normalizer.get_input_stats()['min'][9].item(), 1.)
+        self.assertEqual(normalizer.get_input_stats()['max'][9].item(), 1.)
+        self.assertTrue(torch.all(normalizer.normalize(dataset.get_all_actions())[:, 9] == 1))
+
+    def test_original_action_column_is_not_required(self):
+        for path in self.paths:
+            del zarr.open_group(path, mode='a')['data/action']
+        dataset = OneLegImageDataset(SHAPE_META, self.paths, horizon=16)
+        np.testing.assert_array_equal(dataset.get_all_actions(), np.concatenate(self.actions))
+        for source_index, rows in enumerate(dataset.indices):
+            start, end, _, _ = rows[0]
+            with mock.patch('numpy.random.choice', return_value=source_index):
+                np.testing.assert_array_equal(dataset[0]['action'], self.actions[source_index][
+                    np.minimum(np.arange(start, start + 16), end - 1)])
+
+    def test_invalid_action_pos_is_rejected(self):
+        for path, valid in zip(self.paths, self.actions):
+            cases = [('missing', None), ('length', valid[:-1]),
+                     ('width', valid[:, :-1]), ('dtype', valid.astype(np.float64))]
+            for name, values in cases:
+                with self.subTest(source=path, invalid=name):
+                    source = zarr.open_group(path, mode='a')
+                    del source['data/action_pos']
+                    if values is not None:
+                        source.create_dataset('data/action_pos', data=values)
+                    error = {'missing': KeyError, 'length': AssertionError}.get(name, ValueError)
+                    with self.assertRaises(error):
+                        OneLegImageDataset(SHAPE_META, self.paths, horizon=16)
+                    source.create_dataset('data/action_pos', data=valid, overwrite=True)
 
     def test_invalid_contract_is_rejected(self):
         for kwargs in ({'n_obs_steps': 2}, {'pad_after': 3}, {'pad_before': 1}):
@@ -141,7 +227,7 @@ class OneLegDatasetTest(unittest.TestCase):
             original = zarr.open_group(path, mode='r')
             self.assertIsInstance(cached.store, zarr.MemoryStore)
             self.assertTrue(cached.read_only)
-            self.assertEqual(set(cached['data'].keys()), set(SHAPE_META['obs']) | {'action'})
+            self.assertEqual(set(cached['data'].keys()), set(SHAPE_META['obs']) | {'action_pos'})
             for key in cached['data']:
                 self.assertEqual(cached['data'][key].chunks, original['data'][key].chunks)
                 self.assertEqual(cached['data'][key].compressor, original['data'][key].compressor)
@@ -179,7 +265,7 @@ class OneLegDatasetTest(unittest.TestCase):
                 return ['color_image1', 'color_image2', 'robot_state', 'action']
 
             def __getitem__(self, key):
-                return self.data[key]
+                return self.data['action_pos' if key == 'action' else key]
 
         for source_index, source in enumerate(self.dataset.sources):
             for validation in (False, True):

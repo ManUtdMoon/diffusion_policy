@@ -68,7 +68,8 @@ class ScriptedOneLegEnv:
 
 def actions_for(env):
     indices = torch.arange(env.num_envs, device=env.device)
-    action = env.hold_action.repeat(env.num_envs, env.n_action_steps, 1)
+    action = torch.zeros(env.num_envs, env.n_action_steps, 10, device=env.device)
+    action[:, :, 3] = action[:, :, 7] = 1.
     action[:, :, 0] = (indices[:, None] + 1) * 0.01
     action[:, :, -1] = torch.where(indices[:, None] % 2 == 0, 1., -1.)
     return action
@@ -99,6 +100,8 @@ class OneLegOnlineWrapperTest(unittest.TestCase):
         env, native = self.make_env(max_steps=16, single_gamma=0.5)
         initial = env.reset(seed=100)
         self.assertEqual(initial['robot_state'].shape, (2, 1, 16))
+        torch.testing.assert_close(env._control_pose, initial['robot_state'][:, 0, :9])
+        self.assertNotEqual(env._control_pose.data_ptr(), native.obs['robot_state'].data_ptr())
         with self.assertRaisesRegex(RuntimeError, 'active episodes'):
             env.reset()
         action = actions_for(env)
@@ -111,8 +114,12 @@ class OneLegOnlineWrapperTest(unittest.TestCase):
         torch.testing.assert_close(done, torch.tensor([True, False]))
         torch.testing.assert_close(env.active, torch.tensor([False, True]))
         torch.testing.assert_close(action, original, rtol=0, atol=0)
-        for full in native.actions[3:]:
-            torch.testing.assert_close(full[0], env.hold_action)
+        for step, full in enumerate(native.actions[3:], start=3):
+            torch.testing.assert_close(full[0, :9], torch.full((9,), 3.))
+            self.assertEqual(full[0, 9], 0.)
+            torch.testing.assert_close(full[1], original[1, step])
+        torch.testing.assert_close(env._control_pose, obs['robot_state'][:, 0, :9])
+        self.assertFalse(torch.equal(env._control_pose[0], native.obs['robot_state'][0, :9]))
         torch.testing.assert_close(native.last_grasp, torch.tensor([1., -1.]))
         self.assertEqual(obs['robot_state'][0, 0, 0], 3)
         terminal = infos[0]['terminal_observation']['robot_state'].clone()
@@ -120,7 +127,7 @@ class OneLegOnlineWrapperTest(unittest.TestCase):
         self.assertEqual((env.solid_steps, env.idle_steps), (11, 5))
         second_action = actions_for(env)
         original_second = second_action.clone()
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IndexError):
             env.step(second_action[1:])
         next_obs, reward, done, later = env.step(second_action)
         self.assertEqual(next_obs['robot_state'].shape, (2, 1, 16))
@@ -133,8 +140,11 @@ class OneLegOnlineWrapperTest(unittest.TestCase):
         self.assertNotIn('terminal_observation', later[0])
         self.assertTrue(later[1]['TimeLimit.truncated'])
         torch.testing.assert_close(second_action, original_second, rtol=0, atol=0)
-        for full in native.actions[8:]:
-            torch.testing.assert_close(full[0], env.hold_action)
+        for step, full in enumerate(native.actions[8:], start=8):
+            torch.testing.assert_close(full[0, :9], torch.full((9,), 3.))
+            self.assertEqual(full[0, 9], 0.)
+            torch.testing.assert_close(full[1], original_second[1, step - 8])
+        torch.testing.assert_close(env._control_pose, next_obs['robot_state'][:, 0, :9])
         torch.testing.assert_close(next_obs['robot_state'][0], terminal)
         self.assertTrue(env.batch_done)
         self.assertEqual(float(reward.sum()), 0)
@@ -142,7 +152,8 @@ class OneLegOnlineWrapperTest(unittest.TestCase):
         self.assertEqual(native.reset_calls, 1)
         with self.assertRaises(RuntimeError):
             env.step(torch.empty(0, 8, 10))
-        env.reset(seed=200)
+        reset_obs = env.reset(seed=200)
+        torch.testing.assert_close(env._control_pose, reset_obs['robot_state'][:, 0, :9])
         self.assertEqual(native.reset_calls, 2)
         self.assertEqual((env.solid_steps, env.idle_steps), (19, 13))
         self.assertEqual(env.results, [None, None])
@@ -239,6 +250,26 @@ class OneLegOnlineWrapperTest(unittest.TestCase):
         self.assertEqual((env.solid_steps, env.idle_steps), (6, 0))
         self.assertEqual(native.reset_calls, 1)
         env.close()
+
+    def test_failed_chunk_after_success_keeps_final_hold_pose(self):
+        for mode in ('train', 'eval'):
+            with self.subTest(mode=mode):
+                env, native = self.make_env((1, None), n_action_steps=4, mode=mode)
+                env.reset()
+                native.fail_at = 3
+                with self.assertRaisesRegex(RuntimeError, 'native simulation failed'):
+                    env.step(actions_for(env))
+                torch.testing.assert_close(native.actions[1][0, :9], torch.ones(9))
+                self.assertEqual(native.actions[1][0, 9], 0.)
+                torch.testing.assert_close(env._control_pose[0], torch.ones(9))
+                torch.testing.assert_close(env._control_pose[1], native.obs['robot_state'][1, :9])
+                self.assertFalse(env.last_chunk_valid)
+                self.assertEqual((env.solid_steps, env.idle_steps), (3, 1))
+                self.assertEqual(native.reset_calls, 1)
+                with self.assertRaises(RuntimeError):
+                    env.reset()
+                env.close()
+                self.assertIsNone(env._control_pose)
 
     def test_fixed_twenty_row_sessions_and_effective_decision_fixture(self):
         for history_length in (1, 4):

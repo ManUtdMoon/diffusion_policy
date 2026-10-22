@@ -16,7 +16,7 @@ class OneLegOnlineEnv:
     """
 
     def __init__(self, n_action_steps=8, max_steps=700, single_gamma=0.997,
-            mode='train', env=None, **env_kwargs):
+            mode='train', reward_offset=0.0, env=None, **env_kwargs):
         if n_action_steps < 1 or max_steps < 1 or mode not in ('train', 'eval'):
             raise ValueError('Invalid chunk length, episode limit or environment mode')
         self.env = env if env is not None else OneLegEnv(max_env_steps=max_steps, **env_kwargs)
@@ -26,9 +26,7 @@ class OneLegOnlineEnv:
         self.max_steps = max_steps
         self.single_gamma = single_gamma
         self.mode = mode
-        # Gripper zero stays inside the native hysteresis margin: retain last_grasp.
-        self.hold_action = torch.tensor([0., 0., 0., 1., 0., 0., 0., 1., 0., 0.],
-                                        device=self.device)
+        self.reward_offset = reward_offset
         self.active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.episode_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.episode_returns = torch.zeros(self.num_envs, device=self.device)
@@ -39,6 +37,7 @@ class OneLegOnlineEnv:
         self.last_chunk_valid = False
         self.batch_error = None
         self._obs = None
+        self._control_pose = None
         self._failed = False
 
     @property
@@ -53,6 +52,7 @@ class OneLegOnlineEnv:
             raise RuntimeError('Cannot reset while the batch has active episodes')
         obs = self.env.reset(seed=seed)
         self._obs = obs
+        self._control_pose = obs['robot_state'][:, :9].clone()
         self.batch_seed = seed
         self.active.fill_(True)
         self.episode_steps.zero_()
@@ -95,9 +95,13 @@ class OneLegOnlineEnv:
                 break
             active = self.active.clone()
             full_action = action[:, step].clone()
-            full_action[~active] = self.hold_action
+            full_action[~active, :9] = self._control_pose[~active]
+            # Gripper zero retains the native last_grasp state.
+            full_action[~active, 9] = 0.
             try:
                 obs, reward, native_done, _ = self.env.step(full_action)
+                # Freeze each row's final measured pose once it becomes inactive.
+                self._control_pose[active] = obs['robot_state'][active, :9]
                 count = int(active.sum())
                 self.solid_steps += count
                 self.idle_steps += self.num_envs - count
@@ -117,7 +121,7 @@ class OneLegOnlineEnv:
             self.episode_steps[active] += 1
             self.episode_returns[active] += reward[active]
             lengths[active] += 1
-            rewards[active] += self.single_gamma ** step * reward[active]
+            rewards[active] += self.single_gamma ** step * (reward[active] + self.reward_offset)
             raw_rewards[active] += reward[active]
             for key, value in obs.items():
                 next_obs[key][active, 0] = value[active]
@@ -153,3 +157,4 @@ class OneLegOnlineEnv:
             self.env.close()
             self.env = None
         self._obs = None
+        self._control_pose = None

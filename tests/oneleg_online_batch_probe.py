@@ -16,7 +16,7 @@ def main():
     parser.add_argument('--run-gpu', action='store_true', help='Explicitly opt in to Isaac Gym')
     parser.add_argument('--n-envs', type=int, choices=(2, 20), required=True)
     parser.add_argument('--output', type=pathlib.Path, required=True)
-    parser.add_argument('--checkpoint', default='data/upload/oneleg/checkpoints/epoch_0055-mse_0.020349.ckpt')
+    parser.add_argument('--checkpoint', required=True)
     args = parser.parse_args()
     if not args.run_gpu:
         parser.error('Pass --run-gpu in a fresh oneleg process')
@@ -54,6 +54,7 @@ def main():
             self.fail_at = None
             self.natural_success = set()
             self.hold_rows_checked = 0
+            self.hold_pose_changes = 0
             self.reset_costs = []
             self.last_success = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
@@ -75,6 +76,7 @@ def main():
             packed = pack_oneleg_observation(native.get_observation())
             for key in obs:
                 torch.testing.assert_close(obs[key], packed[key], rtol=0, atol=0)
+            self.hold_pose = obs['robot_state'][:, :9].clone()
             return obs
 
         def step(self, action):
@@ -84,9 +86,11 @@ def main():
             native = self.adapter.env.unwrapped
             previous_grasp = native.last_grasp.clone()
             if inactive.any():
-                torch.testing.assert_close(action[inactive],
-                    self.owner.hold_action.expand(int(inactive.sum()), -1), rtol=0, atol=0)
+                torch.testing.assert_close(action[inactive, :9], self.hold_pose[inactive], rtol=0, atol=0)
+                assert (action[inactive, 9] == 0).all()
             obs, reward, done, info = self.adapter.step(action)
+            self.hold_pose_changes += int((obs['robot_state'][inactive, :9] != self.hold_pose[inactive]).any(1).sum())
+            self.hold_pose[~inactive] = obs['robot_state'][~inactive, :9]
             self.step_calls += 1
             self.batch_steps += 1
             self.hold_rows_checked += int(inactive.sum())
@@ -155,7 +159,8 @@ def main():
                 with torch.no_grad():
                     action = base.predict_action(obs)['action']
             else:
-                action = env.hold_action.repeat(args.n_envs, env.n_action_steps, 1)
+                action = torch.cat([obs['robot_state'][:, :, :9],
+                    torch.zeros(args.n_envs, 1, 1, device=env.device)], dim=-1).repeat(1, env.n_action_steps, 1)
                 action[:, :, -1] = -1
                 if observed.inject_success:
                     action[0, :, -1] = 1
@@ -180,6 +185,7 @@ def main():
             if terminal is not None:
                 for key in terminal:
                     torch.testing.assert_close(terminal[key], reference[key], rtol=0, atol=0)
+                    torch.testing.assert_close(obs[key][0], reference[key], rtol=0, atol=0)
             assert obs['robot_state'].shape == (args.n_envs, 1, 16)
         assert env.last_chunk_valid
         deltas = {key: getattr(env, key) - value for key, value in before.items()}
@@ -241,9 +247,10 @@ def main():
         env.mode = 'eval'
         observed.inject_success = {0: 1}
         observed.fail_at = 3
-        reset(44000)
+        obs = reset(44000)
         try:
-            env.step(env.hold_action.repeat(args.n_envs, 8, 1))
+            env.step(torch.cat([obs['robot_state'][:, :, :9],
+                torch.zeros(args.n_envs, 1, 1, device=env.device)], dim=-1).repeat(1, 8, 1))
         except RuntimeError as error:
             assert 'injected probe failure' in str(error)
         else:
@@ -254,6 +261,8 @@ def main():
         report['injected_eval_failure_results'] = [dict(row) for row in env.results]
         report['reset_costs'] = observed.reset_costs
         report['hold_rows_checked'] = observed.hold_rows_checked
+        report['hold_pose_changes'] = observed.hold_pose_changes
+        assert observed.hold_pose_changes > 0
         report['native_calls'] = observed.step_calls
         report['memory_before_close'] = memory()
     finally:

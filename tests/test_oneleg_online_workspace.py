@@ -27,6 +27,7 @@ def config(method='resrl', **overrides):
         'training.num_steps': 13, 'training.learning_start': 11,
         'training.training_freq': 2, 'training.utd': 1., 'training.batch_size': 1,
         'training.buffer_size': 50, 'training.log_every': 3,
+        'online_task.base_ckpt': 'mock-base.ckpt',
         'online_task.n_envs': 2, 'online_task.max_steps': 18,
         'n_action_steps': 8, 'n_rl_steps': 4,
         'res_policy.history_length': 5, 'res_policy.sub_ratio': 2,
@@ -157,18 +158,19 @@ class OneLegWorkspaceTest(unittest.TestCase):
         self.assertEqual([row['info/chunk_step'] for row in logs], [11, 12, 14])
         self.assertIn('loss/actor_loss', logs[-1])
         self.assertIn('loss/alpha_loss', logs[-1])
-        # Both first decisions were base-only, before the effective warmup threshold.
+        # Warmup collects the policy's residual before any optimizer update.
         storage = workspace.replay.storage
-        np.testing.assert_array_equal(storage.actions[0], 0)
-        np.testing.assert_array_equal(storage.actions[1], 0)
+        self.assertTrue(np.any(storage.actions[0] != 0))
+        self.assertTrue(np.any(storage.actions[1] != 0))
         self.assertTrue(np.any(storage.actions[2:storage.pos] != 0))
         self.assertFalse(workspace.res_policy.q_targets.training)
         self.assertTrue(all(p.grad is None and not p.requires_grad for p in workspace.res_policy.q_targets.parameters()))
-        optimizers = workspace.res_policy.get_optimizer(1e-4, 1e-4, 1e-5)
+        optimizers = workspace.res_policy.get_optimizer(1e-4, 1e-4, workspace.cfg.training.enc_lr)
         for key, module in (('actor_optimizer', workspace.res_policy.actor), ('q_optimizer', workspace.res_policy.qs)):
             groups = optimizers[key].param_groups
-            self.assertEqual(groups[1]['lr'], 1e-5)
-            self.assertEqual({id(p) for p in groups[1]['params']}, {id(p) for p in module.encoder.parameters()})
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0]['lr'], 1e-4)
+            self.assertEqual({id(p) for p in groups[0]['params']}, {id(p) for p in module.parameters()})
         self.assertTrue(any(not torch.equal(q, target) for q, target in zip(workspace.res_policy.qs.parameters(), workspace.res_policy.q_targets.parameters())))
 
     def test_sampling_with_replacement_does_not_require_batch_size_stored_transitions(self):

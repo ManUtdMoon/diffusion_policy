@@ -23,6 +23,7 @@ env = OneLegEnv(num_envs=count, max_env_steps=3, render_size=render_size)
 assert sim_config['camera'] is camera
 assert env.env.unwrapped.img_size == render_size
 assert env.env.unwrapped.act_rot_repr == 'quat'
+assert env.env.unwrapped.action_type == 'pos'
 assert set(env.env.unwrapped.camera_handles) == {'wrist', 'front'}
 assert 'parts_poses' not in env.env.unwrapped.obs_keys
 assert not any(key.startswith('depth') for key in env.env.unwrapped.obs_keys)
@@ -47,7 +48,7 @@ try:
     assert obs['robot_state'].shape == (count, 16)
     assert torch.isfinite(obs['robot_state']).all()
     start = env.env.unwrapped.isaac_gym.get_sim_time(env.env.unwrapped.sim)
-    neutral = torch.tensor([[0, 0, 0, 1, 0, 0, 0, 1, 0, -1.]], device=env.device).repeat(count, 1)
+    neutral = torch.cat([obs['robot_state'][:, :9], torch.zeros(count, 1, device=env.device)], dim=-1)
     for step in range(3):
         obs, reward, done, info = env.step(neutral)
         assert reward.shape == done.shape == (count, 1)

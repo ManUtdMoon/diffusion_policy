@@ -19,6 +19,12 @@ def main():
     parser.add_argument('--mode', choices=('resrl', 'dsrl', 'train', 'train-noise'), required=True)
     parser.add_argument('--n-envs', choices=(2, 20), type=int, required=True)
     parser.add_argument('--compile', action='store_true')
+    parser.add_argument('--checkpoint', required=True)
+    parser.add_argument('--history-length', type=int, default=5, help='Collection history length')
+    parser.add_argument('--sub-ratio', type=int, default=2, help='Collection history subsampling')
+    parser.add_argument('--action-steps', type=int, help='Collection Ta; defaults to 8 for ResRL, 4 for DSRL')
+    parser.add_argument('--rl-steps', type=int, default=4, help='Collection ResRL Tr')
+    parser.add_argument('--noise-steps', type=int, default=2, help='Collection DSRL Tn')
     parser.add_argument('--max-steps', type=int, default=18, help='Collection episode limit; training smoke uses 16')
     parser.add_argument('--output', type=pathlib.Path, required=True)
     parser.add_argument('--snapshot', type=pathlib.Path, help='Manually serialize an evaluation snapshot after training')
@@ -44,7 +50,7 @@ def main():
     torch.manual_seed(42)
     np.random.seed(42)
     started = time.perf_counter()
-    checkpoint = 'data/upload/oneleg/checkpoints/epoch_0055-mse_0.020349.ckpt'
+    checkpoint = args.checkpoint
     result = dict(mode=args.mode, n_envs=args.n_envs, compile=args.compile,
                   checkpoint=checkpoint, interface='full_batch', policy_seed=42)
 
@@ -115,7 +121,9 @@ def main():
             assert policy.log_alpha.item() != state['alpha_before']
             assert not policy.q_targets.training
             assert all(not p.requires_grad and p.grad is None for p in policy.q_targets.parameters())
-            assert state['encoder_lrs'] == {'actor_optimizer': 1e-5, 'q_optimizer': 1e-5}
+            assert state['encoder_lrs'] == {
+                'actor_optimizer': workspace.cfg.training.enc_lr or workspace.cfg.training.policy_lr,
+                'q_optimizer': workspace.cfg.training.enc_lr or workspace.cfg.training.q_lr}
             assert workspace.global_step >= workspace.replay.committed_transitions
             assert workspace.num_episodes == workspace.replay.committed_episodes
             assert workspace.collector.pending_transitions == 0
@@ -145,7 +153,7 @@ def main():
         budget = 26 if args.n_envs == 2 else 140
         output_dir = args.output.with_suffix('').as_posix() + '-run'
         sys.argv = ['train.py', '--config-name=train_online_reactive_history_oneleg_workspace',
-            f'online_task.n_envs={args.n_envs}', 'online_task.max_steps=16',
+            f'online_task.base_ckpt={checkpoint}', f'online_task.n_envs={args.n_envs}', 'online_task.max_steps=16',
             'n_action_steps=8', 'n_rl_steps=4', 'res_policy.history_length=5', 'res_policy.sub_ratio=2',
             'res_policy.hidden_dim=32', 'res_policy.gru_hidden_dim=16', 'res_policy.gru_input_dim=16',
             'res_policy.num_qs=2', f'training.num_steps={budget}', f'training.learning_start={args.n_envs * 4 + 1}',
@@ -183,13 +191,18 @@ def main():
 
             def reset(self, seed=None):
                 self.steps = 0
-                return self.adapter.reset(seed=seed)
+                obs = self.adapter.reset(seed=seed)
+                self.hold_pose = obs['robot_state'][:, :9].clone()
+                return obs
 
             def step(self, action):
                 if self.steps >= 3:
-                    torch.testing.assert_close(action[0], env.hold_action, atol=0, rtol=0)
+                    torch.testing.assert_close(action[0, :9], self.hold_pose[0], atol=0, rtol=0)
+                    assert action[0, 9] == 0
                     self.hold_checks += 1
                 obs, reward, done, info = self.adapter.step(action)
+                if self.steps < 3:
+                    self.hold_pose = obs['robot_state'][:, :9].clone()
                 self.steps += 1
                 self.natural_success.update(self.adapter.is_success().nonzero().flatten().tolist())
                 return obs, reward, done, info
@@ -204,22 +217,24 @@ def main():
                 self.adapter.close()
 
         adapter = InjectedSuccess(OneLegEnv(num_envs=args.n_envs, max_env_steps=args.max_steps))
-        env = OneLegOnlineEnv(4, max_steps=args.max_steps, env=adapter)
-        common = dict(obs_dim=base.obs_feature_dim, history_length=5, sub_ratio=2,
+        ta = args.action_steps or (8 if args.mode == 'resrl' else 4)
+        tr = args.rl_steps if args.mode == 'resrl' else ta
+        env = OneLegOnlineEnv(tr, max_steps=args.max_steps, env=adapter)
+        common = dict(obs_dim=base.obs_feature_dim, history_length=args.history_length, sub_ratio=args.sub_ratio,
                       hidden_dim=32, gru_input_dim=16, gru_hidden_dim=16, gru_num_layers=1,
-                      num_qs=2, num_subset=2, gamma=.9881)
+                      num_qs=2, num_subset=2, gamma=round(env.single_gamma ** tr, 4))
         if args.mode == 'resrl':
-            policy = HistoryResiduePolicy(action_dim=40, **common).to('cuda:0')
-            session = OneLegHistorySumPolicy(.05, base.obs_feature_dim, 0, 10, 8, base, policy, 4)
+            policy = HistoryResiduePolicy(action_dim=tr * 10, **common).to('cuda:0')
+            session = OneLegHistorySumPolicy(.05, base.obs_feature_dim, 0, 10, ta, base, policy, tr)
         else:
-            policy = HistoryNoisePolicy(action_dim=20, exec_dim=40, **common).to('cuda:0')
-            session = OneLegHistoryNoiseSumPolicy(1.5, base.obs_feature_dim, 0, 10, 4, 16, 1, base, policy, 2)
-        replay = OneLegEpisodeReplayBuffer(max(256, args.n_envs * ((args.max_steps + 3) // 4)),
+            policy = HistoryNoisePolicy(action_dim=args.noise_steps * 10, exec_dim=tr * 10, **common).to('cuda:0')
+            session = OneLegHistoryNoiseSumPolicy(1.5, base.obs_feature_dim, 0, 10, ta, 16, 1, base, policy, args.noise_steps)
+        replay = OneLegEpisodeReplayBuffer(max(256, args.n_envs * ((args.max_steps + tr - 1) // tr)),
             gymnasium.spaces.Box(-np.inf, np.inf, (base.obs_feature_dim,), dtype=np.float32),
             gymnasium.spaces.Box(-np.inf, np.inf, (policy.action_dim,), dtype=np.float32),
             method=args.mode, device='cuda:0', n_steps=3, gamma=policy.gamma,
-            history_length=5, action_step_dim=10,
-            **({'base_action_dim': 40} if args.mode == 'resrl' else {'exec_dim': 40}))
+            history_length=args.history_length, action_step_dim=10,
+            **({'base_action_dim': tr * 10} if args.mode == 'resrl' else {'exec_dim': tr * 10}))
         collector = OneLegEpisodeCollector(replay, args.n_envs)
         rows = []
         traces = [[] for _ in range(args.n_envs)]
@@ -227,15 +242,48 @@ def main():
         global_step = executed_steps = 0
         try:
             obs = env.reset(seed=42)
+            if args.mode == 'resrl':
+                torch.manual_seed(1234)
+                reference = base.predict_action(obs)['action'][:, :tr]
+                torch.manual_seed(1234)
+                session.reset(obs)
+                zero = session.predict_action(obs, res_mask=torch.ones(args.n_envs, device='cuda:0', dtype=torch.bool))
+                torch.testing.assert_close(zero['action'], reference, rtol=0, atol=0)
+                result['zero_residual_max_error'] = float((zero['action'] - reference).abs().max())
+            else:
+                session.reset(obs)
+                torch.manual_seed(1234)
+                expected = torch.randn(args.n_envs, policy.action_dim, device='cuda:0').clamp(-1.5, 1.5) / 1.5
+                torch.manual_seed(1234)
+                with patch.object(policy, 'predict_noise', side_effect=AssertionError('warmup actor')), \
+                     patch.object(base, 'conditional_predict_from_noise', wraps=base.conditional_predict_from_noise) as decode:
+                    warmup = session.predict_action(obs, global_step=0, learning_start=1)
+                torch.testing.assert_close(warmup['nnoise'], expected, rtol=0, atol=0)
+                torch.testing.assert_close(decode.call_args.args[1],
+                    expected.reshape(args.n_envs, args.noise_steps, 10).repeat(1, 16 // args.noise_steps, 1) * 1.5,
+                    rtol=0, atol=0)
+                session.eval()
+                session.reset(obs)
+                with patch.object(policy, 'predict_noise', wraps=policy.predict_noise) as actor:
+                    session.predict_action(obs)
+                assert actor.call_args.kwargs['argmax'] is False
+                result['noise_repeat_scale_warmup_and_stochastic_eval'] = True
             collector.begin_batch()
             session.reset(obs)
             while not env.batch_done:
                 history = session.history.get()
-                action = session.predict_action(obs, deterministic=True)['action']
+                prediction = session.predict_action(obs, deterministic=True)
+                action = prediction['action']
+                params = base.normalizer.params_dict['action']
+                torch.testing.assert_close(action, (prediction['naction'] - params['offset']) / params['scale'])
+                torch.testing.assert_close(action[..., 3:], prediction['naction'][..., 3:], rtol=0, atol=0)
+                if args.mode == 'dsrl':
+                    torch.testing.assert_close(session.pending['action'], prediction['nnoise'], rtol=0, atol=0)
                 rows.append(action.shape[0])
-                assert action.shape == (args.n_envs, 4, 10)
+                assert action.shape == (args.n_envs, tr, 10)
                 obs, rewards, dones, infos = env.step(action)
                 transition = session.on_env_step(obs, dones, infos)
+                torch.testing.assert_close(transition['a_exec'], prediction['naction'].flatten(1), rtol=0, atol=0)
                 endpoint = session.history.get()
                 for row, info in enumerate(infos):
                     if info['transition_valid']:
@@ -254,6 +302,7 @@ def main():
                 for start, index in enumerate(indices):
                     batch = storage._get_samples(np.array([index]))
                     end = min(start + 3, len(trace)) - 1
+                    np.testing.assert_allclose(batch.discounts.item(), policy.gamma ** (end - start + 1), rtol=1e-6)
                     for actual, expected in zip((batch.obs, batch.a_exec, batch.obs_valid, batch.exec_steps), trace[start][0]):
                         torch.testing.assert_close(actual[0], expected)
                     for actual, expected in zip((batch.next_obs, batch.next_a_exec, batch.next_obs_valid, batch.next_exec_steps), trace[end][1]):
@@ -269,7 +318,8 @@ def main():
             check_base(base, before)
             result.update(global_step=global_step, solid_steps=env.solid_steps,
                 idle_steps=env.idle_steps, idle_ratio=env.idle_steps / (env.solid_steps + env.idle_steps),
-                max_steps=args.max_steps,
+                max_steps=args.max_steps, history_length=args.history_length, sub_ratio=args.sub_ratio,
+                ta=ta, tr=tr, tn=args.noise_steps if args.mode == 'dsrl' else None, gamma=policy.gamma,
                 committed_transitions=replay.committed_transitions,
                 committed_episodes=replay.committed_episodes, policy_rows=rows,
                 natural_successes=sorted(adapter.natural_success), injected_success={'env_index': 0, 'step': 3},

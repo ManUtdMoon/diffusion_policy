@@ -34,6 +34,8 @@ noise_policy:
   q_ent: true
   history_length: 1
   sub_ratio: 1
+  history_encoder: gru
+  # Used only with history_encoder=gru.
   gru_input_dim: 128
   gru_hidden_dim: 128
   gru_num_layers: 1
@@ -47,7 +49,7 @@ training:
   batch_size: 256
   policy_lr: 1e-4
   q_lr: 1e-4
-  enc_lr: 1e-5
+  enc_lr: null # MLP uses policy_lr / q_lr; history flattening has no parameters.
   learning_start: 5000
   max_grad_norm: 50.0
   policy_freq: 2
