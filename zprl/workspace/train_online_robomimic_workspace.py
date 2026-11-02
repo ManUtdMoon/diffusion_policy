@@ -22,7 +22,6 @@ import numpy as np
 import gym
 import gymnasium
 import collections
-from stable_baselines3.common.buffers import ReplayBuffer
 
 from zprl.workspace.base_workspace import BaseWorkspace
 from zprl.policy.flow_match_vib_unet_image_policy import FlowMatchVibUnetImagePolicy
@@ -30,6 +29,7 @@ from zprl.policy.residue_policy import ResiduePolicy, SumPolicy
 from zprl.env_runner.base_image_runner import BaseImageRunner
 from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
+from zprl.common.reactive_replay_buffer import ReactiveNStepReplayBuffer
 from zprl.common.pytorch_util import dict_apply, optimizer_to
 from zprl.model.common.rotation_transformer import RotationTransformer
 from zprl.model.vision.crop_randomizer import CROP_RANDOMIZER_TYPES
@@ -62,6 +62,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         # configure training state
         self.global_step = 0
         self.global_update = 0
+        self.num_episodes = 0
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
@@ -211,39 +212,29 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         alpha_opt = optimizers['alpha_optimizer']
 
         # replay buffer
+        n_step = getattr(cfg.training, 'n_step', 1)
+        assert isinstance(n_step, int) and n_step > 0
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(Do_aug,), dtype=np.float32
+            shape=(Do_aug + Da,), dtype=np.float32
         )
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(Da * 3,), dtype=np.float32
+            shape=(Da,), dtype=np.float32
         )
         bootstrap_at_done = cfg.training.bootstrap_at_done
         assert bootstrap_at_done in ['never', 'truncated']
-        rb = ReplayBuffer(
+        rb = ReactiveNStepReplayBuffer(
             cfg.training.buffer_size,
             dummy_obs_space,
             dummy_buf_action_space,
             device=device,
             n_envs=cfg.training.n_envs,
-            handle_timeout_termination=False,
+            handle_timeout_termination=bootstrap_at_done == 'truncated',
+            n_steps=n_step,
+            gamma=self.res_policy.gamma,
+            base_action_dim=Da,
         )
-
-        # offline demo preload
-        if cfg.training.preload_offline_data:
-            assert d_mask == 0
-            from zprl.common.robomimic_offline_replay import (
-                load_robomimic_offline_data_into_replay_buffer)
-            load_robomimic_offline_data_into_replay_buffer(
-                rb=rb,
-                dataset_path=dataset_path,
-                base_policy=self.base_policy,
-                base_cfg=base_cfg,
-                cfg=cfg,
-                device=device,
-                n_envs=cfg.online_task.n_envs,
-            )
 
         if cfg.training.debug:
             cfg.training.num_steps = 5000
@@ -370,6 +361,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     ## env_action and step
                     env_action = undo_transform_action(action)
                     next_obs_seq, rewards, dones, infos = envs.step(env_action)
+                    self.num_episodes += int(dones.sum())
                     for info, done in zip(infos, dones):
                         if done:
                             recent_done_successes.append(
@@ -380,7 +372,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
                     ## prepare transitions for rb
                     rb_next_obs_seq = next_obs_seq
-                    rb_dones = dones
                     if bootstrap_at_done == 'truncated':
                         timeout_indices = [
                             i for i, info in enumerate(infos)
@@ -388,8 +379,6 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         ]
                         if len(timeout_indices) > 0:
                             rb_next_obs_seq = dict_apply(next_obs_seq, np.copy)
-                            rb_dones = dones.copy()
-                            rb_dones[timeout_indices] = False
                             for i in timeout_indices:
                                 terminal_observation = infos[i]['terminal_observation']
                                 for key in rb_next_obs_seq.keys():
@@ -403,21 +392,18 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         rb_next_base_dict, rb_next_obs_emb_tensor = encode_obs(
                             rb_next_obs_seq)
                     rb_next_base_naction_tensor = rb_next_base_dict['naction'].detach()
-                    actions_to_save = np.concatenate(
-                        [
-                            res_naction_flat,
-                            base_naction_flat,
-                            rb_next_base_naction_tensor.flatten(start_dim=1).cpu().numpy()
-                        ],
-                        axis=-1
-                    )
+                    obs_to_save = np.concatenate(
+                        [obs_emb_tensor.cpu().numpy(), base_naction_flat], axis=-1)
+                    next_obs_to_save = np.concatenate(
+                        [rb_next_obs_emb_tensor.cpu().numpy(),
+                         rb_next_base_naction_tensor.flatten(start_dim=1).cpu().numpy()], axis=-1)
 
                     rb.add(
-                        obs=obs_emb_tensor.cpu().numpy(),
-                        next_obs=rb_next_obs_emb_tensor.cpu().numpy(),
-                        action=actions_to_save,
+                        obs=obs_to_save,
+                        next_obs=next_obs_to_save,
+                        action=res_naction_flat,
                         reward=rewards,
-                        done=rb_dones,
+                        done=dones,
                         infos=infos
                     )
 
@@ -469,9 +455,13 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                             alpha_opt.zero_grad()
                             alpha_loss.backward()
                             alpha_opt.step()
-                            alpha = self.res_policy.log_alpha.exp().item()
+                            alpha = self.res_policy.log_alpha.detach().exp()
 
                 ## training metrics
+                critic_info = {key: value.item() for key, value in critic_info.items()}
+                actor_info = {key: value.item() for key, value in actor_info.items()}
+                if cfg.res_policy.auto_alpha:
+                    alpha = alpha.item()
                 recent_done_count, recent_done_sr, recent_stage_rates = \
                     get_recent_success_stats()
 
@@ -479,6 +469,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     'info/global_step': self.global_step * cfg.n_action_steps,
                     'info/chunk_step': self.global_step,
                     'info/global_update': self.global_update,
+                    'info/num_episodes': self.num_episodes,
 
                     'info/res_ratio': res_ratio,
                     'info/q_target': critic_info['q_target'],

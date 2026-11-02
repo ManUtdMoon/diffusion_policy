@@ -511,6 +511,8 @@ class TrainOnlineReactiveRobomimicWorkspace(BaseWorkspace):
                             alpha = self.res_policy.log_alpha.exp().item()
 
                 ## training metrics
+                critic_info = {key: value.item() for key, value in critic_info.items()}
+                actor_info = {key: value.item() for key, value in actor_info.items()}
                 recent_done_count, recent_done_sr, recent_stage_rates = \
                     get_recent_success_stats()
 
