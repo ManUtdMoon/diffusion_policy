@@ -111,6 +111,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
         self.res_policy: ResiduePolicy = hydra.utils.instantiate(
             cfg.res_policy, obs_dim=Do_aug, action_dim=Da)
+        num_base_candidates = self.res_policy.num_base_candidates
         print(f"Residue policy with Do={Do_aug}, Da={Da}, gamma={self.res_policy.gamma}")
 
         ## sum policy
@@ -216,7 +217,7 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
         assert isinstance(n_step, int) and n_step > 0
         dummy_obs_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(Do_aug + Da,), dtype=np.float32
+            shape=(Do_aug + num_base_candidates * Da,), dtype=np.float32
         )
         dummy_buf_action_space = gymnasium.spaces.Box(
             low=-np.inf, high=np.inf,
@@ -234,7 +235,9 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
             n_steps=n_step,
             gamma=self.res_policy.gamma,
             base_action_dim=Da,
+            num_base_candidates=num_base_candidates,
         )
+        assert rb.state_dim == Do_aug
 
         if cfg.training.debug:
             cfg.training.num_steps = 5000
@@ -330,7 +333,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
 
                     ## retrieve from base cache
                     base_naction_tensor = base_dict['naction'].detach()
-                    base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
+                    if num_base_candidates == 1:
+                        base_naction_flat = base_naction_tensor.flatten(start_dim=1).cpu().numpy()  # (B, Ta*da)
 
                     ## pi-dec progressive exploration
                     if cfg.training.prog_explore > 0:
@@ -356,6 +360,10 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                     sum_dict = dict_apply(
                         sum_dict, lambda x: x.detach().cpu().numpy())
                     res_naction_flat = sum_dict['res_naction_flat']
+                    if num_base_candidates > 1:
+                        base_naction_flat = np.concatenate([
+                            sum_dict['base_naction_flat'],
+                            np.zeros((n_envs, (num_base_candidates - 1) * Da), dtype=np.float32)], axis=-1)
                     action = sum_dict['action']
 
                     ## env_action and step
@@ -389,8 +397,15 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                         rb_next_base_dict = next_base_dict
                         rb_next_obs_emb_tensor = next_obs_emb_tensor
                     else:
-                        rb_next_base_dict, rb_next_obs_emb_tensor = encode_obs(
-                            rb_next_obs_seq)
+                        # Decode only terminal rows; other rows retain the bank cached
+                        # for their next rollout, including its original random proposals.
+                        terminal_base_dict, terminal_obs_emb = encode_obs(
+                            dict_apply(rb_next_obs_seq, lambda x: x[timeout_indices]))
+                        rb_next_base_dict = dict(next_base_dict)
+                        rb_next_base_dict['naction'] = next_base_dict['naction'].clone()
+                        rb_next_base_dict['naction'][timeout_indices] = terminal_base_dict['naction']
+                        rb_next_obs_emb_tensor = next_obs_emb_tensor.clone()
+                        rb_next_obs_emb_tensor[timeout_indices] = terminal_obs_emb
                     rb_next_base_naction_tensor = rb_next_base_dict['naction'].detach()
                     obs_to_save = np.concatenate(
                         [obs_emb_tensor.cpu().numpy(), base_naction_flat], axis=-1)
@@ -495,6 +510,8 @@ class TrainOnlineRobomimicWorkspace(BaseWorkspace):
                 }
                 if cfg.res_policy.auto_alpha:
                     step_log['loss/alpha_loss'] = alpha_loss.item()
+                if num_base_candidates > 1 and self.res_policy.select_backup:
+                    step_log['info/backup_res_selection_ratio'] = critic_info['backup_res_selection_ratio']
                 for stage, rate in zip(subtask.stages, recent_stage_rates):
                     step_log[f'info/recent_{stage}_rate'] = \
                         float(rate)

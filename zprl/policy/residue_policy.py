@@ -40,8 +40,28 @@ class ResiduePolicy(ModuleAttrMixin):
             num_qs: int = 2,
             num_subset: int = 2,
             critic_action_input: str = 'exec',
-            target_clip: list = None,):
+            target_clip: list = None,
+            # action selection
+            num_res_candidates: int = 1,
+            include_base_candidate: bool = False,
+            select_rollout: bool = False,
+            select_backup: bool = False,
+            num_base_candidates: int = 1,):
         super().__init__()
+
+        for name, value in [('num_base_candidates', num_base_candidates),
+                            ('num_res_candidates', num_res_candidates)]:
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f'{name} must be a positive integer')
+        if num_base_candidates > 1 and (num_res_candidates != 1 or not include_base_candidate):
+            raise ValueError('Multiple bases require num_res_candidates=1 and include_base_candidate=True')
+        if select_rollout or select_backup or num_base_candidates > 1:
+            if critic_action_input != 'exec' or actor_input != 'obs_action' or q_ent:
+                raise ValueError(
+                    "Residual selection requires critic_action_input='exec', "
+                    "actor_input='obs_action' and q_ent=False")
+            if not 1 <= num_subset <= num_qs:
+                raise ValueError('Residual selection requires 1 <= num_subset <= num_qs')
 
         if target_clip is not None:
             if len(target_clip) != 2:
@@ -93,6 +113,11 @@ class ResiduePolicy(ModuleAttrMixin):
         self.q_ent = q_ent
         self.critic_action_input = critic_action_input
         self.target_clip = target_clip
+        self.num_res_candidates = num_res_candidates
+        self.include_base_candidate = include_base_candidate
+        self.select_rollout = select_rollout
+        self.select_backup = select_backup
+        self.num_base_candidates = num_base_candidates
 
         # dimensions
         self.obs_dim = obs_dim
@@ -144,29 +169,108 @@ class ResiduePolicy(ModuleAttrMixin):
             action = base_naction + self.res_scale * res_naction
         return critic(obs, action)
 
+    @torch.no_grad()
+    def _select_res_naction(self, obs, base_naction):
+        """Single-base compatibility interface: return unscaled residual and Q."""
+        result = self.select_base_res_pair(obs, base_naction[:, None, :])
+        return result['res_naction'], result['q']
+
+    @torch.no_grad()
+    def select_base_res_pair(self, obs, base_bank):
+        """Select among [base_0,...,base_K-1,edited_0,...,edited_K-1].
+
+        Ties prefer the first original base. K=1 also supports stage-one K_res.
+        Candidate type is determined by index, even if a sampled edit is zero.
+        A one-element bank also supports the legacy single-base interface.
+        """
+        bs = obs.shape[0]
+        k = base_bank.shape[1]
+        assert k in (1, self.num_base_candidates)
+        assert_shape(obs, (bs, self.obs_dim))
+        assert_shape(base_bank, (bs, k, self.action_dim))
+        actor_input = torch.cat([
+            obs[:, None, :].expand(-1, k, -1), base_bank], dim=-1).reshape(bs * k, -1)
+        residuals = self.actor.sample_candidates(actor_input, self.num_res_candidates)
+        if k == 1:
+            bases = base_bank.expand(-1, self.num_res_candidates, -1)
+            if self.include_base_candidate:
+                residuals = torch.cat([torch.zeros_like(residuals[:, :1]), residuals], dim=1)
+                bases = base_bank.expand_as(residuals)
+            num_original = int(self.include_base_candidate)
+        else:
+            residuals = residuals.reshape(bs, k, self.action_dim)
+            residuals = torch.cat([torch.zeros_like(residuals), residuals], dim=1)
+            bases = torch.cat([base_bank, base_bank], dim=1)
+            num_original = k
+        # Score every candidate with the same target-Q subset, then gather its pair.
+        num_candidates = residuals.shape[1]
+        actions = bases + self.res_scale * residuals
+        target_q_all = self.q_targets(
+            obs[:, None, :].expand(-1, num_candidates, -1).reshape(-1, self.obs_dim),
+            actions.reshape(-1, self.action_dim))
+        subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
+        scores = target_q_all[subset_indices].min(dim=0).values.reshape(bs, num_candidates)
+        best_q, indices = scores.max(dim=1, keepdim=True)
+        gather_indices = indices.unsqueeze(-1).expand(-1, -1, self.action_dim)
+        indices = indices.squeeze(1)
+        return {
+            'base_naction': bases.gather(1, gather_indices).squeeze(1),
+            'res_naction': residuals.gather(1, gather_indices).squeeze(1),
+            'q': best_q,
+            'selected_index': indices,
+            'selected_is_res': indices >= num_original,
+            'base_index': indices % k,
+        }
+
+    def _split_replay_actions(self, actions):
+        return torch.split(
+            actions, 
+            [
+                self.action_dim,
+                self.action_dim,
+                self.num_base_candidates * self.action_dim
+            ],
+            dim=-1
+        )
+
     def compute_critic_loss(self, batch: ReplayBufferSamples, dist=None):
         bs = batch.rewards.shape[0]
         res_naction, base_naction, base_next_naction = \
-            torch.split(batch.actions, self.action_dim, dim=-1)
+            self._split_replay_actions(batch.actions)
 
         alpha = self.init_alpha
         if self.auto_alpha:
             alpha = self.log_alpha.detach().exp()
 
         # compute targets
+        selection_info = {}
         with torch.no_grad():
-            actor_input = batch.next_observations
-            if self.actor_input == 'obs_action':
-                actor_input = torch.cat([batch.next_observations, base_next_naction], dim=-1)
-            res_next_naction, next_log_prob, _ = self._sample_naction_log_prob(actor_input)
-            target_q_all = self._critic_values(
-                self.q_targets, batch.next_observations, base_next_naction, res_next_naction)
-            subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
-            target_q_subset = target_q_all[subset_indices]
+            if self.num_base_candidates > 1 and self.select_backup:
+                valid = batch.dones.flatten() == 0
+                target_q_next = batch.rewards.new_zeros((bs, 1))
+                ratio = batch.rewards.new_zeros(())
+                if valid.any():
+                    bank = base_next_naction.reshape(bs, self.num_base_candidates, self.action_dim)
+                    selected = self.select_base_res_pair(batch.next_observations[valid], bank[valid])
+                    target_q_next[valid] = selected['q']
+                    ratio = selected['selected_is_res'].float().mean()
+                selection_info = {'backup_res_selection_ratio': ratio}
+            elif self.select_backup:
+                _, target_q_next = self._select_res_naction(batch.next_observations, base_next_naction)
+            else:
+                base_next_naction = base_next_naction[:, :self.action_dim]
+                actor_input = batch.next_observations
+                if self.actor_input == 'obs_action':
+                    actor_input = torch.cat([batch.next_observations, base_next_naction], dim=-1)
+                res_next_naction, next_log_prob, _ = self._sample_naction_log_prob(actor_input)
+                target_q_all = self._critic_values(
+                    self.q_targets, batch.next_observations, base_next_naction, res_next_naction)
+                subset_indices = torch.randperm(self.num_qs, device=target_q_all.device)[:self.num_subset]
+                target_q_subset = target_q_all[subset_indices]
 
-            target_q_next = torch.min(target_q_subset, dim=0).values  # (B,1)
-            if self.q_ent:
-                target_q_next -= alpha * next_log_prob
+                target_q_next = torch.min(target_q_subset, dim=0).values  # (B,1)
+                if self.q_ent:
+                    target_q_next -= alpha * next_log_prob
             assert_shape(target_q_next, (bs, 1))
             discounts = self.gamma if batch.discounts is None else batch.discounts.flatten()
             if isinstance(discounts, torch.Tensor):
@@ -194,13 +298,14 @@ class ResiduePolicy(ModuleAttrMixin):
             "rewards": batch.rewards.mean().detach(),
             "dones": batch.dones.float().mean().detach(),
         }
+        info.update(selection_info)
 
         return critic_loss, info
 
     def compute_actor_loss(self, batch: ReplayBufferSamples):
         bs = batch.rewards.shape[0]
         _, base_naction, _ = \
-            torch.split(batch.actions, self.action_dim, dim=-1)
+            self._split_replay_actions(batch.actions)
 
         if self.auto_alpha:
             alpha = self.log_alpha.detach().exp()
@@ -232,7 +337,7 @@ class ResiduePolicy(ModuleAttrMixin):
     def compute_alpha_loss(self, batch):
         bs = batch.rewards.shape[0]
         _, base_naction, _ = \
-            torch.split(batch.actions, self.action_dim, dim=-1)
+            self._split_replay_actions(batch.actions)
 
         actor_input = batch.observations
         if self.actor_input == 'obs_action':
@@ -256,11 +361,16 @@ class ResiduePolicy(ModuleAttrMixin):
         
         Args:
             actor_input (torch.Tensor): The input to the actor network, obs_emb or [obs_emb, base_naction].
-            argmax (bool): If True, return mean; if False, return a sample.
+            argmax (bool): With selection disabled, True returns mean and False a sample.
+                With select_rollout enabled, both training and evaluation select among
+                random candidates; argmax does not change the sampling mode.
             
         Returns
             res_naction (torch.Tensor): The predicted residual action.
         """
+        if self.select_rollout:
+            obs, base_naction = torch.split(actor_input, [self.obs_dim, self.action_dim], dim=-1)
+            return self._select_res_naction(obs, base_naction)[0]
         if argmax:
             return self.actor.get_eval_action(actor_input)
         else:
@@ -282,6 +392,9 @@ class SumPolicy:
         self.res_policy = res_policy
         self.res_scale = res_scale
         self.normalizer = base_policy.normalizer
+        self.num_base_candidates = getattr(res_policy, 'num_base_candidates', 1)
+        if self.num_base_candidates > 1:
+            self.base_policy.requires_grad_(False)
 
         # make sure the base policy is in eval mode
         self.base_policy.eval()
@@ -320,7 +433,11 @@ class SumPolicy:
             base_obs_dict = dict(obs_dict)
             del base_obs_dict['completed_stage_mask']
 
-        base_res = self.base_policy.predict_action(base_obs_dict)
+        if self.num_base_candidates > 1:
+            decoder_emb = self.base_policy.encode_obs(base_obs_dict)
+            base_res = self.base_policy.conditional_predict_k(decoder_emb, self.num_base_candidates)
+        else:
+            base_res = self.base_policy.predict_action(base_obs_dict)
         obs_seq_emb = base_res['obs_emb']
         obs_emb = obs_seq_emb[:, -self.base_obs_emb_dim:]
         if self.subtask_dim > 0:
@@ -334,6 +451,8 @@ class SumPolicy:
         normalizer = self.base_policy.normalizer
         base_res, obs_emb = self.encode_obs(obs_dict)
         base_naction = base_res['naction']
+        if self.num_base_candidates > 1:
+            return {'action': self._predict_bank_action(base_naction, obs_emb, argmax=True)['action']}
 
         res_input = obs_emb
         if self.res_policy.actor_input == 'obs_action':
@@ -362,14 +481,18 @@ class SumPolicy:
         Compute the final action and intermediate results given base info and masks.
 
         Args:
-            base_naction (torch.Tensor): normalized act seq by base, (B, Ta, da)
+            base_naction (torch.Tensor): normalized act seq by base, (B, Ta, da),
+                or (B, K, Ta, da) when num_base_candidates > 1.
             obs_emb(torch.Tensor): augmented residual state, (B, self.obs_emb_dim)
             res_masks (torch.Tensor): True where res is masked, (B,)
 
         Returns:
-            Dict[str, torch.Tensor]
+            Dict[str, torch.Tensor]: K>1 also returns base_naction_flat, the
+                actual selected base after applying res_mask, for replay.
         """
         assert_shape(obs_emb, (None, self.obs_emb_dim))
+        if self.num_base_candidates > 1:
+            return self._predict_bank_action(base_naction, obs_emb, res_mask=res_mask)
 
         # 1. forward the residue policy
         res_input = obs_emb
@@ -389,6 +512,30 @@ class SumPolicy:
             'action': sum_action, # (B,Ta,da), for env step
             'naction': sum_naction,
             'res_naction_flat': res_naction_flat, # (B,Ta*da)
+        }
+
+    @torch.no_grad()
+    def _predict_bank_action(self, base_bank, obs_emb, argmax=False, res_mask=None):
+        bs = obs_emb.shape[0]
+        assert_shape(base_bank, (bs, self.num_base_candidates, self.n_action_steps, self.action_dim))
+        bank_flat = base_bank.flatten(start_dim=2)
+        if self.res_policy.select_rollout:
+            selected = self.res_policy.select_base_res_pair(obs_emb, bank_flat)
+            base_flat, res_flat = selected['base_naction'], selected['res_naction']
+        else:
+            base_flat = bank_flat[:, 0].clone()
+            res_flat = self.res_policy.predict_res_naction(
+                torch.cat([obs_emb, base_flat], dim=-1), argmax=argmax)
+        if res_mask is not None:
+            # Warmup/progressive exploration executes the ordinary first proposal.
+            base_flat[res_mask] = bank_flat[res_mask, 0]
+            res_flat[res_mask] = 0.0
+        sum_naction = (base_flat + self.res_scale * res_flat).reshape(bs, self.n_action_steps, self.action_dim)
+        return {
+            'action': self.normalizer['action'].unnormalize(sum_naction),
+            'naction': sum_naction,
+            'res_naction_flat': res_flat,
+            'base_naction_flat': base_flat,
         }
 
 

@@ -131,6 +131,10 @@ class WholeChunkFeaturesTest(unittest.TestCase):
 
                     self.assertEqual(workspace.num_episodes, 3)
                     self.assertEqual(workspace.global_update, 6)
+                    self.assertEqual(len(base.plan_inputs), 5 if bootstrap == 'truncated' else 3)
+                    if bootstrap == 'truncated':
+                        torch.testing.assert_close(base.plan_inputs[2], torch.tensor([[7.]]))
+                        torch.testing.assert_close(base.plan_inputs[4], torch.tensor([[8.]]))
                     self.assertEqual(wandb.init.return_value.log.call_args.kwargs['step'], 24)
                     log = json.loads((pathlib.Path(tmp) / 'logs.json.txt').read_text())
                     self.assertEqual(log['info/num_episodes'], 3)

@@ -160,6 +160,26 @@ class FlowMatchUnetImagePolicy(BaseImagePolicy):
         }
         return result
 
+    def conditional_predict_k(self, obs_emb: torch.Tensor, num_candidates: int) -> Dict[str, torch.Tensor]:
+        """Decode independent plans from the full global decoder condition [B,E].
+
+        obs_emb is the output of encode_obs, without any RL subtask features.
+        Action fields have shape [B,K,T,A]; obs_emb remains [B,E].
+        """
+        if not self.obs_as_global_cond:
+            raise ValueError('conditional_predict_k requires obs_as_global_cond=True')
+        if (not isinstance(num_candidates, int) or isinstance(num_candidates, bool)
+                or num_candidates < 1):
+            raise ValueError('num_candidates must be a positive integer')
+        B = obs_emb.shape[0]
+        assert obs_emb.shape == (B, self.n_obs_steps * self.obs_feature_dim)
+        condition = obs_emb[:, None, :].expand(-1, num_candidates, -1).reshape(B * num_candidates, -1)
+        result = self.conditional_predict(condition)
+        for key in ('action', 'action_pred', 'naction', 'naction_pred'):
+            result[key] = result[key].reshape(B, num_candidates, *result[key].shape[1:])
+        result['obs_emb'] = obs_emb
+        return result
+
     def conditional_predict_from_noise(self, obs_emb: torch.Tensor, noise: torch.Tensor) -> Dict[str, torch.Tensor]:
         assert self.obs_as_global_cond
         B = obs_emb.shape[0]

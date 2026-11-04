@@ -143,6 +143,14 @@ class Actor(nn.Module):
         mean = self.mean(self.net(x))
         return torch.tanh(mean)
 
+    def sample_candidates(self, x, num_samples):
+        """Sample [B,K,D] residuals with one actor forward pass."""
+        if not isinstance(num_samples, int) or isinstance(num_samples, bool) or num_samples < 1:
+            raise ValueError('num_samples must be a positive integer')
+        mean, logstd = self.forward(x)
+        dist = SquashedNormal(mean, logstd.exp())
+        return dist.rsample((num_samples,)).permute(1, 0, 2)
+
     def get_action(self, x):
         mean, logstd = self.forward(x)
         dist = SquashedNormal(mean, logstd.exp())

@@ -1,0 +1,15 @@
+defaults:
+  - train_online_robomimic_workspace
+  - _self_
+
+name: train_online_resrl_selection_workspace
+
+res_policy:
+  critic_action_input: exec
+  actor_input: obs_action
+  q_ent: false
+  num_base_candidates: 8
+  num_res_candidates: 1  # K>1: one residual per base; K=1 supports stage-one multi-residual selection
+  include_base_candidate: true
+  select_rollout: true
+  select_backup: true
