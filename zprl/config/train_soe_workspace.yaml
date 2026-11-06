@@ -5,7 +5,7 @@ defaults:
 
 name: train_soe
 _target_: zprl.workspace.train_soe_workspace.TrainSoeWorkspace
-exp_name: soe_round_${soe.round}
+exp_name: soe_round_${soe.round}_w-demo
 
 soe:
   task: metaworld_box-close

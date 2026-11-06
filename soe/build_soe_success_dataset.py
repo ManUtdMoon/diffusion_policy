@@ -13,7 +13,7 @@ from soe.soe_util import SOE_TASKS
 from zprl.common.replay_buffer import ReplayBuffer
 
 
-def build_success_dataset(task, seed, through_round, rollout_root=None, output=None):
+def build_success_dataset(task, seed, through_round, rollout_root=None, output=None, demo_path=None):
     rollout_root = pathlib.Path(rollout_root) if rollout_root is not None else (
         pathlib.Path('data/soe') / task / f'seed_{seed}')
     output = pathlib.Path(output) if output is not None else (
@@ -39,7 +39,7 @@ def build_success_dataset(task, seed, through_round, rollout_root=None, output=N
                     'dataset_episode_index': len(selected),
                 })
         rounds.append(stats)
-    if not selected:
+    if not selected and demo_path is None:
         raise ValueError(f"No successful episodes for {task}, seed {seed}, through round {through_round}")
 
     output.mkdir(parents=True, exist_ok=False)
@@ -48,11 +48,23 @@ def build_success_dataset(task, seed, through_round, rollout_root=None, output=N
     for episode in selected:
         with np.load(episode['trajectory_path']) as data:
             replay.add_episode({key: data[key] for key in ('img', 'state', 'action')})
+    demo_episodes = 0
+    if demo_path is not None:
+        demo = zarr.open_group(str(demo_path), mode='r')
+        start = 0
+        for end in demo['meta/episode_ends'][:]:
+            replay.add_episode({key: demo[f'data/{key}'][start:end]
+                for key in ('img', 'state', 'action')})
+            start = end
+            demo_episodes += 1
     summary = {
         'task': task, 'seed': seed, 'through_round': through_round,
         'rounds': rounds,
         'cumulative_attempted_episodes': sum(r['attempted_episodes'] for r in rounds),
-        'cumulative_success_episodes': replay.n_episodes,
+        'cumulative_success_episodes': len(selected),
+        'demo_path': str(pathlib.Path(demo_path).resolve()) if demo_path is not None else None,
+        'demo_episodes': demo_episodes,
+        'dataset_episodes': replay.n_episodes,
         'cumulative_transitions': int(replay.n_steps),
         'dataset_path': str(output.resolve()),
     }
@@ -67,6 +79,8 @@ def build_success_dataset(task, seed, through_round, rollout_root=None, output=N
 @click.option('--task', required=True, type=click.Choice(SOE_TASKS))
 @click.option('--seed', required=True, type=click.IntRange(0, 2**32 - 1))
 @click.option('--through-round', required=True, type=click.IntRange(1, 4))
+@click.option('--demo-path', type=click.Path(exists=True, file_okay=False),
+    help='Append all episodes from this demonstration Zarr after the online successes.')
 @click.option('--rollout-root', default=None, type=click.Path(file_okay=False),
     help='Defaults to data/soe/TASK/seed_SEED/.')
 @click.option('-o', '--output', default=None, type=click.Path(file_okay=False),
@@ -75,7 +89,7 @@ def main(**kwargs):
     """Build cumulative SOE imitation data from successful collected episodes."""
     summary = build_success_dataset(**kwargs)
     click.echo(f"Saved {summary['cumulative_success_episodes']} successful episodes "
-        f"({summary['cumulative_transitions']} transitions) to {summary['dataset_path']}")
+        f"+ {summary['demo_episodes']} demos ({summary['cumulative_transitions']} transitions) to {summary['dataset_path']}")
 
 
 if __name__ == '__main__':

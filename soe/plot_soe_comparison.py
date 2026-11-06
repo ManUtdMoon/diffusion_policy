@@ -11,15 +11,15 @@ import seaborn as sns
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PATHS = {
     'metaworld_box-close': {
-        'ZPRL': ROOT / 'data/outputs/zprl_mw_box-close/success_rates.csv',
+        'ZPRL': ROOT / 'data/soe/metaworld_box-close/zprl-box-close.csv',
         'SOE': ROOT / 'data/soe/metaworld_box-close/success_rates.csv',
     },
     'adroit_hammer': {
-        'ZPRL': ROOT / 'data/outputs/zprl_adroit_scale_grid_20260920_002901/adroit_hammer/scale_0.4/success_rates.csv',
+        'ZPRL': ROOT / 'data/soe/adroit_hammer/zprl-hammer.csv',
         'SOE': ROOT / 'data/soe/adroit_hammer/success_rates.csv',
     },
 }
-OUTPUT_DIR = ROOT / 'data/plot/soe_comparison'
+OUTPUT_DIR = ROOT / 'data/soe/soe_comparison'
 PALETTE = {'ZPRL': '#ff4000', 'SOE': '#4f95cd'}
 
 
