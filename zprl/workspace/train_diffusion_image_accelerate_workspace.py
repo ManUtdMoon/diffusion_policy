@@ -9,6 +9,7 @@ if __name__ == "__main__":
 
 import contextlib
 import copy
+import csv
 import os
 import pathlib
 import random
@@ -24,7 +25,7 @@ from torch.utils.data import DataLoader
 import tqdm
 import wandb
 
-from zprl.common.action_mse_util import action_mse_per_sample
+from zprl.common.action_mse_util import U, action_mse_per_sample, action_mse_quantiles
 from zprl.common.checkpoint_util import TopKCheckpointManager
 from zprl.common.json_logger import JsonLogger
 from zprl.common.training_budget import configure_training_budget
@@ -72,6 +73,37 @@ def _action_mse_log(metric_samples, prefix):
         key = prefix if name == "" else f"{prefix}_{name}"
         result[key] = torch.cat(values).mean().item()
     return result
+
+
+def _validation_candidates(policy, batch, decode_batch_size, num_candidates):
+    obs = dict_apply(batch["obs"], lambda x: x[:, :policy.n_obs_steps])
+    obs_emb = policy.encode_obs(obs)
+    first_preds = []
+    quantiles = []
+    for emb, gt in zip(obs_emb.split(decode_batch_size), batch["action"].split(decode_batch_size)):
+        pred = policy.conditional_predict_k(emb, num_candidates=num_candidates)["action_pred"]
+        quantiles.append(action_mse_quantiles(pred.flatten(2), gt.flatten(1)))
+        first_preds.append(pred[:, 0].clone())
+    return torch.cat(first_preds), torch.cat(quantiles)
+
+
+def _prepare_quantile_csv(path, first_epoch):
+    # On resume, keep only rows covered by the loaded checkpoint.
+    header = ["epoch"] + [f"q{round(100 * u):02d}" for u in U]
+    rows = []
+    if first_epoch > 0 and path.exists():
+        with path.open(newline="") as file:
+            reader = csv.reader(file)
+            if next(reader, None) != header:
+                raise ValueError(f"Unexpected quantile CSV header in {path}")
+            rows = [row for row in reader if int(row[0]) < first_epoch]
+    path.parent.mkdir(exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(header)
+        writer.writerows(rows)
+    temporary.replace(path)
 
 
 def _configure_cuda_devices(gpu_ids):
@@ -225,8 +257,13 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                 }
             )
 
+        cov_rel = cfg.checkpoint.get('cov_rel')
         topk_manager = None
-        if accelerator.is_main_process:
+        if cov_rel is not None:
+            quantile_path = self.get_checkpoint_path().with_name("quantiles.csv")
+            if accelerator.is_main_process:
+                _prepare_quantile_csv(quantile_path, self.epoch)
+        elif accelerator.is_main_process:
             topk_manager = TopKCheckpointManager(
                 save_dir=os.path.join(self.output_dir, 'checkpoints'),
                 **cfg.checkpoint.topk
@@ -345,6 +382,8 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                         or self.global_step >= total_train_batches:
                     with torch.no_grad(), accelerator.autocast():
                         val_mse_samples = dict()
+                        val_quantiles = []
+                        policy = self.ema_model if cfg.training.use_ema else raw_model
                         with tqdm.tqdm(
                                 val_dataloader,
                                 desc=f"Validation epoch {self.epoch}",
@@ -353,10 +392,14 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                                 disable=not accelerator.is_local_main_process) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                policy = self.ema_model if cfg.training.use_ema else raw_model
-                                result = policy.predict_action(batch["obs"])
+                                if cov_rel is None:
+                                    pred = policy.predict_action(batch["obs"])["action_pred"]
+                                else:
+                                    pred, quantiles = _validation_candidates(
+                                        policy, batch, cov_rel.decode_batch_size, cov_rel.num_candidate)
+                                    val_quantiles.append(accelerator.gather_for_metrics(quantiles).cpu())
                                 mse_samples = action_mse_per_sample(
-                                    result["action_pred"], batch["action"], action_mse_groups)
+                                    pred, batch["action"], action_mse_groups)
                                 mse_samples = accelerator.gather_for_metrics(mse_samples)
                                 for name, values in mse_samples.items():
                                     val_mse_samples.setdefault(name, list()).append(values.cpu())
@@ -366,6 +409,12 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                         if len(val_mse_samples) > 0:
                             step_log.update(_action_mse_log(
                                 val_mse_samples, "val_action_mse"))
+                        if cov_rel is not None:
+                            if not val_quantiles:
+                                raise ValueError("cov_rel requires a nonempty validation split")
+                            qbar = torch.cat(val_quantiles).mean(dim=0, dtype=torch.float64).tolist()
+                            for u in (0.05, 0.45, 0.95):
+                                step_log[f"val_action_mse_q{round(100 * u):02d}"] = qbar[U.index(u)]
 
                 if (self.epoch % cfg.training.sample_every) == 0:
                     accelerator.wait_for_everyone()
@@ -384,23 +433,26 @@ class TrainDiffusionImageAccelerateWorkspace(BaseWorkspace):
                             step_log.update(_action_mse_log(
                                 mse_samples, "train_action_mse"))
 
-                if (self.epoch % cfg.training.checkpoint_every) == 0 \
+                if (self.epoch > 0 and self.epoch % cfg.training.checkpoint_every == 0) \
                         or self.global_step >= total_train_batches:
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
+                        if cov_rel is not None:
+                            self.save_checkpoint(
+                                path=self.get_checkpoint_path(f"epoch_{self.epoch:04d}"), use_thread=False)
+                            with quantile_path.open("a", newline="") as file:
+                                csv.writer(file).writerow([self.epoch, *qbar])
                         if cfg.checkpoint.save_last_ckpt:
-                            self.save_checkpoint()
+                            self.save_checkpoint(use_thread=cov_rel is None)
                         if cfg.checkpoint.save_last_snapshot:
                             self.save_snapshot()
 
-                        metric_dict = dict()
-                        for key, value in step_log.items():
-                            new_key = key.replace('/', '_')
-                            metric_dict[new_key] = value
-
-                        topk_ckpt_path = topk_manager.get_ckpt_path(metric_dict)
-                        if topk_ckpt_path is not None:
-                            self.save_checkpoint(path=topk_ckpt_path)
+                        if topk_manager is not None:
+                            metric_dict = {key.replace('/', '_'): value for key, value in step_log.items()}
+                            if topk_manager.monitor_key in metric_dict:
+                                topk_ckpt_path = topk_manager.get_ckpt_path(metric_dict)
+                                if topk_ckpt_path is not None:
+                                    self.save_checkpoint(path=topk_ckpt_path)
 
                 model.train()
                 if self.ema_model is not None:

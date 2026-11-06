@@ -123,7 +123,7 @@ class OneLegTrainingBudgetTest(unittest.TestCase):
                 self.assertEqual(workspace.model.train_calls, 5)
                 self.assertEqual(TinyRunner.calls, 1)
                 self.assertTrue(workspace.model.training)
-                self.assertEqual(len(list((pathlib.Path(directory) / 'checkpoints').glob('epoch_*.ckpt'))), 3)
+                self.assertEqual(len(list((pathlib.Path(directory) / 'checkpoints').glob('epoch_*.ckpt'))), 2)
                 logs = [json.loads(line) for line in (pathlib.Path(directory) / 'logs.json.txt').read_text().splitlines()]
                 self.assertEqual([row['epoch'] for row in logs if 'test/n_rollouts' in row], [2])
                 self.assertEqual([row['epoch'] for row in logs if 'train_action_mse' in row], [0, 2])
@@ -147,7 +147,7 @@ class OneLegTrainingBudgetTest(unittest.TestCase):
                 self.assertEqual(resumed.global_step, 7)
                 self.assertEqual(resumed.model.train_calls, 2)
                 self.assertEqual(TinyRunner.calls, 2)
-                self.assertEqual(len(list(checkpoint.parent.glob('epoch_*.ckpt'))), 4)
+                self.assertEqual(len(list(checkpoint.parent.glob('epoch_*.ckpt'))), 3)
                 completed = cls(cfg, output_dir=directory)
                 completed.run()
                 self.assertEqual(completed.global_step, 7)
@@ -201,7 +201,7 @@ class OneLegTrainingBudgetTest(unittest.TestCase):
             self.assertEqual([row['epoch'] for row in logs if 'test/n_rollouts' in row], [10])
             checkpoints = pathlib.Path(directory) / 'checkpoints'
             self.assertEqual({path.name for path in checkpoints.glob('epoch_*.ckpt')},
-                {'epoch_0.ckpt', 'epoch_5.ckpt', 'epoch_10.ckpt'})
+                {'epoch_5.ckpt', 'epoch_10.ckpt'})
             self.assertEqual(workspace.epoch, 11)
             cfg.training.resume = True
             cfg.training.max_train_steps = 24
@@ -250,7 +250,7 @@ class OneLegTrainingBudgetTest(unittest.TestCase):
             self.assertEqual([row['global_step'] for row in logs], list(range(1, 25)))
             self.assertTrue(workspace.ema_model.training)
             self.assertEqual({path.name for path in (pathlib.Path(directory) / 'checkpoints').glob('epoch_*.ckpt')},
-                {'epoch_0.ckpt', 'epoch_11.ckpt'})
+                {'epoch_11.ckpt'})
             for path in (pathlib.Path(directory) / 'checkpoints').glob('*.ckpt'):
                 with path.open('rb') as file:
                     payload = torch.load(file, pickle_module=dill, map_location='cpu')

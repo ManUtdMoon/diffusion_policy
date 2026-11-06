@@ -11,7 +11,7 @@ exp_name: "default"
 
 horizon: 16
 n_obs_steps: 1
-n_action_steps: 4
+n_action_steps: 8
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -28,14 +28,14 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: zprl.model.vision.model_getter.ResNet18Pooling
-      input_shape: [3, 76, 76] # should match crop_shape
+      input_shape: [3, 216, 216] # should match crop_shape
       weights: null
       # pooling_kwargs
       pooling_type: "spatial_learned_embeddings"
       num_spatial_blocks: 8
       bottleneck_dim: 256
     resize_shape: null
-    crop_shape: [76, 76]
+    crop_shape: [216, 216]
     # constant center crop
     random_crop: True
     use_group_norm: True
@@ -45,7 +45,7 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 2
+  num_inference_steps: 10
   obs_as_global_cond: ${obs_as_global_cond}
   diffusion_step_embed_dim: 128
   down_dims: [128,256,512]
@@ -77,7 +77,7 @@ val_dataloader:
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1.0e-4
+  lr: 2.0e-4
   betas: [0.95, 0.999]
   eps: 1.0e-8
   weight_decay: 1.0e-6
@@ -101,9 +101,9 @@ training:
   # training loop control
   # in epochs
   rollout_every: 100
-  checkpoint_every: 100
-  val_every: 25
-  sample_every: 25
+  checkpoint_every: 50
+  val_every: 50
+  sample_every: 50
   # steps per epoch
   max_train_steps: null
   max_val_steps: null

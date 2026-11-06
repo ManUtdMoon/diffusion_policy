@@ -6,12 +6,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_PATH="${ROOT_DIR}/run_resrl_grid.sh"
 SESSION="${SESSION:-resrl-grid}"
 GPUS=(0 1 2 3)
-SEEDS=(40 50)
+SEEDS=(40 50 60)
 TARGET_CLIPS=('[0,1]')
-NUM_BASE_CANDIDATES=(2 4 8)
 
 CRITIC_ACTION_INPUTS=(exec)
-BASE_CKPT="data/upload/offline/tool_hang/novib/checkpoints/latest.ckpt"
+BASE_CKPTS=(
+    "data/upload/offline/tool_hang/cov_rel/checkpoints/epoch_0150.ckpt"
+    "data/upload/offline/tool_hang/cov_rel/checkpoints/epoch_0200.ckpt"
+    "data/upload/offline/tool_hang/cov_rel/checkpoints/epoch_1000.ckpt"
+)
 
 run_worker() {
     source "$HOME/mihomo/proxy.sh"
@@ -22,7 +25,6 @@ run_worker() {
     local run_root="$3"
     local job_idx=0
     local failures=0
-    local select_rollout=true select_backup=true
 
     cd "${ROOT_DIR}"
     set +u
@@ -31,29 +33,27 @@ run_worker() {
     set -u
     for critic_action_input in "${CRITIC_ACTION_INPUTS[@]}"; do
         for target_clip in "${TARGET_CLIPS[@]}"; do
-            for num_base_candidates in "${NUM_BASE_CANDIDATES[@]}"; do
+            for base_ckpt in "${BASE_CKPTS[@]}"; do
+                local ckpt_name
+                ckpt_name="$(basename "${base_ckpt}" .ckpt)"
                 for seed in "${SEEDS[@]}"; do
                     if (( job_idx % ${#GPUS[@]} != worker_id )); then
                         ((job_idx += 1))
                         continue
                     fi
 
-                    local clip_name=off
-                    if [[ "${target_clip}" != null ]]; then
-                        clip_name=on
-                    fi
-                    local exp_name="resrl:baseline-k${num_base_candidates}"
-                    local job_dir="${run_root}/k${num_base_candidates}/seed_${seed}"
+                    local exp_name="resrl:cov_rel-${ckpt_name}-select"
+                    local job_dir="${run_root}/${ckpt_name}/seed_${seed}"
                     mkdir -p "${job_dir}"
-                    printf '%s\tSTART\tgpu=%s\ttarget_clip=%s\tseed=%s\tcritic_action_input=%s\tselect_rollout=%s\tselect_backup=%s\tnum_base_candidates=%s\n' \
-                        "$(date --iso-8601=seconds)" "${gpu}" "${target_clip}" "${seed}" "${critic_action_input}" "${select_rollout}" "${select_backup}" "${num_base_candidates}" \
+                    printf '%s\tSTART\tgpu=%s\ttarget_clip=%s\tseed=%s\tcritic_action_input=%s\tbase_ckpt=%s\n' \
+                        "$(date --iso-8601=seconds)" "${gpu}" "${target_clip}" "${seed}" "${critic_action_input}" "${base_ckpt}" \
                         >> "${run_root}/status_gpu${gpu}.tsv"
 
                     MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID="${gpu}" \
                         python train.py \
                         --config-name=train_online_resrl_selection_workspace \
                         online_task=tool_hang_image_abs \
-                        "online_task.base_ckpt=${BASE_CKPT}" \
+                        "online_task.base_ckpt=${base_ckpt}" \
                         "training.device=cuda:${gpu}" \
                         "training.seed=${seed}" \
                         training.num_steps=125000 \
@@ -63,9 +63,6 @@ run_worker() {
                         n_action_steps=8 \
                         "res_policy.target_clip=${target_clip}" \
                         "res_policy.critic_action_input=${critic_action_input}" \
-                        "res_policy.select_rollout=${select_rollout}" \
-                        "res_policy.select_backup=${select_backup}" \
-                        "res_policy.num_base_candidates=${num_base_candidates}" \
                         training.utd=4 training.policy_freq=2 \
                         training.n_step=1 training.learning_start=5000 training.training_freq=200 \
                         "exp_name=${exp_name}" \
@@ -74,13 +71,13 @@ run_worker() {
                     local train_status=${PIPESTATUS[0]}
 
                     if (( train_status == 0 )); then
-                        printf '%s\tDONE\tgpu=%s\ttarget_clip=%s\tseed=%s\tcritic_action_input=%s\tselect_rollout=%s\tselect_backup=%s\tnum_base_candidates=%s\n' \
-                            "$(date --iso-8601=seconds)" "${gpu}" "${target_clip}" "${seed}" "${critic_action_input}" "${select_rollout}" "${select_backup}" "${num_base_candidates}" \
+                        printf '%s\tDONE\tgpu=%s\ttarget_clip=%s\tseed=%s\tcritic_action_input=%s\tbase_ckpt=%s\n' \
+                            "$(date --iso-8601=seconds)" "${gpu}" "${target_clip}" "${seed}" "${critic_action_input}" "${base_ckpt}" \
                             >> "${run_root}/status_gpu${gpu}.tsv"
                     else
-                        printf '%s\tFAILED(%s)\tgpu=%s\ttarget_clip=%s\tseed=%s\tcritic_action_input=%s\tselect_rollout=%s\tselect_backup=%s\tnum_base_candidates=%s\n' \
+                        printf '%s\tFAILED(%s)\tgpu=%s\ttarget_clip=%s\tseed=%s\tcritic_action_input=%s\tbase_ckpt=%s\n' \
                             "$(date --iso-8601=seconds)" "${train_status}" "${gpu}" \
-                            "${target_clip}" "${seed}" "${critic_action_input}" "${select_rollout}" "${select_backup}" "${num_base_candidates}" \
+                            "${target_clip}" "${seed}" "${critic_action_input}" "${base_ckpt}" \
                             >> "${run_root}/status_gpu${gpu}.tsv"
                         ((failures += 1))
                     fi
@@ -123,6 +120,6 @@ for worker_id in "${!GPUS[@]}"; do
 done
 
 printf 'Started %s jobs in tmux session %s.\n' \
-    "$((${#TARGET_CLIPS[@]} * ${#SEEDS[@]} * ${#CRITIC_ACTION_INPUTS[@]} * ${#NUM_BASE_CANDIDATES[@]}))" "${SESSION}"
+    "$((${#TARGET_CLIPS[@]} * ${#SEEDS[@]} * ${#CRITIC_ACTION_INPUTS[@]} * ${#BASE_CKPTS[@]}))" "${SESSION}"
 printf 'Run root: %s\n' "${RUN_ROOT}"
 printf 'Attach: tmux attach -t %s\n' "${SESSION}"
