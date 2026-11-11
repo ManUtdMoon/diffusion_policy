@@ -1,5 +1,5 @@
 defaults:
-  - train_flow_match_unet_image_workspace
+  - train_flow_match_dit_image_workspace
   - _self_
 
 name: train_diffusion_image_accelerate

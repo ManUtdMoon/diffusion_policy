@@ -13,5 +13,5 @@ accelerate launch \
   train.py \
   --config-name=train_diffusion_image_accelerate_workspace \
   task=tool_hang_image_abs \
-  exp_name=unet-cov_rel \
+  exp_name=dit-cov_rel \
   training.seed=10

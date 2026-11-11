@@ -35,7 +35,8 @@ class MultiImageObsEncoder(ModuleAttrMixin):
             # renormalize rgb input with imagenet normalization
             # assuming input in [0,1]
             imagenet_norm: bool=False,
-            rgb_transforms: Union[Dict[str,nn.Module], None]=None
+            rgb_transforms: Union[Dict[str,nn.Module], None]=None,
+            proprio_proj_dim: Union[int, None]=None
         ):
         """
         Assumes rgb input: B,C,H,W
@@ -140,6 +141,18 @@ class MultiImageObsEncoder(ModuleAttrMixin):
         self.low_dim_keys = low_dim_keys
         self.key_shape_map = key_shape_map
 
+        self.proprio_proj = None
+        if proprio_proj_dim is not None:
+            if low_dim_keys:
+                proprio_dim = sum(key_shape_map[key][0] for key in low_dim_keys)
+                self.proprio_proj = nn.Sequential(
+                    nn.Linear(proprio_dim, proprio_proj_dim),
+                    nn.ReLU(),
+                    nn.Linear(proprio_proj_dim, proprio_proj_dim),
+                    nn.LayerNorm(proprio_proj_dim),
+                    nn.Tanh()
+                )
+
         logger.info(
             "number of parameters: %.2f M", sum(p.numel() for p in self.parameters()) / 1e6
         )
@@ -185,6 +198,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                 features.append(feature)
         
         # process lowdim input
+        low_dim_features = list()
         for key in self.low_dim_keys:
             data = obs_dict[key]
             if batch_size is None:
@@ -192,7 +206,12 @@ class MultiImageObsEncoder(ModuleAttrMixin):
             else:
                 assert batch_size == data.shape[0]
             assert data.shape[1:] == self.key_shape_map[key]
-            features.append(data)
+            low_dim_features.append(data)
+        if self.proprio_proj is not None:
+            proprio = torch.cat(low_dim_features, dim=-1)
+            features.append(self.proprio_proj(proprio))
+        else:
+            features.extend(low_dim_features)
         
         # concatenate all features
         result = torch.cat(features, dim=-1)
